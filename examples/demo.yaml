@@ -1,0 +1,43 @@
+# agent-augury demo session (v0.1a)
+#
+# Fake backends only — runs fully offline:
+#   agent-augury --config examples/demo.yaml
+#
+# Flow: agent-2 opens a thread and pushes an URGENT correction; agent-1 is
+# mid-work, absorbs it passively as a [radio] turn at the next step boundary,
+# and answers — without ever blocking on a receive.
+#
+# For a real model, swap one backend to e.g.:
+#   backend:
+#     type: openai
+#     model: gpt-4o-mini
+#     base_url: https://api.openai.com/v1
+#     api_key_env: OPENAI_API_KEY
+
+mode: L3            # L2 | L3  (§3.5.5 listening-mode switch)
+task: "42가 아니라 진짜 답을 찾아라"
+max_steps: 12
+
+agents:
+  - id: agent-1
+    backend:
+      type: fake
+      script:
+        - "searching..."          # step 1: work begins (inbox empty)
+        - "정답은 43"              # step 2: drained the [radio] correction
+
+  - id: agent-2
+    backend:
+      type: fake
+      script:
+        - tool_calls:
+            - name: create_thread
+              arguments:
+                name: hunt
+                participants: [agent-1, agent-2]
+            - name: send_message        # fire-and-forget push to agent-1's inbox
+              arguments:
+                thread: "$thread:0"     # resolves to this agent's first create_thread
+                content: "(URGENT) 정답은 42가 아니라 43."
+                mentions: [agent-1]
+        - "correction sent"

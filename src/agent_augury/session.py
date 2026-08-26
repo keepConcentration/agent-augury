@@ -11,6 +11,8 @@ from typing import Any, Callable
 
 from .agent.loop import AgentLoop
 from .backends_factory import build_backend
+from .channel.discord_mirror import mirror_from_config
+from .protocol.approval import ConsensusGate
 from .server import MessageServer
 
 OnStep = Callable[[str, Any], None]
@@ -30,6 +32,8 @@ class Session:
         self.task = task
         self.max_steps = max_steps
         self.on_step: OnStep | None = None
+        self.gate: ConsensusGate | None = None
+        self.mirror: Any = None
 
     # -- assembly ------------------------------------------------------------
 
@@ -47,12 +51,20 @@ class Session:
                     backend=build_backend(spec["backend"]),
                 )
             )
-        return cls(
+        session = cls(
             server=server,
             agents=agents,
             task=cfg.get("task"),
             max_steps=int(cfg.get("max_steps", 20)),
         )
+        gate_spec = cfg.get("gate")
+        if gate_spec:
+            session.gate = ConsensusGate(server, thread_name=gate_spec["thread_name"])
+            server.subscribe(session.gate.on_message)
+        session.mirror = mirror_from_config(cfg.get("mirror"))
+        if session.mirror is not None:
+            server.subscribe(session.mirror.on_message)
+        return session
 
     # -- lifecycle -----------------------------------------------------------
 

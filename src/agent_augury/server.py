@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import time
-from typing import Any
+from typing import Any, Callable
 
 _VALID_MODES = ("L2", "L3")
 
@@ -33,6 +33,7 @@ class MessageServer:
         self._mode: str = "L3"
         self._thread_ids = itertools.count(1)
         self._message_ids = itertools.count(1)
+        self._subscribers: list[Callable[[dict[str, Any]], None]] = []
 
     # -- registration -------------------------------------------------------
 
@@ -99,9 +100,17 @@ class MessageServer:
             for target in targets:
                 self._inboxes[target].put_nowait(message["message_id"])
 
+        for subscriber in self._subscribers:
+            subscriber(message)
         async with self._cond:
             self._cond.notify_all()
         return message["message_id"]
+
+    # -- subscriptions (gate / mirrors) --------------------------------------
+
+    def subscribe(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        """Register a synchronous observer invoked on every sent message."""
+        self._subscribers.append(callback)
 
     async def wait_for_mention(
         self, agent_id: str, timeout: float | None = None

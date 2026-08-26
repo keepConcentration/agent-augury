@@ -20,6 +20,7 @@ from .tools import ToolBox
 Message = dict[str, Any]
 
 _THREAD_REF = re.compile(r"^\$thread:(\d+)$")
+_THREAD_BY_NAME = re.compile(r"^\$thread_by_name:(.+)$")
 
 
 @dataclass
@@ -142,6 +143,10 @@ class AgentLoop:
         resolved: dict[str, Any] = {}
         for key, value in args.items():
             if isinstance(value, str):
+                m = _THREAD_BY_NAME.match(value)
+                if m:
+                    resolved[key] = self._find_thread_by_name(m.group(1))
+                    continue
                 m = _THREAD_REF.match(value)
                 if m:
                     idx = int(m.group(1))
@@ -155,3 +160,10 @@ class AgentLoop:
                         ) from None
             resolved[key] = value
         return resolved
+
+    def _find_thread_by_name(self, name: str) -> str:
+        """Resolve a thread id from the SSOT by name (what read_resource offers)."""
+        for thread in self.server.snapshot()["threads"]:
+            if thread["name"] == name:
+                return thread["thread_id"]
+        raise ValueError(f"no thread named {name!r} exists yet")

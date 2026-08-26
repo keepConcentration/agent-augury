@@ -31,8 +31,15 @@ async def _run(cfg_path: str) -> int:
     session.on_step = _log_step
     steps = await session.run()
 
+    if session.mirror is not None:
+        await session.mirror.flush()
+
+    gate_state = "OPEN" if (session.gate and session.gate.is_open) else ("CLOSED" if session.gate else "n/a")
     snap = session.server.snapshot()
-    print(f"--- session finished: steps={steps} threads={len(snap['threads'])} messages={len(snap['messages'])}")
+    print(
+        f"--- session finished: steps={steps} threads={len(snap['threads'])} "
+        f"messages={len(snap['messages'])} gate={gate_state}"
+    )
     return 0
 
 

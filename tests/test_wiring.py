@@ -127,6 +127,94 @@ async def test_thread_reference_placeholder_resolves(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# v0.1b: gate & mirror wiring
+# ---------------------------------------------------------------------------
+
+
+GATE_CFG = {
+    "mode": "L3",
+    "max_steps": 24,
+    "gate": {"thread_name": "plan"},
+    "agents": [
+        {
+            "id": "a1",
+            "backend": {"type": "fake", "script": [
+                {"tool_calls": [
+                    {"name": "create_thread", "arguments": {"name": "plan", "participants": ["a1", "a2", "a3"]}},
+                    {"name": "send_message", "arguments": {"thread": "$thread:0", "content": "PROPOSE: 분할 v1", "mentions": []}},
+                ]},
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread:0", "content": "APPROVE: ok", "mentions": []}},
+                ]},
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread:0", "content": "(FYI) a1 몫 완료", "mentions": []}},
+                ]},
+            ]},
+        },
+        {
+            "id": "a2",
+            "backend": {"type": "fake", "script": [
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "APPROVE: ok", "mentions": []}},
+                ]},
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "(FYI) a2 몫 완료", "mentions": []}},
+                ]},
+            ]},
+        },
+        {
+            "id": "a3",
+            "backend": {"type": "fake", "script": [
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "APPROVE: ok", "mentions": []}},
+                ]},
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "(FYI) a3 몫 완료", "mentions": []}},
+                ]},
+            ]},
+        },
+    ],
+}
+
+
+async def test_session_wires_consensus_gate_and_opens_it(tmp_path):
+    session = Session.from_config(load_config(write_cfg(tmp_path, GATE_CFG)))
+    await session.run()
+
+    assert session.gate is not None
+    assert session.gate.is_open, f"approvals={session.gate.approvals}"
+    assert session.gate.participants == ["a1", "a2", "a3"]
+
+    # every work-share message carries seq AFTER the gate opened
+    snap = session.server.snapshot()
+    seq = {m["message_id"]: m["seq"] for m in snap["messages"]}
+    work = [m for m in snap["messages"] if m["content"].startswith("(FYI)")]
+    assert len(work) == 3
+    assert all(seq[m["message_id"]] > session.gate.opened_at_seq for m in work)
+
+
+async def test_session_without_gate_config_has_no_gate(tmp_path):
+    session = Session.from_config(load_config(write_cfg(tmp_path, FAKE_CFG)))
+    assert session.gate is None
+
+
+async def test_session_mirror_disabled_without_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("AUGURY_MIRROR_URL", raising=False)
+    cfg = dict(GATE_CFG, mirror={"type": "discord_webhook", "url_env": "AUGURY_MIRROR_URL"})
+    session = Session.from_config(load_config(write_cfg(tmp_path, cfg)))
+    assert session.mirror is None  # observation silently off — core unaffected
+
+
+def test_cli_accepts_gate_config(tmp_path, capsys):
+    from agent_augury.cli import main
+
+    rc = main(["--config", str(write_cfg(tmp_path, GATE_CFG))])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "gate=OPEN" in out
+
+
+# ---------------------------------------------------------------------------
 # real-backend construction from env var names
 # ---------------------------------------------------------------------------
 

@@ -336,40 +336,45 @@ PROTOCOL_PHASE_GATE_CFG = {
             "backend": {
                 "type": "fake",
                 "script": [
-                    # P1: create threads
+                    # P1: send READY: to finish exploration
                     {"tool_calls": [
-                        {"name": "create_thread", "arguments": {
-                            "name": "plan", "participants": ["a1", "a2"]}},
-                        {"name": "create_thread", "arguments": {
-                            "name": "execution", "participants": ["a1", "a2"]}},
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread_by_name:plan",
+                            "content": "READY:",
+                            "mentions": [],
+                        }},
                     ]},
                     # P2: propose on plan thread
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
-                            "thread": "$thread:0",
+                            "thread": "$thread_by_name:plan",
                             "content": "PROPOSE: a1→검색, a2→정리",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P2: approve → P2 gate opens → P3
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
-                            "thread": "$thread:0",
+                            "thread": "$thread_by_name:plan",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: post work log on execution thread
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
-                            "thread": "$thread:1",
+                            "thread": "$thread_by_name:execution",
                             "content": "(FYI) a1 작업 완료",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: approve → P3 gate opens → P4
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
-                            "thread": "$thread:1",
+                            "thread": "$thread_by_name:execution",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     {"text": "done"},
                 ],
@@ -380,28 +385,37 @@ PROTOCOL_PHASE_GATE_CFG = {
             "backend": {
                 "type": "fake",
                 "script": [
-                    # P1: wait (no-op)
-                    {"text": "waiting..."},
+                    # P1: send READY: to finish exploration
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread_by_name:plan",
+                            "content": "READY:",
+                            "mentions": [],
+                        }},
+                    ]},
                     # P2: approve split (after a1's PROPOSE)
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:plan",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: post work log
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:execution",
                             "content": "(FYI) a2 작업 완료",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: approve
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:execution",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     {"text": "done"},
                 ],
@@ -417,15 +431,6 @@ async def test_protocol_gate_state_injected_per_phase(tmp_path):
     protocol = session.protocol
     assert protocol is not None
 
-    # Drive P1→P2 transition: when both threads exist, mark all READY and finish P1
-    def on_step(agent_id, result):
-        if protocol.phase == P1_EXPLORE and len(session.server.snapshot()["threads"]) >= 2:
-            # All participants send READY before P1 can finish
-            for p in protocol.participants:
-                protocol._ready_states.add(p)
-            protocol.finish_p1()
-
-    session.on_step = on_step
     await session.run()
 
     # Protocol should have advanced through P2 and P3 gates
@@ -439,14 +444,6 @@ async def test_protocol_phase_advances_with_gates(tmp_path):
     protocol = session.protocol
     assert protocol is not None
 
-    # Drive P1→P2 transition: mark all READY and finish P1
-    def on_step(agent_id, result):
-        if protocol.phase == P1_EXPLORE and len(session.server.snapshot()["threads"]) >= 2:
-            for p in protocol.participants:
-                protocol._ready_states.add(p)
-            protocol.finish_p1()
-
-    session.on_step = on_step
     await session.run()
 
     # Should have reached at least P4 (P3 gate opens → advance to P4)

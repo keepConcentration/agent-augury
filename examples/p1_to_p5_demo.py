@@ -1,23 +1,20 @@
 """v0.2 E2E — P1~P5 full collaboration protocol (DESIGN.md §2.3, §6).
 
 Scenario with 3 agents using FakeModelBackend:
-- agent-1: assembler (creates threads, proposes split, composes final answer)
+- agent-1: assembler (proposes split, composes final answer)
 - agent-2: executor A
 - agent-3: executor B
 
 Flow:
-  P1: all agents explore silently
-  P2: agent-1 creates all threads → proposes split on plan → unanimous APPROVE
-  P3: each agent posts work logs → unanimous APPROVE on execution
-  P4: agents broadcast results → unanimous APPROVE on review
-  P5: agent-1 posts FINAL → unanimous APPROVE on submission → COMPLETED
-
-The demo drives phase transitions via session.on_step callback: after the
-assembler creates all threads (end of P1), the orchestrator advances to P2.
-Thereafter, gates auto-advance on unanimous approval.
+  P1: all agents explore silently → each sends READY: to finish P1
+  P2: agent-1 proposes split on plan thread → unanimous APPROVE → P2 gate opens
+  P3: each agent posts work logs → unanimous APPROVE → P3 gate opens
+  P4: agents broadcast results → unanimous APPROVE → P4 gate opens
+  P5: agent-1 posts FINAL → unanimous APPROVE → P5 gate opens → COMPLETED
 
 Assertions:
-  - All phases advance in order
+  - P1 finishes when ALL participants send READY:
+  - All phases advance in order via gates
   - Each gate opens only after unanimous approval
   - Final answer is approved by all agents
 """
@@ -44,7 +41,7 @@ AGENTS = ["agent-1", "agent-2", "agent-3"]
 
 CFG = {
     "mode": "L3",
-    "max_steps": 30,
+    "max_steps": 50,
     "protocol": {
         "participants": AGENTS,
         "assembler_id": "agent-1",
@@ -61,73 +58,77 @@ CFG = {
             "backend": {
                 "type": "fake",
                 "script": [
-                    # P1: explore silently
+                    # P1: explore silently → send READY:
                     {"tool_calls": [
-                        {"name": "search", "arguments": {"q": "main topic"}},
-                    ]},
-                    # P2: create ALL threads + propose split
-                    {"tool_calls": [
-                        {"name": "create_thread", "arguments": {
-                            "name": "plan", "participants": AGENTS}},
-                        {"name": "create_thread", "arguments": {
-                            "name": "execution", "participants": AGENTS}},
-                        {"name": "create_thread", "arguments": {
-                            "name": "review", "participants": AGENTS}},
-                        {"name": "create_thread", "arguments": {
-                            "name": "submission", "participants": AGENTS}},
                         {"name": "send_message", "arguments": {
-                            "thread": "$thread:0",
+                            "thread": "$thread_by_name:plan",
+                            "content": "READY:",
+                            "mentions": [],
+                        }},
+                    ]},
+                    # P2: propose split
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread_by_name:plan",
                             "content": "PROPOSE: agent-1→검색·종합, agent-2→검증, agent-3→정리",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P2: approve plan → P2 gate opens
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
-                            "thread": "$thread:0",
+                            "thread": "$thread_by_name:plan",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: post work log
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:execution",
                             "content": "(FYI) agent-1 검색 완료: 정답 후보 43",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: approve execution → P3 gate opens
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:execution",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P4: broadcast result
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:review",
                             "content": "RESULT: 정답은 43 (근거: 다중 소수 곱)",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P4: approve review → P4 gate opens
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:review",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P5: compose final answer
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:submission",
                             "content": "FINAL: 정답은 43",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P5: approve submission → P5 gate opens → COMPLETED
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:submission",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     {"text": "done"},
                 ],
@@ -138,42 +139,53 @@ CFG = {
             "backend": {
                 "type": "fake",
                 "script": [
-                    # P1: explore silently
-                    {"text": "exploring..."},
+                    # P1: send READY: (no-op text, just ready)
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread_by_name:plan",
+                            "content": "READY:",
+                            "mentions": [],
+                        }},
+                    ]},
                     # P2: approve split
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:plan",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: post work log
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:execution",
                             "content": "(FYI) agent-2 검증 완료: 근거 일치",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: approve execution
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:execution",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P4: broadcast result
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:review",
                             "content": "RESULT: 검증 완료 (이의 없음)",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P4: approve review
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:review",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P5: wait for assembler to post FINAL first
                     {"text": "waiting for final answer"},
@@ -182,7 +194,8 @@ CFG = {
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:submission",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     {"text": "done"},
                 ],
@@ -193,42 +206,53 @@ CFG = {
             "backend": {
                 "type": "fake",
                 "script": [
-                    # P1: explore silently
-                    {"text": "exploring..."},
+                    # P1: send READY:
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread_by_name:plan",
+                            "content": "READY:",
+                            "mentions": [],
+                        }},
+                    ]},
                     # P2: approve split
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:plan",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: post work log
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:execution",
                             "content": "(FYI) agent-3 정리 완료",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P3: approve execution
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:execution",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P4: broadcast result
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:review",
                             "content": "RESULT: 정리 완료 (이의 없음)",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P4: approve review
                     {"tool_calls": [
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:review",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     # P5: wait for assembler to post FINAL first
                     {"text": "waiting for final answer"},
@@ -237,7 +261,8 @@ CFG = {
                         {"name": "send_message", "arguments": {
                             "thread": "$thread_by_name:submission",
                             "content": "APPROVE: ok",
-                            "mentions": []}},
+                            "mentions": [],
+                        }},
                     ]},
                     {"text": "done"},
                 ],
@@ -251,19 +276,6 @@ def main() -> int:
     session = Session.from_config(dict(CFG))
     protocol = session.protocol
     assert protocol is not None
-
-    # Track thread creation to detect P1→P2 transition
-    p1_finished = False
-
-    def on_step(agent_id, result):
-        nonlocal p1_finished
-        # After assembler creates all 4 threads, explicitly finish P1 → P2
-        if not p1_finished and agent_id == "agent-1" and len(protocol._server.snapshot()["threads"]) >= 4:
-            if protocol.phase == P1_EXPLORE:
-                protocol.finish_p1()
-                p1_finished = True
-
-    session.on_step = on_step
 
     steps = asyncio.run(session.run())
 
@@ -285,16 +297,23 @@ def main() -> int:
     assert p5_gate is not None and p5_gate.is_open, "P5 gate never opened"
 
     # Message ordering assertions
+    ready_msgs = [m for m in by_seq if m["content"] == "READY:"]
     propose = next(m for m in by_seq if m["content"].startswith("PROPOSE:"))
     approvals = [m for m in by_seq if m["content"].startswith("APPROVE:")]
     work = [m for m in by_seq if m["content"].startswith("(FYI)")]
     results = [m for m in by_seq if m["content"].startswith("RESULT:")]
     finals = [m for m in by_seq if m["content"].startswith("FINAL:")]
 
-    assert len(approvals) >= 12, f"expected at least 12 approvals, got {len(approvals)}"
-    assert len(work) == 3, f"expected 3 work shares, got {len(work)}"
-    assert len(results) == 3, f"expected 3 results, got {len(results)}"
-    assert len(finals) == 1, f"expected 1 final, got {len(finals)}"
+    # P1: exactly 3 READY: messages, all before PROPOSE
+    assert len(ready_msgs) == 3, f"expected 3 READY: messages, got {len(ready_msgs)}"
+    assert all(r["seq"] < propose["seq"] for r in ready_msgs), "READY after PROPOSE"
+
+    # Gate order: P2 before P3 before P4 before P5
+    assert p2_gate.opened_at_seq is not None
+    assert p3_gate.opened_at_seq is not None
+    assert p4_gate.opened_at_seq is not None
+    assert p5_gate.opened_at_seq is not None
+    assert p2_gate.opened_at_seq < p3_gate.opened_at_seq < p4_gate.opened_at_seq < p5_gate.opened_at_seq
 
     # All approvals come after proposal
     assert all(m["seq"] > propose["seq"] for m in approvals), "vote before proposal"
@@ -306,6 +325,14 @@ def main() -> int:
     final_approvals = [m for m in by_seq if m["content"].startswith("APPROVE:") and m["seq"] > finals[0]["seq"]]
     assert len(final_approvals) == 3, f"expected 3 final approvals, got {len(final_approvals)}"
 
+    # No create_thread calls — threads were pre-created
+    create_thread_msgs = [m for m in by_seq if m["content"].startswith("create_thread")]
+    assert len(create_thread_msgs) == 0, "threads should be pre-created by session"
+
+    # No READYFOO or similar invalid prefixes
+    invalid_ready = [m for m in by_seq if m["content"] != "READY:" and m["content"].startswith("READY")]
+    assert len(invalid_ready) == 0, f"found invalid READY-like messages: {[m['content'] for m in invalid_ready]}"
+
     print(f"steps={steps}")
     print(f"threads={len(snap['threads'])} messages={len(snap['messages'])}")
     print(f"phase={protocol.phase}")
@@ -313,6 +340,7 @@ def main() -> int:
     print(f"P3 gate opened at seq={p3_gate.opened_at_seq}")
     print(f"P4 gate opened at seq={p4_gate.opened_at_seq}")
     print(f"P5 gate opened at seq={p5_gate.opened_at_seq}")
+    print(f"READY messages: {len(ready_msgs)}")
     print("--- message sequence ---")
     for m in by_seq:
         marker = ""

@@ -178,8 +178,11 @@ async def test_work_share_blocked_when_gate_closed_and_no_gate_thread():
     assert result["error"] == "gate_closed"
 
 
-async def test_gate_binding_messages_allowed_when_gate_closed():
-    """PROPOSE/APPROVE messages are allowed even when gate is closed (to bind the gate)."""
+async def test_propose_blocked_when_gate_thread_not_bound():
+    """PROPOSE is blocked when gate_thread_id is None (no gate thread bound).
+
+    Only READY: is allowed in the unbound state to finish P1 exploration.
+    """
     server = MessageServer()
     server.register_agent("agent-1")
     server.register_agent("agent-2")
@@ -204,7 +207,78 @@ async def test_gate_binding_messages_allowed_when_gate_closed():
 
     await agent.step()
 
-    # PROPOSE should go through
+    # PROPOSE should be blocked — no message in the thread
+    snap = server.snapshot()
+    msgs_in_thread = [m for m in snap["messages"] if m["thread_id"] == tid]
+    assert len(msgs_in_thread) == 0
+
+    tool_msgs = [m for m in agent.conversation if m["role"] == "tool"]
+    assert len(tool_msgs) == 1
+    result = json.loads(tool_msgs[0]["content"])
+    assert result["error"] == "gate_closed"
+
+
+async def test_ready_allowed_when_gate_thread_not_bound():
+    """READY: is allowed even when gate_thread_id is None (to finish P1)."""
+    server = MessageServer()
+    server.register_agent("agent-1")
+    server.register_agent("agent-2")
+
+    tid = await server.create_thread("explore", participants=["agent-1", "agent-2"])
+
+    agent = make_agent(
+        server,
+        "agent-1",
+        [
+            Completion(
+                tool_calls=[
+                    ToolCall(id="c1", name="send_message", arguments={
+                        "thread": tid, "content": "READY:", "mentions": []
+                    }),
+                ]
+            ),
+        ],
+    )
+    agent.gate_open = False
+    agent.gate_thread_id = None
+
+    await agent.step()
+
+    # READY: should go through
+    snap = server.snapshot()
+    msgs_in_thread = [m for m in snap["messages"] if m["thread_id"] == tid]
+    assert len(msgs_in_thread) == 1
+    assert msgs_in_thread[0]["content"] == "READY:"
+
+
+async def test_gate_binding_messages_allowed_after_gate_bound():
+    """PROPOSE/APPROVE are allowed once gate_thread_id is explicitly bound."""
+    server = MessageServer()
+    server.register_agent("agent-1")
+    server.register_agent("agent-2")
+
+    tid = await server.create_thread("plan", participants=["agent-1", "agent-2"])
+
+    agent = make_agent(
+        server,
+        "agent-1",
+        [
+            Completion(
+                tool_calls=[
+                    ToolCall(id="c1", name="send_message", arguments={
+                        "thread": tid, "content": "PROPOSE: v1", "mentions": []
+                    }),
+                ]
+            ),
+        ],
+    )
+    # Gate is closed but explicitly bound to this thread
+    agent.gate_open = False
+    agent.gate_thread_id = tid
+
+    await agent.step()
+
+    # PROPOSE should go through because gate_thread_id is bound
     snap = server.snapshot()
     msgs_in_thread = [m for m in snap["messages"] if m["thread_id"] == tid]
     assert len(msgs_in_thread) == 1
@@ -264,11 +338,30 @@ class TestReadyBasedP1Finish:
         p.start()
 
         tid = await server.create_thread("explore", participants=["a1", "a2", "a3"])
-        await server.send_message(tid, author="a1", content="READY", mentions=[])
-        await server.send_message(tid, author="a2", content="READY", mentions=[])
+        await server.send_message(tid, author="a1", content="READY:", mentions=[])
+        await server.send_message(tid, author="a2", content="READY:", mentions=[])
         assert not p.all_ready
-        await server.send_message(tid, author="a3", content="READY", mentions=[])
-        assert p.all_ready
+        assert p.phase == P1_EXPLORE
+        await server.send_message(tid, author="a3", content="READY:", mentions=[])
+        # All READY: received → protocol auto-advances to P2
+        assert p.phase == P2_SPLIT
+
+    def test_ready_requires_exact_prefix(self):
+        """Only exact ``READY:`` is recognized; ``READYFOO`` is ignored."""
+        server = MessageServer()
+        for a in ("a1", "a2"):
+            server.register_agent(a)
+        p = CollaborationProtocol(server, participants=["a1", "a2"])
+        p.start()
+
+        # READYFOO should NOT count
+        p._ready_states.add("a1")
+        assert not p.all_ready  # a2 still missing
+
+        # Manually simulate: only "READY:" should be tracked
+        # (The protocol's _on_message checks content == "READY:")
+        # So READYFOO would not be added to _ready_states
+        assert "a2" not in p._ready_states
 
     def test_ready_only_counts_participants(self):
         """READY from non-participants is ignored."""

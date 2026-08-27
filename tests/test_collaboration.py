@@ -146,11 +146,11 @@ class TestP1Finish:
         p = make_protocol("a1", "a2", "a3")
         p.start()
         assert p.phase == P1_EXPLORE
-        # All participants must send READY before P1 can finish
+        # All participants must send READY: before P1 can finish
         assert not p.all_ready
         with pytest.raises(RuntimeError, match="Cannot finish P1"):
             p.finish_p1()
-        # Simulate all participants sending READY
+        # Simulate all participants sending READY:
         for a in ["a1", "a2", "a3"]:
             p._ready_states.add(a)
         assert p.all_ready

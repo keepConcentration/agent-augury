@@ -1,0 +1,39 @@
+# agent-augury v0.1b — real OpenAI-compatible backend example
+#
+# E2E configuration: a real LLM (OpenAI-compatible API) generates PROPOSE/APPROVE
+# messages autonomously. Secrets are read from environment variables only — never
+# hardcoded here.
+#
+# Usage:
+#   export OPENAI_API_KEY=<your-key-here>
+#   agent-augury --config examples/consensus_openai.yaml
+#
+# The gate protocol is identical to examples/consensus_demo.py (which uses a
+# FakeModelBackend). The difference is that here the model decides PROPOSE/APPROVE
+# content on its own; in the fake demo every message is pre-scripted.
+
+mode: L3
+max_steps: 30
+task: "두 에이전트가 분할 합의를 통해 각자 맡을 역할을 정하고, 게이트가 열리면 각자 작업 결과를 공유하세요."
+
+gate:
+  thread_name: plan
+
+agents:
+  - id: agent-1
+    backend:
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
+
+  - id: agent-2
+    backend:
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
+
+mirror:
+  type: discord_webhook
+  url_env: AUGURY_MIRROR_URL

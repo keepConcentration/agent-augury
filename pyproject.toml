@@ -1,6 +1,6 @@
 [project]
 name = "agent-augury"
-version = "0.1.0a0"
+version = "0.2"
 description = "Model-agnostic passive awareness multi-agent runtime — concept inherited from AgentRadio (Coral-Protocol), re-implemented standalone."
 readme = "README.md"
 requires-python = ">=3.11"

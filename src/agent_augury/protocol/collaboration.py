@@ -91,6 +91,8 @@ class CollaborationProtocol:
         self._on_phase_change: PhaseCallback | None = None
         self._on_gate_open: Callable[[Phase], None] | None = None
         self._gate_open_fired: set[Phase] = set()
+        # v0.2: READY-based P1 finish policy
+        self._ready_states: set[str] = set()
 
     # -- configuration --------------------------------------------------------
 
@@ -112,6 +114,22 @@ class CollaborationProtocol:
     def start(self) -> None:
         """Begin the protocol at P1_EXPLORE."""
         self.phase_manager.advance(P1_EXPLORE)
+        # Subscribe to server messages to track READY states
+        self._server.subscribe(self._on_message)
+
+    def _on_message(self, message: dict[str, Any]) -> None:
+        """Track READY messages from participants for P1 finish policy."""
+        if self.phase != P1_EXPLORE:
+            return
+        author = message.get("author", "")
+        content = message.get("content", "")
+        if author in self.participants and content.startswith("READY"):
+            self._ready_states.add(author)
+
+    @property
+    def all_ready(self) -> bool:
+        """True if all participants have sent READY."""
+        return set(self.participants) <= self._ready_states
 
     def finish_p1(self) -> None:
         """Explicitly finish P1 exploration and advance to P2.
@@ -119,11 +137,21 @@ class CollaborationProtocol:
         This replaces fragile thread-counting heuristics in orchestrators —
         the orchestrator calls this when it determines P1 is done, rather
         than inferring it from server state.
+
+        Policy: P2 entry is only allowed once ALL participants have sent
+        a READY message. Before that, finish_p1() raises RuntimeError.
         """
         if self.phase != P1_EXPLORE:
             raise ValueError(
                 f"finish_p1() can only be called from P1_EXPLORE, current phase: {self.phase}"
             )
+        if not self.all_ready:
+            missing = set(self.participants) - self._ready_states
+            raise RuntimeError(
+                f"Cannot finish P1: missing READY from {sorted(missing)}. "
+                f"All participants must send READY before P2 entry."
+            )
+        self._ready_states.clear()
         self.advance(P2_SPLIT)
 
     def advance(self, to: Phase) -> None:

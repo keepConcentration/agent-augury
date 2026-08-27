@@ -417,9 +417,12 @@ async def test_protocol_gate_state_injected_per_phase(tmp_path):
     protocol = session.protocol
     assert protocol is not None
 
-    # Drive P1→P2 transition: when both threads exist, finish P1
+    # Drive P1→P2 transition: when both threads exist, mark all READY and finish P1
     def on_step(agent_id, result):
         if protocol.phase == P1_EXPLORE and len(session.server.snapshot()["threads"]) >= 2:
+            # All participants send READY before P1 can finish
+            for p in protocol.participants:
+                protocol._ready_states.add(p)
             protocol.finish_p1()
 
     session.on_step = on_step
@@ -436,9 +439,11 @@ async def test_protocol_phase_advances_with_gates(tmp_path):
     protocol = session.protocol
     assert protocol is not None
 
-    # Drive P1→P2 transition
+    # Drive P1→P2 transition: mark all READY and finish P1
     def on_step(agent_id, result):
         if protocol.phase == P1_EXPLORE and len(session.server.snapshot()["threads"]) >= 2:
+            for p in protocol.participants:
+                protocol._ready_states.add(p)
             protocol.finish_p1()
 
     session.on_step = on_step

@@ -122,9 +122,20 @@ class AgentLoop:
         completion: Completion = await self.backend.complete(
             self.conversation, self.tool_specs
         )
-        self.conversation.append(
-            {"role": "assistant", "content": completion.text or ""}
-        )
+        assistant_msg: Message = {"role": "assistant", "content": completion.text or ""}
+        if completion.tool_calls:
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                    },
+                }
+                for call in completion.tool_calls
+            ]
+        self.conversation.append(assistant_msg)
 
         tool_results: list[Message] = []
         for call in completion.tool_calls:
@@ -159,21 +170,37 @@ class AgentLoop:
         # gate-aware execution: block work-share on non-gate threads while gate is closed
         if name == "send_message" and not self.gate_open:
             thread_id = args.get("thread")
-            if (
-                thread_id
-                and self.gate_thread_id is not None
-                and thread_id != self.gate_thread_id
-            ):
-                return json.dumps(
-                    {
-                        "error": "gate_closed",
-                        "message": (
-                            f"Gate is CLOSED. Work-share on thread '{thread_id}' is blocked. "
-                            f"Post APPROVE on the gate thread '{self.gate_thread_id}' to open the gate."
-                        ),
-                    },
-                    ensure_ascii=False,
-                )
+            if thread_id:
+                # If gate_thread_id is set, block any non-gate thread
+                if self.gate_thread_id is not None and thread_id != self.gate_thread_id:
+                    return json.dumps(
+                        {
+                            "error": "gate_closed",
+                            "message": (
+                                f"Gate is CLOSED. Work-share on thread '{thread_id}' is blocked. "
+                                f"Post APPROVE on the gate thread '{self.gate_thread_id}' to open the gate."
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                # If gate_thread_id is None (initial state, no gate bound yet),
+                # block work-share but allow gate-binding messages (PROPOSE/APPROVE/REJECT)
+                if self.gate_thread_id is None:
+                    content = args.get("content", "")
+                    is_gate_message = any(
+                        content.startswith(p) for p in ("PROPOSE:", "APPROVE:", "REJECT:", "READY")
+                    )
+                    if not is_gate_message:
+                        return json.dumps(
+                            {
+                                "error": "gate_closed",
+                                "message": (
+                                    f"Gate is CLOSED. Work-share on thread '{thread_id}' is blocked. "
+                                    f"Send a gate-binding message (PROPOSE/APPROVE) first to bind and open the gate."
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
         return await self.tools.execute(self.agent_id, name, args)
 
     def _resolve_refs(self, args: dict[str, Any]) -> dict[str, Any]:

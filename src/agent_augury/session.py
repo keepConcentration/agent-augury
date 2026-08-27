@@ -3,6 +3,10 @@
 Run loop: round-robin over agents; each turn is one step(). An agent is
 finished when its completion produced neither text nor tool calls, or when
 its scripted backend runs dry (IndexError).
+
+v0.2: integrates the P1~P5 collaboration protocol. When a protocol is
+configured, the session drives phase transitions and injects phase context
+into each agent's system prompt.
 """
 
 from __future__ import annotations
@@ -13,6 +17,17 @@ from .agent.loop import AgentLoop
 from .backends_factory import build_backend
 from .channel.discord_mirror import mirror_from_config
 from .protocol.approval import ConsensusGate
+from .protocol.collaboration import CollaborationProtocol
+from .protocol.phases import (
+    COMPLETED,
+    P1_EXPLORE,
+    P2_SPLIT,
+    P3_EXECUTE,
+    P4_REVIEW,
+    P5_SUBMIT,
+    REJECTED,
+    Phase,
+)
 from .server import MessageServer
 
 OnStep = Callable[[str, Any], None]
@@ -34,6 +49,8 @@ class Session:
         self.on_step: OnStep | None = None
         self.gate: ConsensusGate | None = None
         self.mirror: Any = None
+        # v0.2: P1~P5 collaboration protocol
+        self.protocol: CollaborationProtocol | None = None
 
     # -- assembly ------------------------------------------------------------
 
@@ -61,6 +78,31 @@ class Session:
         if gate_spec:
             session.gate = ConsensusGate(server, thread_name=gate_spec["thread_name"])
             server.subscribe(session.gate.on_message)
+            # gate-aware: when gate opens, mark all agents as gate_open=True
+            def _on_gate_open() -> None:
+                for agent in session.agents:
+                    agent.gate_open = True
+                    agent.gate_thread_id = session.gate.thread_id
+            session.gate.on_open(_on_gate_open)
+        # v0.2: P1~P5 collaboration protocol
+        protocol_spec = cfg.get("protocol")
+        if protocol_spec:
+            participant_ids = [a.agent_id for a in agents]
+            session.protocol = CollaborationProtocol(
+                server=server,
+                participants=protocol_spec.get("participants", participant_ids),
+                assembler_id=protocol_spec.get("assembler_id"),
+            )
+            # Wire up gates for each phase
+            for phase_name, thread_name in protocol_spec.get("gates", {}).items():
+                phase = _phase_from_string(phase_name)
+                # P2 requires proposal; P3+ do not (work logs start immediately)
+                require_proposal = (phase == P2_SPLIT)
+                session.protocol.bind_gate(phase, thread_name, require_proposal=require_proposal)
+            # Auto-advance on gate open
+            session.protocol.on_gate_open(
+                lambda phase: _on_protocol_gate_open(session, phase)
+            )
         session.mirror = mirror_from_config(cfg.get("mirror"))
         if session.mirror is not None:
             server.subscribe(session.mirror.on_message)
@@ -76,6 +118,19 @@ class Session:
         if self.task:
             self.agents[0].conversation.append({"role": "user", "content": self.task})
 
+        # gate-aware: inject gate state into agents each step
+        if self.gate:
+            for agent in self.agents:
+                agent.gate_open = self.gate.is_open
+                agent.gate_thread_id = self.gate.thread_id
+
+        # v0.2: start the collaboration protocol
+        if self.protocol:
+            self.protocol.start()
+            # Inject initial phase context
+            for agent in self.agents:
+                agent.current_phase = self.protocol.phase
+
         finished = {a.agent_id: False for a in self.agents}
         total_steps = 0
 
@@ -84,6 +139,13 @@ class Session:
             for agent in self.agents:
                 if finished[agent.agent_id]:
                     continue
+                # inject current gate state before each step
+                if self.gate:
+                    agent.gate_open = self.gate.is_open
+                    agent.gate_thread_id = self.gate.thread_id
+                # v0.2: inject current protocol phase
+                if self.protocol:
+                    agent.current_phase = self.protocol.phase
                 try:
                     result = await agent.step()
                 except IndexError:
@@ -101,3 +163,31 @@ class Session:
             if not progressed:
                 break
         return total_steps
+
+
+def _phase_from_string(name: str) -> Phase:
+    """Convert a phase string to a Phase constant."""
+    mapping = {
+        "P1_EXPLORE": P1_EXPLORE,
+        "P2_SPLIT": P2_SPLIT,
+        "P3_EXECUTE": P3_EXECUTE,
+        "P4_REVIEW": P4_REVIEW,
+        "P5_SUBMIT": P5_SUBMIT,
+    }
+    if name not in mapping:
+        raise ValueError(f"unknown phase: {name!r}")
+    return mapping[name]
+
+
+def _on_protocol_gate_open(session: Session, phase: Phase) -> None:
+    """Handle gate open events from the collaboration protocol."""
+    # Auto-advance to the next phase when a gate opens
+    transitions = {
+        P2_SPLIT: P3_EXECUTE,
+        P3_EXECUTE: P4_REVIEW,
+        P4_REVIEW: P5_SUBMIT,
+        P5_SUBMIT: COMPLETED,
+    }
+    next_phase = transitions.get(phase)
+    if next_phase and session.protocol:
+        session.protocol.advance(next_phase)

@@ -127,9 +127,10 @@ class Session:
         # v0.2: start the collaboration protocol
         if self.protocol:
             self.protocol.start()
-            # Inject initial phase context
+            # Inject initial phase context + gate state
             for agent in self.agents:
                 agent.current_phase = self.protocol.phase
+                _inject_protocol_gate_state(agent, self.protocol)
 
         finished = {a.agent_id: False for a in self.agents}
         total_steps = 0
@@ -143,9 +144,10 @@ class Session:
                 if self.gate:
                     agent.gate_open = self.gate.is_open
                     agent.gate_thread_id = self.gate.thread_id
-                # v0.2: inject current protocol phase
+                # v0.2: inject current protocol phase + gate state
                 if self.protocol:
                     agent.current_phase = self.protocol.phase
+                    _inject_protocol_gate_state(agent, self.protocol)
                 try:
                     result = await agent.step()
                 except IndexError:
@@ -191,3 +193,20 @@ def _on_protocol_gate_open(session: Session, phase: Phase) -> None:
     next_phase = transitions.get(phase)
     if next_phase and session.protocol:
         session.protocol.advance(next_phase)
+
+
+def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
+    """Inject the current phase's gate state into an agent.
+
+    When a phase has a gate, the agent's gate_open/gate_thread_id reflect
+    that gate's state. When the gate is closed, work-share on non-gate
+    threads is blocked. Phases without a gate (P1) leave the agent unrestricted.
+    """
+    gate = protocol.gate_for(protocol.phase)
+    if gate is not None:
+        agent.gate_open = gate.is_open
+        agent.gate_thread_id = gate.thread_id
+    else:
+        # Phase has no gate (e.g. P1_EXPLORE) — no restriction
+        agent.gate_open = True
+        agent.gate_thread_id = None

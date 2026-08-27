@@ -1,6 +1,6 @@
 # agent-augury — 독립 오픈소스 설계 문서
 
-> 상태: 초안(Draft) v0.1 · 2026-08-26 · 프로젝트명 `agent-augury` (D1 확정)
+> 상태: v0.2 구현 완료 · 2026-08-27 · 프로젝트명 `agent-augury` (D1 확정)
 > 범위: "패시브 어웨어니스(Passive Awareness) 멀티에이전트" 개념을 담은, Hermes와 독립된 오픈소스 프로젝트
 > 이 문서는 Coral-Protocol [AgentRadio](https://github.com/Coral-Protocol/AgentRadio)의 **개념을 계승**하되 독립 재구현한다. 원본 레포명 `AgentRadio`는 상단의 링크·참고에서만 그대로 쓰고, **이 프로젝트 자기 이름은 `agent-augury`다.**
 
@@ -347,19 +347,28 @@ agent-augury/
 
 > 논문의 SWE-Atlas(124태스크) 수준은 필요 없다. "L2→L3 통신 모드가 결과를 바꾼다"는 최소 재현이 이 프로젝트의 설득력이며, 그 판단은 "로그 감상"이 아니라 **search 횟수·최종 답·wall-step**이라는 숫자로만 이뤄진다.
 
-### v0.1b — 최소 프로토콜 (분할 합의 1단)
+### v0.1b — 최소 프로토콜 (분할 합의 1단) — 구현 완료
 
 **목표:** v0.1a 위에 "게이트가 있는 협업"이 최소로 도는 것을 확인.
 
 - 각자 초안 제시 → 한 스레드에서 분할안 논의 → **전원 APPROVE** → 각자 몫 수행(자유 실행, P4/P5 없음)
 - 내부 서버의 스레드/멘션 위에서 게이트가 도는지 확인
 - **Discord를 "사람용 관측창"으로 도입** (미러, 코어는 Discord 입력 안 들음)
+- **Phase transition hook 도입** — `PhaseManager`로 게이트 OPEN을 명시적 훅으로 노출 (v0.2 P1~P5 확장 대비)
+- **실제 OpenAI-compatible LLM 연동 예시** — `examples/consensus_openai.yaml` (PROPOSE/APPROVE 자율 생성)
 
-**통과 기준:** 분할 합의 1단(제안→합의→승인→실행)이 끝까지 돌며 전원 승인 게이트가 동작.
+**통과 기준:** 분할 합의 1단(제안→합의→승인→실행)이 끝까지 돌며 전원 승인 게이트가 동작. — `examples/consensus_demo.py` 검증 완료.
 
-### v0.2 — P1~P5 전체 (추후)
+### v0.2 — P1~P5 전체 (구현 완료)
 
-교차검토(P4), 어셈블러 제출(P5) 등 원본의 전체 프로토콜. v0.1a/v0.1b 검증 후 설계.
+교차검토(P4), 어셈블러 제출(P5) 등 원본의 전체 프로토콜 구현 완료.
+
+- 5단계 프로토콜 상태 머신: `CollaborationProtocol` + `PhaseManager`
+- 4개 게이트: P2_SPLIT / P3_EXECUTE / P4_REVIEW / P5_SUBMIT
+- 각 게이트는 전원 승인(APPROVE) 시 자동 개방, 다음 페이즈로 자동 진행
+- P1~P5 E2E 검증: `examples/p1_to_p5_demo.py` — 3개 에이전트, Fake 백엔드
+- 시스템 프롬프트 페이즈 주입: 각 에이전트의 step()마다 현재 페이즈 반영
+- 접두사 컨벤션: `PROPOSE:` / `APPROVE:` / `REJECT:` / `RESULT:` / `FINAL:`
 
 ---
 
@@ -373,7 +382,8 @@ agent-augury/
 | M2 | **에이전트 루프**(step/inbox drain, 단일 소비자) | 루프 동작 (Fake ModelBackend 스텁으로) |
 | M3 | **모델 어댑터** (1순위 OpenAI-compatible, 2순위 Nous Portal) | 실제 모델 호출 1회 성공 |
 | M4 | **E2E 데모 + L2 vs L3 대조 검증** (v0.1a) | 위 "v0.1a 통과 기준" 스크립트 통과 |
-| M5 | **(v0.1b)** 분할 합의 1단 + 전원 APPROVE + Discord 관측창 | 위 "v0.1b 통과 기준" |
+| M5 | **(v0.1b)** 분할 합의 1단 + 전원 APPROVE + Discord 관측창 | 위 "v0.1b 통과 기준" — **완료** |
+| M6 | **(v0.2)** P1~P5 전체 프로토콜 + 4개 게이트 + E2E 검증 | 위 "v0.2 구현 완료" — **완료** |
 
 ---
 

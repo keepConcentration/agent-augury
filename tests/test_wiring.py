@@ -242,6 +242,66 @@ def test_build_real_backend_missing_env_raises(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# gate-aware execution
+# ---------------------------------------------------------------------------
+
+
+GATE_BLOCK_CFG = {
+    "mode": "L3",
+    "max_steps": 24,
+    "gate": {"thread_name": "plan"},
+    "agents": [
+        {
+            "id": "a1",
+            "backend": {"type": "fake", "script": [
+                {"tool_calls": [
+                    {"name": "create_thread", "arguments": {"name": "plan", "participants": ["a1", "a2"]}},
+                    {"name": "send_message", "arguments": {"thread": "$thread:0", "content": "PROPOSE: v1", "mentions": []}},
+                ]},
+                # gate still CLOSED → work-share on hunt thread blocked
+                {"tool_calls": [
+                    {"name": "create_thread", "arguments": {"name": "hunt", "participants": ["a1", "a2"]}},
+                ]},
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread:1", "content": "(FYI) 내 몫 완료", "mentions": []}},
+                ]},
+                # now approve → gate opens → work-share allowed
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread:0", "content": "APPROVE: ok", "mentions": []}},
+                ]},
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread:1", "content": "(FYI) 몫 재시도 완료", "mentions": []}},
+                ]},
+            ]},
+        },
+        {
+            "id": "a2",
+            "backend": {"type": "fake", "script": [
+                {"tool_calls": [
+                    {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "APPROVE: ok", "mentions": []}},
+                ]},
+            ]},
+        },
+    ],
+}
+
+
+async def test_gate_blocks_work_share_until_open(tmp_path):
+    """Gate CLOSED → work-share on non-gate thread is blocked with error."""
+    session = Session.from_config(load_config(write_cfg(tmp_path, GATE_BLOCK_CFG)))
+    await session.run()
+
+    snap = session.server.snapshot()
+    # gate must have opened
+    assert session.gate.is_open
+    # work-share on hunt thread must appear only AFTER gate opened
+    work_msgs = [m for m in snap["messages"] if "(FYI)" in m["content"]]
+    assert len(work_msgs) == 1, f"expected exactly 1 work-share after gate open, got {len(work_msgs)}"
+    assert work_msgs[0]["content"] == "(FYI) 몫 재시도 완료"
+    assert work_msgs[0]["seq"] > session.gate.opened_at_seq
+
+
 def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys, monkeypatch):
     from agent_augury.cli import main
 

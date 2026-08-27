@@ -66,4 +66,4 @@ agent-augury --config examples/consensus_openai.yaml  # E2E with a real LLM (nee
 
 ## License
 
-Apache-2.0 (planned; inherits from the original AgentRadio).
+Apache-2.0. See [LICENSE](LICENSE).

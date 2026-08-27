@@ -135,7 +135,11 @@ class AgentLoop:
                     self.created_threads.append(json.loads(result)["thread_id"])
             except Exception as exc:  # noqa: BLE001 — surfaced to the model verbatim
                 result = json.dumps({"error": repr(exc)}, ensure_ascii=False)
-            tool_results.append({"role": "tool", "content": result})
+            tool_results.append({
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": result,
+            })
         if tool_results:
             self.conversation.extend(tool_results)
 

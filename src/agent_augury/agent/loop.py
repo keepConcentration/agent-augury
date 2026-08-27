@@ -75,8 +75,14 @@ class AgentLoop:
                 "content": system_prompt or render_system_prompt(agent_id),
             }
         ]
+        self._custom_system_prompt = system_prompt is not None
         # thread ids this agent created, in creation order ($thread:N source)
         self.created_threads: list[str] = []
+        # gate-aware execution state (injected by Session each step)
+        self.gate_open: bool = True
+        self.gate_thread_id: str | None = None
+        # v0.2: current protocol phase (injected by Session each step)
+        self.current_phase: str = ""
 
     # -- tool spec passthrough (mode-aware) ---------------------------------
 
@@ -93,10 +99,19 @@ class AgentLoop:
             )
         return specs
 
-    # -- the loop ------------------------------------------------------------
+    def _update_phase_in_prompt(self) -> None:
+        """Update the system prompt to reflect the current phase."""
+        if self._custom_system_prompt:
+            return  # user-supplied prompt — don't overwrite
+        if self.conversation and self.conversation[0]["role"] == "system":
+            self.conversation[0]["content"] = render_system_prompt(
+                self.agent_id, self.current_phase
+            )
 
     async def step(self) -> StepResult:
         """One model turn. Drains the inbox first; injects a [radio] user turn."""
+        # Update system prompt with current phase
+        self._update_phase_in_prompt()
         drained = await self.server.drain_inbox(self.agent_id)
 
         if drained:
@@ -137,6 +152,24 @@ class AgentLoop:
             if hasattr(value, "__await__"):
                 value = await value
             return json.dumps(value, ensure_ascii=False, default=str)
+        # gate-aware execution: block work-share on non-gate threads while gate is closed
+        if name == "send_message" and not self.gate_open:
+            thread_id = args.get("thread")
+            if (
+                thread_id
+                and self.gate_thread_id is not None
+                and thread_id != self.gate_thread_id
+            ):
+                return json.dumps(
+                    {
+                        "error": "gate_closed",
+                        "message": (
+                            f"Gate is CLOSED. Work-share on thread '{thread_id}' is blocked. "
+                            f"Post APPROVE on the gate thread '{self.gate_thread_id}' to open the gate."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
         return await self.tools.execute(self.agent_id, name, args)
 
     def _resolve_refs(self, args: dict[str, Any]) -> dict[str, Any]:

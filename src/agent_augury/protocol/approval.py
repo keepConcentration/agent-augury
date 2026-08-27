@@ -61,7 +61,8 @@ class ConsensusGate:
                     return  # waiting for a binding message
             self.thread_id = thread_id
             self.participants = list(thread["participants"])
-            return
+            # Fall through to evaluate this message for APPROVE/REJECT
+            # (don't return — the first message may itself be a vote)
 
         # bound: evaluate votes on the plan thread only
         if thread_id != self.thread_id:

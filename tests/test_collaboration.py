@@ -139,6 +139,31 @@ async def test_gate_opens_on_unanimous_approval():
     assert p.gate_for(P2_SPLIT).is_open
 
 
+class TestP1Finish:
+    """Explicit P1 finish API replaces thread-counting heuristics."""
+
+    def test_finish_p1_advances_to_p2(self):
+        p = make_protocol("a1", "a2", "a3")
+        p.start()
+        assert p.phase == P1_EXPLORE
+        p.finish_p1()
+        assert p.phase == P2_SPLIT
+
+    def test_finish_p1_only_from_p1(self):
+        p = make_protocol("a1", "a2")
+        p.start()
+        p.advance(P2_SPLIT)
+        with pytest.raises(ValueError, match="finish_p1"):
+            p.finish_p1()
+
+    def test_finish_p1_before_start_raises(self):
+        p = make_protocol("a1", "a2")
+        # Protocol starts at P1_EXPLORE after construction — advance first
+        p.advance(P2_SPLIT)
+        with pytest.raises(ValueError, match="finish_p1"):
+            p.finish_p1()
+
+
 class TestAssembler:
     """Assembler defaults to first participant."""
 

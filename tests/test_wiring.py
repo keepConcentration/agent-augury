@@ -8,6 +8,7 @@ import yaml
 from agent_augury.backend.base import Completion, ToolCall
 from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.config import ConfigError, load_config
+from agent_augury.protocol.phases import P1_EXPLORE
 from agent_augury.session import Session
 
 
@@ -311,3 +312,137 @@ def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys, monkeypatch):
     assert rc == 0
     assert "[agent-1]" in out and "[agent-2]" in out
     assert "steps=" in out
+
+
+# ---------------------------------------------------------------------------
+# v0.2: gate-aware per-phase blocking
+# ---------------------------------------------------------------------------
+
+
+PROTOCOL_PHASE_GATE_CFG = {
+    "mode": "L3",
+    "max_steps": 30,
+    "protocol": {
+        "participants": ["a1", "a2"],
+        "assembler_id": "a1",
+        "gates": {
+            "P2_SPLIT": "plan",
+            "P3_EXECUTE": "execution",
+        },
+    },
+    "agents": [
+        {
+            "id": "a1",
+            "backend": {
+                "type": "fake",
+                "script": [
+                    # P1: create threads
+                    {"tool_calls": [
+                        {"name": "create_thread", "arguments": {
+                            "name": "plan", "participants": ["a1", "a2"]}},
+                        {"name": "create_thread", "arguments": {
+                            "name": "execution", "participants": ["a1", "a2"]}},
+                    ]},
+                    # P2: propose on plan thread
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread:0",
+                            "content": "PROPOSE: a1→검색, a2→정리",
+                            "mentions": []}},
+                    ]},
+                    # P2: approve → P2 gate opens → P3
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread:0",
+                            "content": "APPROVE: ok",
+                            "mentions": []}},
+                    ]},
+                    # P3: post work log on execution thread
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread:1",
+                            "content": "(FYI) a1 작업 완료",
+                            "mentions": []}},
+                    ]},
+                    # P3: approve → P3 gate opens → P4
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread:1",
+                            "content": "APPROVE: ok",
+                            "mentions": []}},
+                    ]},
+                    {"text": "done"},
+                ],
+            },
+        },
+        {
+            "id": "a2",
+            "backend": {
+                "type": "fake",
+                "script": [
+                    # P1: wait (no-op)
+                    {"text": "waiting..."},
+                    # P2: approve split (after a1's PROPOSE)
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread_by_name:plan",
+                            "content": "APPROVE: ok",
+                            "mentions": []}},
+                    ]},
+                    # P3: post work log
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread_by_name:execution",
+                            "content": "(FYI) a2 작업 완료",
+                            "mentions": []}},
+                    ]},
+                    # P3: approve
+                    {"tool_calls": [
+                        {"name": "send_message", "arguments": {
+                            "thread": "$thread_by_name:execution",
+                            "content": "APPROVE: ok",
+                            "mentions": []}},
+                    ]},
+                    {"text": "done"},
+                ],
+            },
+        },
+    ],
+}
+
+
+async def test_protocol_gate_state_injected_per_phase(tmp_path):
+    """Gate state from the current phase is injected into agents."""
+    session = Session.from_config(load_config(write_cfg(tmp_path, PROTOCOL_PHASE_GATE_CFG)))
+    protocol = session.protocol
+    assert protocol is not None
+
+    # Drive P1→P2 transition: when both threads exist, finish P1
+    def on_step(agent_id, result):
+        if protocol.phase == P1_EXPLORE and len(session.server.snapshot()["threads"]) >= 2:
+            protocol.finish_p1()
+
+    session.on_step = on_step
+    await session.run()
+
+    # Protocol should have advanced through P2 and P3 gates
+    assert protocol.gate_for("P2_SPLIT").is_open
+    assert protocol.gate_for("P3_EXECUTE").is_open
+
+
+async def test_protocol_phase_advances_with_gates(tmp_path):
+    """Full protocol run: P1 → P2 (gate) → P3 (gate) → P4."""
+    session = Session.from_config(load_config(write_cfg(tmp_path, PROTOCOL_PHASE_GATE_CFG)))
+    protocol = session.protocol
+    assert protocol is not None
+
+    # Drive P1→P2 transition
+    def on_step(agent_id, result):
+        if protocol.phase == P1_EXPLORE and len(session.server.snapshot()["threads"]) >= 2:
+            protocol.finish_p1()
+
+    session.on_step = on_step
+    await session.run()
+
+    # Should have reached at least P4 (P3 gate opens → advance to P4)
+    assert protocol.phase in ("P4_REVIEW", "P5_SUBMIT", "COMPLETED")

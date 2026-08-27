@@ -191,10 +191,73 @@ def test_l2_adds_wait_for_mention_tool():
 # ---------------------------------------------------------------------------
 
 
-def test_system_prompt_contains_prefix_conventions_and_mention_syntax():
+async def test_system_prompt_contains_prefix_conventions_and_mention_syntax():
     from agent_augury.agent.system_prompt import render_system_prompt
 
     prompt = render_system_prompt("agent-2")
     assert "agent-2" in prompt
     assert "FYI:" in prompt and "URGENT:" in prompt
     assert "@agent-" in prompt  # mention surface syntax documented
+
+
+# ---------------------------------------------------------------------------
+# tool_call_id propagation (OpenAI multi-turn compatibility)
+# ---------------------------------------------------------------------------
+
+
+async def test_tool_call_id_propagated_to_tool_result_messages():
+    """tool_call_id from the model request must appear in the tool result."""
+    server = MessageServer()
+    server.register_agent("agent-1")
+    server.register_agent("agent-2")
+
+    agent = make_agent(
+        server,
+        "agent-1",
+        [
+            Completion(
+                tool_calls=[
+                    ToolCall(id="call_abc123", name="create_thread", arguments={
+                        "name": "plan", "participants": ["agent-1", "agent-2"]
+                    }),
+                ]
+            ),
+            Completion(text="done"),
+        ],
+    )
+    await agent.step()
+
+    tool_msgs = [m for m in agent.conversation if m["role"] == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0]["tool_call_id"] == "call_abc123"
+
+
+async def test_multiple_tool_calls_each_get_their_own_tool_call_id():
+    """Each tool call in a multi-call completion gets its own id."""
+    server = MessageServer()
+    server.register_agent("agent-1")
+    server.register_agent("agent-2")
+
+    agent = make_agent(
+        server,
+        "agent-1",
+        [
+            Completion(
+                tool_calls=[
+                    ToolCall(id="id_1", name="create_thread", arguments={
+                        "name": "t1", "participants": ["agent-1", "agent-2"]
+                    }),
+                    ToolCall(id="id_2", name="create_thread", arguments={
+                        "name": "t2", "participants": ["agent-1", "agent-2"]
+                    }),
+                ]
+            ),
+            Completion(text="done"),
+        ],
+    )
+    await agent.step()
+
+    tool_msgs = [m for m in agent.conversation if m["role"] == "tool"]
+    assert len(tool_msgs) == 2
+    ids = {m["tool_call_id"] for m in tool_msgs}
+    assert ids == {"id_1", "id_2"}

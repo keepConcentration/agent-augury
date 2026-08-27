@@ -112,6 +112,60 @@ async def test_subscribers_receive_messages_in_order():
     assert seen == [(seq[m1], "a"), (seq[m2], "a")]
 
 
+# ---------------------------------------------------------------------------
+# P3+ gates (require_proposal=False): first message binds AND is evaluated
+# ---------------------------------------------------------------------------
+
+
+async def test_gate_without_proposal_approve_counts_on_first_message():
+    """For P3+ gates (require_proposal=False), the first message binds the
+    gate AND is evaluated for APPROVE/REJECT — so a single agent's
+    APPROVE on a single-participant thread opens the gate immediately."""
+    server = make_server("a", "b")
+    gate = ConsensusGate(server, thread_name="work", require_proposal=False)
+    server.subscribe(gate.on_message)
+
+    work = await server.create_thread("work", participants=["a", "b"])
+    # First message is APPROVE → binds AND counts as approval
+    await server.send_message(work, author="a", content="APPROVE: ok", mentions=[])
+
+    assert gate.thread_id == work
+    assert gate.has_proposal  # bound = has_proposal for require_proposal=False
+    assert "a" in gate.approvals
+    assert not gate.is_open  # not unanimous yet (needs b)
+
+
+async def test_gate_without_proposal_reject_on_first_message_clears():
+    """REJECT on the first message of a P3+ gate clears approvals."""
+    server = make_server("a", "b")
+    gate = ConsensusGate(server, thread_name="work", require_proposal=False)
+    server.subscribe(gate.on_message)
+
+    work = await server.create_thread("work", participants=["a", "b"])
+    await server.send_message(work, author="a", content="APPROVE: ok", mentions=[])
+    assert "a" in gate.approvals
+
+    # REJECT clears
+    await server.send_message(work, author="b", content="REJECT: nope", mentions=[])
+    assert len(gate.approvals) == 0
+    assert not gate.is_open
+
+
+async def test_gate_without_proposal_unanimous_approve_opens():
+    """P3+ gate opens when all participants approve (no PROPOSE needed)."""
+    server = make_server("a", "b", "c")
+    gate = ConsensusGate(server, thread_name="work", require_proposal=False)
+    server.subscribe(gate.on_message)
+
+    work = await server.create_thread("work", participants=["a", "b", "c"])
+    await server.send_message(work, author="a", content="APPROVE: ok", mentions=[])
+    assert not gate.is_open
+    await server.send_message(work, author="b", content="APPROVE: ok", mentions=[])
+    assert not gate.is_open
+    await server.send_message(work, author="c", content="APPROVE: ok", mentions=[])
+    assert gate.is_open
+
+
 async def test_execution_only_counted_after_gate_opens():
     """Pass-criteria primitive: work-share messages carry seq > opened_at_seq."""
     server = make_server("a", "b")

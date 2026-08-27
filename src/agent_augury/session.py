@@ -11,6 +11,7 @@ into each agent's system prompt.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Callable
 
 from .agent.loop import AgentLoop
@@ -120,12 +121,27 @@ class Session:
 
         # gate-aware: inject gate state into agents each step
         if self.gate:
+            # Pre-create the gate thread and bind it
+            participant_ids = [a.agent_id for a in self.agents]
+            tid = await self.server.create_thread(
+                self.gate.thread_name, participants=participant_ids
+            )
+            self.gate.bind_to_thread(tid)
             for agent in self.agents:
                 agent.gate_open = self.gate.is_open
                 agent.gate_thread_id = self.gate.thread_id
 
         # v0.2: start the collaboration protocol
         if self.protocol:
+            # Pre-create threads for each gate and bind them explicitly.
+            # This removes the dependency on callback-based binding and ensures
+            # gates are ready when the phase begins.
+            for phase, gate in self.protocol._gates.items():
+                if gate is not None:
+                    tid = await self.server.create_thread(
+                        gate.thread_name, participants=self.protocol.participants
+                    )
+                    gate.bind_to_thread(tid)
             self.protocol.start()
             # Inject initial phase context + gate state
             for agent in self.agents:

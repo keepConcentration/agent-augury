@@ -184,19 +184,18 @@ class AgentLoop:
                         ensure_ascii=False,
                     )
                 # If gate_thread_id is None (initial state, no gate bound yet),
-                # block work-share but allow gate-binding messages (PROPOSE/APPROVE/REJECT)
+                # only READY messages are allowed (to finish P1).
+                # PROPOSE/APPROVE/REJECT are NOT allowed until a gate thread
+                # is explicitly bound.
                 if self.gate_thread_id is None:
                     content = args.get("content", "")
-                    is_gate_message = any(
-                        content.startswith(p) for p in ("PROPOSE:", "APPROVE:", "REJECT:", "READY")
-                    )
-                    if not is_gate_message:
+                    if content != "READY:":
                         return json.dumps(
                             {
                                 "error": "gate_closed",
                                 "message": (
                                     f"Gate is CLOSED. Work-share on thread '{thread_id}' is blocked. "
-                                    f"Send a gate-binding message (PROPOSE/APPROVE) first to bind and open the gate."
+                                    f"Send READY: to finish P1 exploration first."
                                 ),
                             },
                             ensure_ascii=False,

@@ -118,13 +118,19 @@ class CollaborationProtocol:
         self._server.subscribe(self._on_message)
 
     def _on_message(self, message: dict[str, Any]) -> None:
-        """Track READY messages from participants for P1 finish policy."""
+        """Track READY messages from participants for P1 finish policy.
+
+        Only exact ``READY:`` prefix is recognized (``READYFOO`` is ignored).
+        When all participants have sent READY, automatically finish P1.
+        """
         if self.phase != P1_EXPLORE:
             return
         author = message.get("author", "")
         content = message.get("content", "")
-        if author in self.participants and content.startswith("READY"):
+        if author in self.participants and content == "READY:":
             self._ready_states.add(author)
+            if self.all_ready:
+                self.finish_p1()
 
     @property
     def all_ready(self) -> bool:

@@ -48,6 +48,15 @@ class MessageServer:
     # -- primitives ---------------------------------------------------------
 
     async def create_thread(self, name: str, *, participants: list[str]) -> str:
+        # Return existing thread with the same name if it exists
+        for thread in self._threads.values():
+            if thread["name"] == name:
+                # Update participants to include any new agents
+                existing = set(thread["participants"])
+                new = set(participants)
+                if new - existing:
+                    thread["participants"] = sorted(existing | new)
+                return thread["thread_id"]
         for p in participants:
             self.register_agent(p)
         thread_id = f"thread-{next(self._thread_ids)}"

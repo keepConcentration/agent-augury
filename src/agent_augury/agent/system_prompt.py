@@ -30,7 +30,10 @@ _PHASE_INSTRUCTIONS = {
 Current phase: **P1 EXPLORE**
 - Independently explore the task and gather information.
 - Formulate sub-questions and draft initial findings.
-- Do NOT send messages yet — exploration is silent.""",
+- Do NOT send messages yet — exploration is silent.
+- When you are done exploring, send ``READY:`` to signal completion.
+  Only ``READY:`` is recognized; ``READYFOO`` or similar is ignored.
+  P1 finishes automatically once ALL participants have sent ``READY:``.""",
     "P2_SPLIT": """\
 Current phase: **P2 SPLIT**
 - Pool your discoveries with teammates on the plan thread.

@@ -37,6 +37,23 @@ class ConsensusGate:
         self._bound: bool = False
         self._on_open: GateCallback | None = None
 
+    # -- explicit binding (for pre-created threads) -------------------------
+
+    def bind_to_thread(self, thread_id: str) -> None:
+        """Explicitly bind this gate to a pre-created thread.
+
+        Used by Session to bind gates to threads before the protocol starts,
+        so the gate is ready when the phase begins.
+        """
+        thread = self._server.get_thread(thread_id)
+        if thread["name"] != self.thread_name:
+            raise ValueError(
+                f"thread name mismatch: expected {self.thread_name!r}, "
+                f"got {thread['name']!r}"
+            )
+        self.thread_id = thread_id
+        self.participants = list(thread["participants"])
+
     # -- subscription entrypoint ---------------------------------------------
 
     def on_message(self, message: dict[str, Any]) -> None:

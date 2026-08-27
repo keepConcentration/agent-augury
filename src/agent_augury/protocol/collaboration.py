@@ -113,6 +113,19 @@ class CollaborationProtocol:
         """Begin the protocol at P1_EXPLORE."""
         self.phase_manager.advance(P1_EXPLORE)
 
+    def finish_p1(self) -> None:
+        """Explicitly finish P1 exploration and advance to P2.
+
+        This replaces fragile thread-counting heuristics in orchestrators —
+        the orchestrator calls this when it determines P1 is done, rather
+        than inferring it from server state.
+        """
+        if self.phase != P1_EXPLORE:
+            raise ValueError(
+                f"finish_p1() can only be called from P1_EXPLORE, current phase: {self.phase}"
+            )
+        self.advance(P2_SPLIT)
+
     def advance(self, to: Phase) -> None:
         """Advance to the next phase, setting up gates as needed."""
         # Idempotent: no-op if same phase

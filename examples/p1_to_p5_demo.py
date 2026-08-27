@@ -253,15 +253,15 @@ def main() -> int:
     assert protocol is not None
 
     # Track thread creation to detect P1→P2 transition
-    p1_done = False
+    p1_finished = False
 
     def on_step(agent_id, result):
-        nonlocal p1_done
-        # After assembler creates all 4 threads, advance from P1 to P2
-        if not p1_done and agent_id == "agent-1" and len(protocol._server.snapshot()["threads"]) >= 4:
+        nonlocal p1_finished
+        # After assembler creates all 4 threads, explicitly finish P1 → P2
+        if not p1_finished and agent_id == "agent-1" and len(protocol._server.snapshot()["threads"]) >= 4:
             if protocol.phase == P1_EXPLORE:
-                protocol.advance(P2_SPLIT)
-                p1_done = True
+                protocol.finish_p1()
+                p1_finished = True
 
     session.on_step = on_step
 

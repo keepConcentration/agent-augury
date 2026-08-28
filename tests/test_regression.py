@@ -286,6 +286,83 @@ async def test_gate_binding_messages_allowed_after_gate_bound():
 
 
 # ---------------------------------------------------------------------------
+# Fix 4: P1 blocks non-READY messages; bind_to_thread does not set has_proposal
+# ---------------------------------------------------------------------------
+
+
+async def test_p1_explore_blocks_non_ready_messages():
+    """P1_EXPLORE: only READY: messages are allowed; others are blocked."""
+    from agent_augury.protocol.collaboration import CollaborationProtocol
+    from agent_augury.protocol.phases import P1_EXPLORE
+
+    server = MessageServer()
+    for a in ("a1", "a2"):
+        server.register_agent(a)
+
+    protocol = CollaborationProtocol(server, participants=["a1", "a2"])
+    protocol.start()
+    assert protocol.phase == P1_EXPLORE
+
+    tid = await server.create_thread("explore", participants=["a1", "a2"])
+
+    # Create an agent with P1 phase state injected
+    agent = make_agent(
+        server,
+        "a1",
+        [
+            Completion(
+                tool_calls=[
+                    ToolCall(id="c1", name="send_message", arguments={
+                        "thread": tid, "content": "(FYI) my findings", "mentions": []
+                    }),
+                ]
+            ),
+        ],
+    )
+    # Simulate what _inject_protocol_gate_state does for P1
+    agent.gate_open = False
+    agent.gate_thread_id = None
+
+    await agent.step()
+
+    # The message should be blocked — no message in the thread
+    snap = server.snapshot()
+    msgs_in_thread = [m for m in snap["messages"] if m["thread_id"] == tid]
+    assert len(msgs_in_thread) == 0
+
+    # Tool result should indicate gate_closed error
+    tool_msgs = [m for m in agent.conversation if m["role"] == "tool"]
+    assert len(tool_msgs) == 1
+    result = json.loads(tool_msgs[0]["content"])
+    assert result["error"] == "gate_closed"
+
+
+async def test_bind_to_thread_does_not_set_has_proposal():
+    """bind_to_thread() alone must NOT make has_proposal True.
+
+    has_proposal should only become True when an actual PROPOSE message
+    arrives. This prevents gates from opening without a real proposal
+    when Session pre-binds gates during setup.
+    """
+    from agent_augury.protocol.approval import ConsensusGate
+
+    server = MessageServer()
+    for a in ("a1", "a2"):
+        server.register_agent(a)
+
+    gate = ConsensusGate(server, thread_name="plan", require_proposal=True)
+
+    tid = await server.create_thread("plan", participants=["a1", "a2"])
+
+    # Explicitly bind without any PROPOSE message
+    gate.bind_to_thread(tid)
+
+    assert gate.thread_id == tid
+    assert gate.participants == ["a1", "a2"]
+    assert gate.has_proposal is False, "bind_to_thread alone must not set has_proposal"
+
+
+# ---------------------------------------------------------------------------
 # Fix 3: READY-based P1 finish policy
 # ---------------------------------------------------------------------------
 

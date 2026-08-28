@@ -216,13 +216,21 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
 
     When a phase has a gate, the agent's gate_open/gate_thread_id reflect
     that gate's state. When the gate is closed, work-share on non-gate
-    threads is blocked. Phases without a gate (P1) leave the agent unrestricted.
+    threads is blocked.
+
+    P1_EXPLORE: gate_open=False, gate_thread_id=None — only READY: messages
+    are allowed (to finish exploration). All other send_message calls are
+    blocked by the gate-closed logic in AgentLoop._execute_tool.
     """
     gate = protocol.gate_for(protocol.phase)
     if gate is not None:
         agent.gate_open = gate.is_open
         agent.gate_thread_id = gate.thread_id
+    elif protocol.phase == P1_EXPLORE:
+        # P1: only READY: messages allowed to finish exploration
+        agent.gate_open = False
+        agent.gate_thread_id = None
     else:
-        # Phase has no gate (e.g. P1_EXPLORE) — no restriction
+        # Other phases without a gate — no restriction
         agent.gate_open = True
         agent.gate_thread_id = None

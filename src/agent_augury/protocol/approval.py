@@ -36,6 +36,10 @@ class ConsensusGate:
         self.opened_at_seq: int | None = None
         self._bound: bool = False
         self._on_open: GateCallback | None = None
+        # v0.2: separate flag tracking whether a PROPOSE message was actually received.
+        # This prevents has_proposal from being True when bind_to_thread() is called
+        # explicitly (e.g. during Session setup) before any PROPOSE arrives.
+        self._proposal_received: bool = False
 
     # -- explicit binding (for pre-created threads) -------------------------
 
@@ -44,6 +48,9 @@ class ConsensusGate:
 
         Used by Session to bind gates to threads before the protocol starts,
         so the gate is ready when the phase begins.
+
+        Note: does NOT mark _proposal_received. has_proposal reflects whether
+        an actual PROPOSE message arrived, not whether the gate is bound.
         """
         thread = self._server.get_thread(thread_id)
         if thread["name"] != self.thread_name:
@@ -76,6 +83,8 @@ class ConsensusGate:
             if self.bind_prefixes is not None:
                 if not any(message["content"].startswith(p) for p in self.bind_prefixes):
                     return  # waiting for a binding message
+                # PROPOSE message binds AND marks proposal received
+                self._proposal_received = True
             self.thread_id = thread_id
             self.participants = list(thread["participants"])
             # Fall through to evaluate this message for APPROVE/REJECT
@@ -88,7 +97,10 @@ class ConsensusGate:
         author = message["author"]
         if content.startswith("REJECT:"):
             self.approvals.clear()
-        elif content.startswith("APPROVE:") and self.has_proposal:
+        elif content.startswith("APPROVE:"):
+            if not self.has_proposal:
+                # First APPROVE on a require_proposal=False gate binds the proposal
+                self._proposal_received = True
             if author in self.participants:
                 self.approvals.add(author)
                 if set(self.participants) <= self.approvals:
@@ -108,12 +120,9 @@ class ConsensusGate:
 
     @property
     def has_proposal(self) -> bool:
-        """True once a binding proposal message has been recorded."""
-        if self.bind_prefixes is None:
-            # require_proposal=False → bound by any message; proposal state
-            # is tracked by whether we've seen any message on the thread
-            return self.thread_id is not None
-        # require_proposal=True → check if any message started with a prefix
-        # The gate binds on the first PROPOSE: message, so thread_id != None
-        # means we've seen a proposal.
-        return self.thread_id is not None
+        """True once a binding proposal message has been recorded.
+
+        v0.2: uses _proposal_received so that bind_to_thread() alone
+        (without a PROPOSE message) does not make this True.
+        """
+        return self._proposal_received

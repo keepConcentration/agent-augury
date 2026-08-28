@@ -28,12 +28,57 @@ OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
 # -- TTY detection -----------------------------------------------------------
 
 
-def check_tty() -> bool:
-    """Return True when both stdin and stdout are interactive terminals."""
-    try:
-        return sys.stdin.isatty() and sys.stdout.isatty()
-    except (AttributeError, ValueError):
+def _get_kernel32():
+    """Return the kernel32 WinDLL instance (separated for testability)."""
+    import ctypes
+    return ctypes.windll.kernel32
+
+
+def _try_attach_parent_console() -> bool:
+    """On Windows, try to attach to the parent process's console.
+
+    When agent-augury is launched from a CMD/PowerShell terminal via a
+    pip-installed console_scripts wrapper (which uses a GUI subsystem EXE),
+    the process is detached from the parent console. This causes isatty()
+    to return False even though the user is at an interactive terminal.
+
+    Returns True if the attach succeeded and stdin/stdout are now TTYs.
+    """
+    if sys.platform != "win32":
         return False
+
+    try:
+        kernel32 = _get_kernel32()
+        ATTACH_PARENT_PROCESS = -1
+
+        # Try to attach to the parent console.
+        if not kernel32.AttachConsole(ATTACH_PARENT_PROCESS):
+            return False
+
+        # Reopen stdin/stdout to the console.
+        sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="replace")
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (OSError, AttributeError, ValueError, ImportError):
+        return False
+
+
+def check_tty() -> bool:
+    """Return True when both stdin and stdout are interactive terminals.
+
+    On Windows, if isatty() returns False (e.g. when launched via a
+    pip-installed console_scripts wrapper), attempt to attach to the
+    parent console and reopen stdin/stdout.
+    """
+    try:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            return True
+    except (AttributeError, ValueError):
+        pass
+
+    # On Windows, try to attach to the parent console.
+    return _try_attach_parent_console()
 
 
 # -- input helpers -----------------------------------------------------------

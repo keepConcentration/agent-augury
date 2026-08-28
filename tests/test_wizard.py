@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -312,3 +312,67 @@ def test_cli_wizard_generates_valid_yaml(tmp_path):
     assert loaded["mode"] == "L3"
     assert loaded["task"] == "e2e task"
     assert loaded["agents"][0]["backend"]["script"] == ["hello"]
+
+
+# ---------------------------------------------------------------------------
+# Windows AttachConsole scenarios
+# ---------------------------------------------------------------------------
+
+
+def test_try_attach_parent_console_non_windows():
+    """On non-Windows, _try_attach_parent_console returns False immediately."""
+    with patch("sys.platform", "linux"):
+        from agent_augury.wizard import _try_attach_parent_console
+        assert _try_attach_parent_console() is False
+
+
+def test_try_attach_parent_console_success():
+    """On Windows, AttachConsole succeeds and stdin/stdout become TTYs."""
+    mock_kernel = MagicMock()
+    mock_kernel.AttachConsole.return_value = 1  # success
+
+    with patch("sys.platform", "win32"), \
+         patch("agent_augury.wizard._get_kernel32", return_value=mock_kernel), \
+         patch("builtins.open", MagicMock(return_value=MagicMock(isatty=MagicMock(return_value=True)))):
+        from agent_augury.wizard import _try_attach_parent_console
+        assert _try_attach_parent_console() is True
+        mock_kernel.AttachConsole.assert_called_once_with(-1)
+
+
+def test_try_attach_parent_console_kernel_fails():
+    """When AttachConsole returns 0 (failure), return False."""
+    mock_kernel = MagicMock()
+    mock_kernel.AttachConsole.return_value = 0  # failure
+
+    with patch("sys.platform", "win32"), \
+         patch("agent_augury.wizard._get_kernel32", return_value=mock_kernel):
+        from agent_augury.wizard import _try_attach_parent_console
+        assert _try_attach_parent_console() is False
+
+
+def test_try_attach_parent_console_exception():
+    """If any exception occurs, return False gracefully."""
+    with patch("sys.platform", "win32"), \
+         patch("agent_augury.wizard._get_kernel32", side_effect=OSError("no console")):
+        from agent_augury.wizard import _try_attach_parent_console
+        assert _try_attach_parent_console() is False
+
+
+def test_check_tty_falls_back_to_attach_console():
+    """When isatty() returns False, check_tty tries AttachConsole on Windows."""
+    with patch("sys.platform", "win32"), \
+         patch("sys.stdin", MagicMock(isatty=MagicMock(return_value=False))), \
+         patch("sys.stdout", MagicMock(isatty=MagicMock(return_value=False))), \
+         patch("agent_augury.wizard._try_attach_parent_console", return_value=True) as mock_attach:
+        from agent_augury.wizard import check_tty
+        assert check_tty() is True
+        mock_attach.assert_called_once()
+
+
+def test_check_tty_no_attach_on_non_windows():
+    """On non-Windows, check_tty does not try AttachConsole."""
+    with patch("sys.platform", "linux"), \
+         patch("sys.stdin", MagicMock(isatty=MagicMock(return_value=False))), \
+         patch("sys.stdout", MagicMock(isatty=MagicMock(return_value=False))):
+        from agent_augury.wizard import check_tty
+        assert check_tty() is False

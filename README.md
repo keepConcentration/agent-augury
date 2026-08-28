@@ -56,12 +56,17 @@ Both run the identical gate protocol: propose → unanimous approve → gate OPE
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/ -q                      # unit tests
+pytest tests/ -q                      # unit tests (offline; skips OpenAI integration)
 python examples/l2_vs_l3_toy.py       # L2 vs L3 contrast verification
 python examples/consensus_demo.py     # v0.1b consensus gate verification
 python examples/p1_to_p5_demo.py      # v0.2 P1~P5 full protocol verification
+agent-augury --config examples/p1_to_p5_protocol.yaml  # same P1~P5 flow via YAML (offline)
 agent-augury --config examples/demo.yaml   # E2E demo with a fake backend
 agent-augury --config examples/consensus_openai.yaml  # E2E with a real LLM (needs OPENAI_API_KEY)
+
+# Opt-in OpenAI API smoke (incurs cost):
+#   export AUGURY_RUN_OPENAI_TESTS=1 OPENAI_API_KEY=sk-...
+#   pytest tests/test_integration_openai.py -m openai -v
 ```
 
 ## License

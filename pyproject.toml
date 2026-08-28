@@ -39,6 +39,9 @@ packages = ["src/agent_augury"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "openai: opt-in tests requiring AUGURY_RUN_OPENAI_TESTS=1 and OPENAI_API_KEY",
+]
 
 [tool.ruff]
 line-length = 100

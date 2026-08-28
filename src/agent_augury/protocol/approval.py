@@ -95,15 +95,20 @@ class ConsensusGate:
             return
         content = message["content"]
         author = message["author"]
-        if content.startswith("REJECT:"):
+        if content.startswith("PROPOSE:"):
+            self._proposal_received = True
+        elif content.startswith("REJECT:"):
             self.approvals.clear()
         elif content.startswith("APPROVE:"):
-            if not self.has_proposal:
-                # First APPROVE on a require_proposal=False gate binds the proposal
+            if not self.require_proposal:
+                # P3+ (require_proposal=False): first APPROVE acts as the proposal
+                # P2 (require_proposal=True): proposal must come from a real PROPOSE
                 self._proposal_received = True
             if author in self.participants:
                 self.approvals.add(author)
-                if set(self.participants) <= self.approvals:
+                if set(self.participants) <= self.approvals and (
+                    not self.require_proposal or self.has_proposal
+                ):
                     self.opened_at_seq = message["seq"]
                     if self._on_open:
                         self._on_open()

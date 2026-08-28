@@ -166,6 +166,66 @@ async def test_gate_without_proposal_unanimous_approve_opens():
     assert gate.is_open
 
 
+# ---------------------------------------------------------------------------
+# P2 APPROVE-only bypass regression (t_56607f85)
+# ---------------------------------------------------------------------------
+
+
+async def test_p2_prebound_approve_only_does_not_open():
+    """Regression: P2 (require_proposal=True) pre-bound via bind_to_thread()
+    must NOT open on APPROVE alone — a real PROPOSE is required first.
+
+    Bug: _proposal_received was set True on the first APPROVE regardless of
+    require_proposal, letting P2 gate open without a PROPOSE."""
+    server = make_server("a", "b")
+    gate = ConsensusGate(server, thread_name="plan", require_proposal=True)
+    server.subscribe(gate.on_message)
+
+    plan = await server.create_thread("plan", participants=["a", "b"])
+    gate.bind_to_thread(plan)
+
+    # APPROVE only — no PROPOSE
+    await server.send_message(plan, author="a", content="APPROVE: ok", mentions=[])
+    await server.send_message(plan, author="b", content="APPROVE: ok", mentions=[])
+
+    assert not gate.is_open, "P2 gate must not open on APPROVE alone (no PROPOSE)"
+    assert not gate.has_proposal, "P2 has_proposal must be False without a real PROPOSE"
+
+
+async def test_p2_propose_then_approve_opens():
+    """P2 (require_proposal=True): PROPOSE followed by unanimous APPROVE opens."""
+    server = make_server("a", "b")
+    gate = ConsensusGate(server, thread_name="plan", require_proposal=True)
+    server.subscribe(gate.on_message)
+
+    plan = await server.create_thread("plan", participants=["a", "b"])
+    gate.bind_to_thread(plan)
+
+    await server.send_message(plan, author="a", content="PROPOSE: a→검색, b→정리", mentions=[])
+    assert gate.has_proposal
+    await server.send_message(plan, author="a", content="APPROVE: ok", mentions=[])
+    assert not gate.is_open
+    await server.send_message(plan, author="b", content="APPROVE: ok", mentions=[])
+    assert gate.is_open
+
+
+async def test_p3_prebound_approve_only_still_opens():
+    """P3+ (require_proposal=False): APPROVE alone still opens the gate.
+    The fix must not break the existing P3+ behavior."""
+    server = make_server("a", "b")
+    gate = ConsensusGate(server, thread_name="work", require_proposal=False)
+    server.subscribe(gate.on_message)
+
+    work = await server.create_thread("work", participants=["a", "b"])
+    gate.bind_to_thread(work)
+
+    await server.send_message(work, author="a", content="APPROVE: ok", mentions=[])
+    assert not gate.is_open
+    await server.send_message(work, author="b", content="APPROVE: ok", mentions=[])
+    assert gate.is_open
+    assert gate.has_proposal  # bound via APPROVE for require_proposal=False
+
+
 async def test_execution_only_counted_after_gate_opens():
     """Pass-criteria primitive: work-share messages carry seq > opened_at_seq."""
     server = make_server("a", "b")

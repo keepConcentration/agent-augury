@@ -34,6 +34,8 @@ class MessageServer:
         self._thread_ids = itertools.count(1)
         self._message_ids = itertools.count(1)
         self._subscribers: list[Callable[[dict[str, Any]], None]] = []
+        # v0.3: event stream for broadcast logging (thread/message/resource)
+        self._event_subscribers: list[Callable[[dict[str, Any]], None]] = []
 
     # -- registration -------------------------------------------------------
 
@@ -65,6 +67,13 @@ class MessageServer:
             "name": name,
             "participants": list(participants),
         }
+        self._emit_event({
+            "type": "create_thread",
+            "thread_id": thread_id,
+            "name": name,
+            "participants": list(participants),
+            "timestamp": int(time.time()),
+        })
         return thread_id
 
     async def send_message(
@@ -113,6 +122,17 @@ class MessageServer:
             subscriber(message)
         async with self._cond:
             self._cond.notify_all()
+
+        self._emit_event({
+            "type": "send_message",
+            "message_id": message["message_id"],
+            "thread_id": thread_id,
+            "author": author,
+            "content": content,
+            "mentions": list(mentions or []),
+            "delivered_to": targets,
+            "timestamp": int(time.time()),
+        })
         return message["message_id"]
 
     # -- subscriptions (gate / mirrors) --------------------------------------
@@ -120,6 +140,22 @@ class MessageServer:
     def subscribe(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Register a synchronous observer invoked on every sent message."""
         self._subscribers.append(callback)
+
+    def subscribe_events(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        """Register a synchronous observer for all broadcast events.
+
+        Events are emitted for: create_thread, send_message, read_resource.
+        Each event is a dict with at least ``type`` and ``timestamp`` keys.
+        """
+        self._event_subscribers.append(callback)
+
+    def _emit_event(self, event: dict[str, Any]) -> None:
+        """Fire an event to all event subscribers (best-effort, no raise)."""
+        for subscriber in self._event_subscribers:
+            try:
+                subscriber(event)
+            except Exception:  # noqa: BLE001 — subscriber must not break server
+                pass
 
     async def wait_for_mention(
         self, agent_id: str, timeout: float | None = None

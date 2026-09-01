@@ -104,7 +104,15 @@ class ToolBox:
             )
             return _json({"message_id": mid, "status": "sent"})
         if name == "read_resource":
-            return _json(self.server.snapshot())
+            snap = self.server.snapshot()
+            self.server._emit_event({
+                "type": "read_resource",
+                "agent_id": agent_id,
+                "threads": len(snap["threads"]),
+                "messages": len(snap["messages"]),
+                "timestamp": int(__import__("time").time()),
+            })
+            return _json(snap)
         if name == "wait_for_mention":
             batch = await self.server.wait_for_mention(
                 agent_id, timeout=args.get("timeout")

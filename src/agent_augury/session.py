@@ -111,12 +111,18 @@ class Session:
 
     # -- lifecycle -----------------------------------------------------------
 
-    async def run(self) -> int:
+    async def run(self, initial_prompt: str | None = None) -> int:
         """Round-robin steps until every agent finishes or max_steps is hit.
+
+        Args:
+            initial_prompt: If provided, injected as the first user message
+                to the first agent.  Takes precedence over ``self.task``.
 
         Returns the total number of completed steps.
         """
-        if self.task:
+        if initial_prompt:
+            self.agents[0].conversation.append({"role": "user", "content": initial_prompt})
+        elif self.task:
             self.agents[0].conversation.append({"role": "user", "content": self.task})
 
         # gate-aware: inject gate state into agents each step
@@ -166,8 +172,14 @@ class Session:
                     _inject_protocol_gate_state(agent, self.protocol)
                 try:
                     result = await agent.step()
-                except IndexError:
-                    # scripted backend exhausted → treat as finished
+                except Exception as exc:  # noqa: BLE001 — single agent failure
+                    # Agent step failed — mark as finished so the session
+                    # continues with remaining agents instead of aborting.
+                    error_msg = str(exc)
+                    print(
+                        f"  [{agent.agent_id}] step failed: {error_msg}",
+                        flush=True,
+                    )
                     finished[agent.agent_id] = True
                     continue
 
@@ -175,7 +187,11 @@ class Session:
                 progressed = True
                 if self.on_step:
                     self.on_step(agent.agent_id, result)
-                if not result.tool_calls and result.text is None:
+                # An agent is finished only when it produces no output AND
+                # has no pending messages to process. If it sent messages,
+                # it should stay alive to read responses in the next round.
+                has_pending = self.server.inbox_size(agent.agent_id) > 0
+                if not result.tool_calls and result.text is None and not has_pending:
                     finished[agent.agent_id] = True
 
             if not progressed:

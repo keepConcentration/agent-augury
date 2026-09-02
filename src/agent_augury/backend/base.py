@@ -25,6 +25,7 @@ class Completion:
 
     text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: dict[str, Any] | None = None
 
 
 class ModelBackend(ABC):
@@ -35,3 +36,24 @@ class ModelBackend(ABC):
         self, messages: list[Message], tools: list[ToolSpec]
     ) -> Completion:
         """Run one model call over the conversation; may return text and/or tool calls."""
+
+    async def list_models(self) -> list[str] | None:
+        """Fetch available model IDs from the provider.
+
+        Returns None if the provider does not support model listing.
+        Subclasses may override this to provide real listings.
+        """
+        return None
+
+
+class OAuthModelBackend(ModelBackend):
+    """Backend that uses OAuth tokens for API access.
+
+    Subclasses must implement `complete`; token management is handled
+    by the subclass via its own auth flow.
+    """
+
+    @abstractmethod
+    async def get_access_token(self) -> str:
+        """Return a valid access token, refreshing if necessary."""
+

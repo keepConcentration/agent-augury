@@ -154,6 +154,11 @@ def _log_step(agent_id: str, result: StepResult) -> None:
     if result.tool_calls:
         names = ",".join(c.name for c in result.tool_calls)
         parts.append(f"tools=({names})")
+    if result.usage:
+        prompt = result.usage.get("prompt_tokens", "?")
+        completion = result.usage.get("completion_tokens", "?")
+        total = result.usage.get("total_tokens", "?")
+        parts.append(f"tokens={prompt}+{completion}={total}")
     if result.text:
         text = result.text.replace("\n", " ")
         # No truncation — show full text

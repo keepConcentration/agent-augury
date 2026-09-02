@@ -30,6 +30,7 @@ class StepResult:
     text: str | None = None
     tool_calls: list[Any] = field(default_factory=list)
     drained_count: int = 0
+    usage: dict[str, Any] | None = None
 
 
 def format_radio_block(messages: list[Message]) -> str:
@@ -158,6 +159,7 @@ class AgentLoop:
             text=completion.text,
             tool_calls=completion.tool_calls,
             drained_count=len(drained),
+            usage=completion.usage,
         )
 
     async def _execute_tool(self, name: str, args: dict[str, Any]) -> str:

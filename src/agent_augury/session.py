@@ -193,7 +193,7 @@ class Session:
 
                 total_steps += 1
                 progressed = True
-                # Queue tool events for async display
+                # Queue tool events FIRST for async display (before step summary)
                 if result.tool_calls:
                     for call in result.tool_calls:
                         await self._tool_event_queue.put({
@@ -202,6 +202,7 @@ class Session:
                             "args": call.arguments,
                             "timestamp": __import__("time").time(),
                         })
+                # Then emit step summary
                 if self.on_step:
                     self.on_step(agent.agent_id, result)
                 # An agent is finished only when it produces no output AND

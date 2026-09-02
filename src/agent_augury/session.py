@@ -198,9 +198,11 @@ class Session:
 
                 total_steps += 1
                 progressed = True
-                # Queue tool events FIRST for async display (before step summary)
+                # DEBUG: Log tool calls before queueing
                 if result.tool_calls:
+                    print(f"DEBUG: {agent.agent_id} has {len(result.tool_calls)} tool calls", flush=True)
                     for call in result.tool_calls:
+                        print(f"DEBUG: queueing tool event: {call.name}", flush=True)
                         await self._output_queue.put({
                             "type": "tool",
                             "agent_id": agent.agent_id,
@@ -249,6 +251,7 @@ class Session:
             event = await self._output_queue.get()
             if event is None:
                 break
+            print(f"DEBUG: output_consumer got event type={event.get('type')}", flush=True)
             if event.get("type") == "tool" and self.on_tool_event:
                 self.on_tool_event(event)
             elif event.get("type") == "step" and self.on_step:

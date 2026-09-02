@@ -1,0 +1,23 @@
+mode: L3
+max_steps: 200
+agents:
+- id: agent-1
+  backend:
+    type: nous_oauth
+    base_url: https://inference-api.nousresearch.com/v1
+    model: deepseek/deepseek-v4-flash
+- id: agent-2
+  backend:
+    type: nous_oauth
+    base_url: https://inference-api.nousresearch.com/v1
+    model: deepseek/deepseek-v4-flash
+- id: agent-3
+  backend:
+    type: nous_oauth
+    base_url: https://inference-api.nousresearch.com/v1
+    model: deepseek/deepseek-v4-flash
+- id: agent-4
+  backend:
+    type: nous_oauth
+    base_url: https://inference-api.nousresearch.com/v1
+    model: deepseek/deepseek-v4-flash

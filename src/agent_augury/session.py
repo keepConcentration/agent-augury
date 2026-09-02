@@ -64,7 +64,7 @@ class Session:
     # -- assembly ------------------------------------------------------------
 
     @classmethod
-    def from_config(cls, cfg: dict[str, Any]) -> "Session":
+    def from_config(cls, cfg: dict[str, Any], on_step=None, on_tool_event=None) -> "Session":
         server = MessageServer()
         server.set_mode(cfg.get("mode", "L3"))
         agents: list[AgentLoop] = []
@@ -83,6 +83,8 @@ class Session:
             task=cfg.get("task"),
             max_steps=int(cfg.get("max_steps", 20)),
         )
+        session.on_step = on_step
+        session.on_tool_event = on_tool_event
         gate_spec = cfg.get("gate")
         if gate_spec:
             session.gate = ConsensusGate(server, thread_name=gate_spec["thread_name"])

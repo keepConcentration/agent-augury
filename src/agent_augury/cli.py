@@ -225,9 +225,7 @@ def _log_read_resource(event: dict[str, Any]) -> None:
 
 async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False) -> int:
     cfg = load_config(cfg_path)
-    session = Session.from_config(cfg)
-    session.on_step = _log_step
-    session.on_tool_event = _log_tool_event
+    session = Session.from_config(cfg, on_step=_log_step, on_tool_event=_log_tool_event)
 
     # Subscribe broadcast logger to server events
     broadcast = BroadcastLogger(quiet=quiet)

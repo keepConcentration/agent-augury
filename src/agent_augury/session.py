@@ -54,6 +54,9 @@ class Session:
         self.mirror: Any = None
         # v0.2: P1~P5 collaboration protocol
         self.protocol: CollaborationProtocol | None = None
+        # Tool event queue for async output
+        self._tool_event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._tool_event_task: asyncio.Task | None = None
 
     # -- assembly ------------------------------------------------------------
 
@@ -122,6 +125,9 @@ class Session:
 
         Returns the total number of completed steps.
         """
+        # Start tool event consumer task
+        self._tool_event_task = asyncio.create_task(self._tool_event_consumer())
+
         if initial_prompt:
             self.agents[0].conversation.append({"role": "user", "content": initial_prompt})
         elif self.task:
@@ -187,10 +193,10 @@ class Session:
 
                 total_steps += 1
                 progressed = True
-                # Emit tool events for real-time display
-                if self.on_tool_event and result.tool_calls:
+                # Queue tool events for async display
+                if result.tool_calls:
                     for call in result.tool_calls:
-                        self.on_tool_event({
+                        await self._tool_event_queue.put({
                             "agent_id": agent.agent_id,
                             "tool": call.name,
                             "args": call.arguments,
@@ -207,7 +213,22 @@ class Session:
 
             if not progressed:
                 break
+
+        # Shutdown tool event consumer
+        await self._tool_event_queue.put(None)
+        if self._tool_event_task:
+            await self._tool_event_task
+
         return total_steps
+
+    async def _tool_event_consumer(self) -> None:
+        """Consume tool events from queue and emit to callback."""
+        while True:
+            event = await self._tool_event_queue.get()
+            if event is None:
+                break
+            if self.on_tool_event:
+                self.on_tool_event(event)
 
 
 def _phase_from_string(name: str) -> Phase:

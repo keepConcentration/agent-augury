@@ -215,6 +215,14 @@ def _log_tool_event(event: dict[str, Any]) -> None:
         print(f"{icon} \033[36m{agent_id}\033[0m: {tool}", flush=True)
 
 
+def _log_read_resource(event: dict[str, Any]) -> None:
+    """Print a read_resource event in real-time."""
+    agent_id = event["agent_id"]
+    threads = event.get("threads", 0)
+    messages = event.get("messages", 0)
+    print(f"📊 \033[36m{agent_id}\033[0m: read_resource (threads={threads}, messages={messages})", flush=True)
+
+
 async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False) -> int:
     cfg = load_config(cfg_path)
     session = Session.from_config(cfg)

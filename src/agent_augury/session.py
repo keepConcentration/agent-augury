@@ -57,6 +57,9 @@ class Session:
         # Tool event queue for async output
         self._tool_event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._tool_event_task: asyncio.Task | None = None
+        # Unified output queue for all display events (tools, steps, read_resource)
+        self._output_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._output_task: asyncio.Task | None = None
 
     # -- assembly ------------------------------------------------------------
 
@@ -112,6 +115,8 @@ class Session:
         session.mirror = mirror_from_config(cfg.get("mirror"))
         if session.mirror is not None:
             server.subscribe(session.mirror.on_message)
+        # Subscribe server events to unified output queue
+        server.subscribe_events(session._on_server_event)
         return session
 
     # -- lifecycle -----------------------------------------------------------
@@ -125,8 +130,8 @@ class Session:
 
         Returns the total number of completed steps.
         """
-        # Start tool event consumer task
-        self._tool_event_task = asyncio.create_task(self._tool_event_consumer())
+        # Start unified output consumer task
+        self._output_task = asyncio.create_task(self._output_consumer())
 
         if initial_prompt:
             self.agents[0].conversation.append({"role": "user", "content": initial_prompt})
@@ -196,7 +201,7 @@ class Session:
                 # Queue tool events FIRST for async display (before step summary)
                 if result.tool_calls:
                     for call in result.tool_calls:
-                        await self._tool_event_queue.put({
+                        await self._output_queue.put({
                             "type": "tool",
                             "agent_id": agent.agent_id,
                             "tool": call.name,
@@ -204,7 +209,7 @@ class Session:
                             "timestamp": __import__("time").time(),
                         })
                 # Then queue step summary (same queue, preserves order)
-                await self._tool_event_queue.put({
+                await self._output_queue.put({
                     "type": "step",
                     "agent_id": agent.agent_id,
                     "result": result,
@@ -220,23 +225,40 @@ class Session:
             if not progressed:
                 break
 
-        # Shutdown tool event consumer
-        await self._tool_event_queue.put(None)
-        if self._tool_event_task:
-            await self._tool_event_task
+        # Shutdown unified output consumer
+        await self._output_queue.put(None)
+        if self._output_task:
+            await self._output_task
 
         return total_steps
 
-    async def _tool_event_consumer(self) -> None:
-        """Consume tool events from queue and emit to callback."""
+    def _on_server_event(self, event: dict[str, Any]) -> None:
+        """Capture server events (read_resource) and queue them for unified output."""
+        if event["type"] == "read_resource":
+            self._output_queue.put_nowait({
+                "type": "read_resource",
+                "agent_id": event["agent_id"],
+                "threads": event["threads"],
+                "messages": event["messages"],
+                "timestamp": event.get("timestamp", __import__("time").time()),
+            })
+
+    async def _output_consumer(self) -> None:
+        """Consume output events from queue and emit to callbacks."""
         while True:
-            event = await self._tool_event_queue.get()
+            event = await self._output_queue.get()
             if event is None:
                 break
             if event.get("type") == "tool" and self.on_tool_event:
                 self.on_tool_event(event)
             elif event.get("type") == "step" and self.on_step:
                 self.on_step(event["agent_id"], event["result"])
+            elif event.get("type") == "read_resource" and self.on_tool_event:
+                # read_resource events are displayed as tool events
+                self.on_tool_event(event)
+            elif event.get("type") == "read_resource":
+                # Fallback: if no on_tool_event, still handle read_resource
+                pass
 
 
 def _phase_from_string(name: str) -> Phase:

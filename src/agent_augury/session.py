@@ -75,6 +75,16 @@ class Session:
                     agent_id=spec["id"],
                     server=server,
                     backend=build_backend(spec["backend"]),
+                    on_tool_call=lambda agent_id, tool, args, result, _server=server: (
+                        _server._emit_event({
+                            "type": "tool",
+                            "agent_id": agent_id,
+                            "tool": tool,
+                            "args": args,
+                            "result": result,
+                            "timestamp": __import__("time").time(),
+                        })
+                    ),
                 )
             )
         session = cls(
@@ -200,17 +210,7 @@ class Session:
 
                 total_steps += 1
                 progressed = True
-                # Queue tool events FIRST for async display (before step summary)
-                if result.tool_calls:
-                    for call in result.tool_calls:
-                        await self._output_queue.put({
-                            "type": "tool",
-                            "agent_id": agent.agent_id,
-                            "tool": call.name,
-                            "args": call.arguments,
-                            "timestamp": __import__("time").time(),
-                        })
-                # Then queue step summary (same queue, preserves order)
+                # Step summary queued for display
                 await self._output_queue.put({
                     "type": "step",
                     "agent_id": agent.agent_id,
@@ -237,7 +237,18 @@ class Session:
     def _on_server_event(self, event: dict[str, Any]) -> None:
         """Capture server events and queue them for unified output."""
         event_type = event["type"]
-        if event_type == "read_resource":
+        if event_type == "tool":
+            try:
+                self._output_queue.put_nowait({
+                    "type": "tool",
+                    "agent_id": event["agent_id"],
+                    "tool": event["tool"],
+                    "args": event.get("args", {}),
+                    "timestamp": event.get("timestamp", __import__("time").time()),
+                })
+            except asyncio.QueueFull:
+                pass
+        elif event_type == "read_resource":
             try:
                 self._output_queue.put_nowait({
                     "type": "read_resource",

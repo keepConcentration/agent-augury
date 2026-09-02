@@ -81,7 +81,7 @@ class BroadcastLogger:
         name = event["name"]
         self._seen_threads[tid] = name
         participants = ", ".join(event["participants"])
-        self._print(f"[{tid}] create_thread {name} ({participants})")
+        self._print(f"\033[32m[{tid}] create_thread {name} ({participants})\033[0m")
 
     def _on_send_message(self, event: dict[str, Any]) -> None:
         author = event["author"]
@@ -91,13 +91,14 @@ class BroadcastLogger:
         content = _mask_sensitive(content)
         delivered = event.get("delivered_to", [])
         targets = ", ".join(delivered) if delivered else "broadcast"
-        self._print(f"[{author} → {targets}][{tid}] {content}")
+        # Color codes for different event types
+        self._print(f"\033[36m[{author} → {targets}][{tid}]\033[0m {content}")
 
     def _on_read_resource(self, event: dict[str, Any]) -> None:
         agent_id = event["agent_id"]
         threads = event["threads"]
         messages = event["messages"]
-        self._print(f"[read_resource] {agent_id} (threads={threads}, messages={messages})")
+        self._print(f"\033[33m[read_resource] {agent_id} (threads={threads}, messages={messages})\033[0m")
 
     def _print(self, line: str) -> None:
         """Print a broadcast line to stderr with flush."""
@@ -150,15 +151,18 @@ def _prompt_output_path(default: Path = _DEFAULT_OUTPUT_PATH) -> Path:
 
 
 def _log_step(agent_id: str, result: StepResult) -> None:
-    parts = [f"[{agent_id}] step drained={result.drained_count}"]
+    # Agent ID in bold cyan
+    parts = [f"\033[1;36m[{agent_id}]\033[0m step drained={result.drained_count}"]
     if result.tool_calls:
         names = ",".join(c.name for c in result.tool_calls)
-        parts.append(f"tools=({names})")
+        # Tool names in yellow
+        parts.append(f"\033[33mtools=({names})\033[0m")
     if result.usage:
         prompt = result.usage.get("prompt_tokens", "?")
         completion = result.usage.get("completion_tokens", "?")
         total = result.usage.get("total_tokens", "?")
-        parts.append(f"tokens={prompt}+{completion}={total}")
+        # Token usage in magenta
+        parts.append(f"\033[35mtokens={prompt}+{completion}={total}\033[0m")
     if result.text:
         text = result.text.replace("\n", " ")
         # No truncation — show full text
@@ -194,8 +198,8 @@ async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool 
         gate_state = "OPEN" if (session.gate and session.gate.is_open) else ("CLOSED" if session.gate else "n/a")
         snap = session.server.snapshot()
         print(
-            f"--- session finished: steps={steps} threads={len(snap['threads'])} "
-            f"messages={len(snap['messages'])} gate={gate_state}"
+            f"\033[1;32m--- session finished: steps={steps} threads={len(snap['threads'])} "
+            f"messages={len(snap['messages'])} gate={gate_state}\033[0m"
         )
         return 0
     finally:

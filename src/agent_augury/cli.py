@@ -167,11 +167,9 @@ def _log_step(agent_id: str, result: StepResult) -> None:
         # Tool names in yellow
         parts.append(f"\033[33mtools=({names})\033[0m")
     if result.usage:
-        prompt = result.usage.get("prompt_tokens", 0)
-        completion = result.usage.get("completion_tokens", 0)
         total = result.usage.get("total_tokens", 0)
-        # Token usage in magenta, formatted as x.xk
-        parts.append(f"\033[35mtokens={_format_tokens(prompt)}+{_format_tokens(completion)}={_format_tokens(total)}\033[0m")
+        # Token usage in magenta, only show total as x.xk
+        parts.append(f"\033[35mtokens={_format_tokens(total)}\033[0m")
     if result.text:
         text = result.text.replace("\n", " ")
         # No truncation — show full text

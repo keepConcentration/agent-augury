@@ -81,7 +81,7 @@ def test_broadcast_logger_send_message():
     assert "[agent-1 → agent-2][thread-1] hello world" in output
 
 
-def test_broadcast_logger_send_message_truncates_long_content():
+def test_broadcast_logger_send_message_no_truncation():
     logger = BroadcastLogger()
     logger._seen_threads["thread-1"] = "plan"
     long_content = "a" * 100
@@ -98,9 +98,9 @@ def test_broadcast_logger_send_message_truncates_long_content():
     with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
         logger(event)
         output = mock_stderr.getvalue()
-    assert "aaa..." in output
+    assert long_content in output
     assert "[agent-1 → agent-2, agent-3][thread-1]" in output
-    assert len(output.split("] ")[-1].strip()) < 90  # truncated
+    assert len(output.split("] ")[-1].strip()) == 100  # full content shown
 
 
 def test_broadcast_logger_send_message_masks_sensitive():

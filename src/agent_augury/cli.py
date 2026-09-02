@@ -87,9 +87,7 @@ class BroadcastLogger:
         author = event["author"]
         tid = event["thread_id"]
         content = event["content"]
-        # Truncate long content for single-line display
-        if len(content) > 80:
-            content = content[:77] + "..."
+        # No truncation — show full content
         content = _mask_sensitive(content)
         delivered = event.get("delivered_to", [])
         targets = ", ".join(delivered) if delivered else "broadcast"
@@ -158,8 +156,7 @@ def _log_step(agent_id: str, result: StepResult) -> None:
         parts.append(f"tools=({names})")
     if result.text:
         text = result.text.replace("\n", " ")
-        if len(text) > 120:
-            text = text[:117] + "..."
+        # No truncation — show full text
         parts.append(f"text={text!r}")
     print(" ".join(parts), flush=True)
 

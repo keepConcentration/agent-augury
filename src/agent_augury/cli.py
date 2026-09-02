@@ -236,24 +236,38 @@ def _run_wizard_flow(
                 # Invalid or corrupted — ignore and re-collect.
                 existing = None
 
-        cfg = run_wizard(existing_model_config=existing, force_reconfigure=force_reconfigure)
+        # If we have a valid existing config, skip the wizard entirely.
+        # The user just wants to run the session, not reconfigure.
+        if existing is not None and not force_reconfigure:
+            # Build config from saved model settings
+            cfg = {
+                "mode": existing.get("mode", "L3"),
+                "max_steps": existing.get("max_steps", 20),
+                "agents": existing["agents"],
+            }
+            # Use default output path
+            if output_path is None:
+                output_path = _DEFAULT_OUTPUT_PATH
+            else:
+                output_path = _resolve_output_path(str(output_path))
+            _save_config(cfg, output_path)
+            print(f"\nUsing saved model config. Config saved to: {output_path}")
+        else:
+            # Run full wizard for new setup or reconfigure
+            cfg = run_wizard(existing_model_config=existing, force_reconfigure=force_reconfigure)
+            # Determine output path.
+            if output_path is None:
+                if existing is not None:
+                    output_path = _DEFAULT_OUTPUT_PATH
+                else:
+                    output_path = _prompt_output_path()
+            else:
+                output_path = _resolve_output_path(str(output_path))
+            _save_config(cfg, output_path)
+            print(f"\nConfig saved to: {output_path}")
     except WizardCancelled:
         print("\nWizard cancelled.")
         return 130  # standard Ctrl+C exit code
-
-    # Determine output path.
-    # When model settings were reused (existing != None) and no explicit --output
-    # was given, skip the "Save config to" prompt — go straight to the default.
-    if output_path is None:
-        if existing is not None:
-            output_path = _DEFAULT_OUTPUT_PATH
-        else:
-            output_path = _prompt_output_path()
-    else:
-        output_path = _resolve_output_path(str(output_path))
-
-    _save_config(cfg, output_path)
-    print(f"\nConfig saved to: {output_path}")
 
     # Collect the initial task from the user, then start the session.
     print("\n--- Initial Task ---")

@@ -150,6 +150,15 @@ def _prompt_output_path(default: Path = _DEFAULT_OUTPUT_PATH) -> Path:
         print(f"  Warning: invalid save path ({problem}). Press Enter for default or type a valid path.")
 
 
+def _format_tokens(count: int | str) -> str:
+    """Format token count as x.xk for readability."""
+    if isinstance(count, str):
+        return count
+    if count >= 1000:
+        return f"{count/1000:.1f}k"
+    return str(count)
+
+
 def _log_step(agent_id: str, result: StepResult) -> None:
     # Agent ID in bold cyan
     parts = [f"\033[1;36m[{agent_id}]\033[0m step drained={result.drained_count}"]
@@ -158,11 +167,11 @@ def _log_step(agent_id: str, result: StepResult) -> None:
         # Tool names in yellow
         parts.append(f"\033[33mtools=({names})\033[0m")
     if result.usage:
-        prompt = result.usage.get("prompt_tokens", "?")
-        completion = result.usage.get("completion_tokens", "?")
-        total = result.usage.get("total_tokens", "?")
-        # Token usage in magenta
-        parts.append(f"\033[35mtokens={prompt}+{completion}={total}\033[0m")
+        prompt = result.usage.get("prompt_tokens", 0)
+        completion = result.usage.get("completion_tokens", 0)
+        total = result.usage.get("total_tokens", 0)
+        # Token usage in magenta, formatted as x.xk
+        parts.append(f"\033[35mtokens={_format_tokens(prompt)}+{_format_tokens(completion)}={_format_tokens(total)}\033[0m")
     if result.text:
         text = result.text.replace("\n", " ")
         # No truncation — show full text

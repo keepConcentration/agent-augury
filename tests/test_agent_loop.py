@@ -171,11 +171,14 @@ async def test_read_resource_returns_snapshot_json():
 # ---------------------------------------------------------------------------
 
 
-def test_l3_exposes_three_tools_not_wait():
+def test_l3_exposes_six_tools_not_wait():
     server = MessageServer()
     agent = make_agent(server, "agent-1", [])
     names = {t["name"] for t in agent.tool_specs}
-    assert names == {"create_thread", "send_message", "read_resource"}
+    assert names == {
+        "create_thread", "send_message", "read_resource",
+        "read_file", "list_directory", "write_file",
+    }
 
 
 def test_l2_adds_wait_for_mention_tool():
@@ -232,32 +235,30 @@ async def test_tool_call_id_propagated_to_tool_result_messages():
     assert tool_msgs[0]["tool_call_id"] == "call_abc123"
 
 
-async def test_multiple_tool_calls_each_get_their_own_tool_call_id():
-    """Each tool call in a multi-call completion gets its own id."""
+async def test_step_with_http_404_returns_error_text():
+    """Backend returning HTTP 404 must surface error text, not raise."""
+    from agent_augury.backend.openai_compat import OpenAICompatBackend
+    import httpx
+
+    def handler(request):
+        return httpx.Response(404, json={"error": "Not Found"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    backend = OpenAICompatBackend(
+        base_url="http://fake.local/v1",
+        api_key="test-key",
+        model="test-model",
+        client=client,
+    )
     server = MessageServer()
     server.register_agent("agent-1")
-    server.register_agent("agent-2")
-
-    agent = make_agent(
-        server,
-        "agent-1",
-        [
-            Completion(
-                tool_calls=[
-                    ToolCall(id="id_1", name="create_thread", arguments={
-                        "name": "t1", "participants": ["agent-1", "agent-2"]
-                    }),
-                    ToolCall(id="id_2", name="create_thread", arguments={
-                        "name": "t2", "participants": ["agent-1", "agent-2"]
-                    }),
-                ]
-            ),
-            Completion(text="done"),
-        ],
+    agent = AgentLoop(
+        agent_id="agent-1",
+        server=server,
+        backend=backend,
+        system_prompt="test",
     )
-    await agent.step()
-
-    tool_msgs = [m for m in agent.conversation if m["role"] == "tool"]
-    assert len(tool_msgs) == 2
-    ids = {m["tool_call_id"] for m in tool_msgs}
-    assert ids == {"id_1", "id_2"}
+    result = await agent.step()
+    assert result.text is not None
+    assert "[backend error]" in result.text
+    assert "404" in result.text

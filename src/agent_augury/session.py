@@ -32,6 +32,7 @@ from .protocol.phases import (
 from .server import MessageServer
 
 OnStep = Callable[[str, Any], None]
+OnToolEvent = Callable[[dict[str, Any]], None]
 
 
 class Session:
@@ -48,6 +49,7 @@ class Session:
         self.task = task
         self.max_steps = max_steps
         self.on_step: OnStep | None = None
+        self.on_tool_event: OnToolEvent | None = None
         self.gate: ConsensusGate | None = None
         self.mirror: Any = None
         # v0.2: P1~P5 collaboration protocol
@@ -185,6 +187,15 @@ class Session:
 
                 total_steps += 1
                 progressed = True
+                # Emit tool events for real-time display
+                if self.on_tool_event and result.tool_calls:
+                    for call in result.tool_calls:
+                        self.on_tool_event({
+                            "agent_id": agent.agent_id,
+                            "tool": call.name,
+                            "args": call.arguments,
+                            "timestamp": __import__("time").time(),
+                        })
                 if self.on_step:
                     self.on_step(agent.agent_id, result)
                 # An agent is finished only when it produces no output AND

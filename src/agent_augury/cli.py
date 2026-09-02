@@ -187,10 +187,39 @@ async def _close_session(session: Session) -> None:
             await aclose()
 
 
+def _log_tool_event(event: dict[str, Any]) -> None:
+    """Print a tool event in real-time (Hermes-style)."""
+    agent_id = event["agent_id"]
+    tool = event["tool"]
+    args = event.get("args", {})
+    
+    # Tool icons
+    icons = {
+        "read_file": "📖",
+        "write_file": "📝",
+        "list_directory": "📁",
+        "send_message": "💬",
+        "create_thread": "🧵",
+        "read_resource": "📊",
+        "wait_for_mention": "⏳",
+    }
+    icon = icons.get(tool, "🔧")
+    
+    # Extract path for file tools
+    path = args.get("path", "")
+    if path:
+        # Shorten path for display
+        short_path = path.split("/")[-1] if "/" in path else path
+        print(f"{icon} \033[36m{agent_id}\033[0m: {tool} \033[33m{short_path}\033[0m", flush=True)
+    else:
+        print(f"{icon} \033[36m{agent_id}\033[0m: {tool}", flush=True)
+
+
 async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False) -> int:
     cfg = load_config(cfg_path)
     session = Session.from_config(cfg)
     session.on_step = _log_step
+    session.on_tool_event = _log_tool_event
 
     # Subscribe broadcast logger to server events
     broadcast = BroadcastLogger(quiet=quiet)

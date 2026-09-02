@@ -197,14 +197,19 @@ class Session:
                 if result.tool_calls:
                     for call in result.tool_calls:
                         await self._tool_event_queue.put({
+                            "type": "tool",
                             "agent_id": agent.agent_id,
                             "tool": call.name,
                             "args": call.arguments,
                             "timestamp": __import__("time").time(),
                         })
-                # Then emit step summary
-                if self.on_step:
-                    self.on_step(agent.agent_id, result)
+                # Then queue step summary (same queue, preserves order)
+                await self._tool_event_queue.put({
+                    "type": "step",
+                    "agent_id": agent.agent_id,
+                    "result": result,
+                    "timestamp": __import__("time").time(),
+                })
                 # An agent is finished only when it produces no output AND
                 # has no pending messages to process. If it sent messages,
                 # it should stay alive to read responses in the next round.
@@ -228,8 +233,10 @@ class Session:
             event = await self._tool_event_queue.get()
             if event is None:
                 break
-            if self.on_tool_event:
+            if event.get("type") == "tool" and self.on_tool_event:
                 self.on_tool_event(event)
+            elif event.get("type") == "step" and self.on_step:
+                self.on_step(event["agent_id"], event["result"])
 
 
 def _phase_from_string(name: str) -> Phase:

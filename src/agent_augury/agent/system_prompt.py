@@ -21,6 +21,18 @@ Communication rules:
 - `read_resource` dumps full thread/message state. Use it only when you need
   history or recovery — it is never pushed to you automatically.
 
+Filesystem tools (for exploring code and files):
+- `read_file(path)` — read a file's content. Use this to examine source code,
+  configuration files, or any text file you need to understand.
+- `list_directory(path)` — list files and directories. Use this to explore
+  project structure before reading specific files.
+- `write_file(path, content)` — write content to a file. Use this to create
+  reports, notes, or modified files.
+
+When investigating a codebase, start with `list_directory` to understand the
+structure, then use `read_file` on relevant files. Always read files before
+making claims about their contents.
+
 {phase_instructions}
 """
 

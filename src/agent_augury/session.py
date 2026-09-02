@@ -200,11 +200,9 @@ class Session:
 
                 total_steps += 1
                 progressed = True
-                # DEBUG: Log tool calls before queueing
+                # Queue tool events FIRST for async display (before step summary)
                 if result.tool_calls:
-                    print(f"DEBUG: {agent.agent_id} has {len(result.tool_calls)} tool calls", flush=True)
                     for call in result.tool_calls:
-                        print(f"DEBUG: queueing tool event: {call.name}", flush=True)
                         await self._output_queue.put({
                             "type": "tool",
                             "agent_id": agent.agent_id,
@@ -237,15 +235,43 @@ class Session:
         return total_steps
 
     def _on_server_event(self, event: dict[str, Any]) -> None:
-        """Capture server events (read_resource) and queue them for unified output."""
-        if event["type"] == "read_resource":
-            self._output_queue.put_nowait({
-                "type": "read_resource",
-                "agent_id": event["agent_id"],
-                "threads": event["threads"],
-                "messages": event["messages"],
-                "timestamp": event.get("timestamp", __import__("time").time()),
-            })
+        """Capture server events and queue them for unified output."""
+        event_type = event["type"]
+        if event_type == "read_resource":
+            try:
+                self._output_queue.put_nowait({
+                    "type": "read_resource",
+                    "agent_id": event["agent_id"],
+                    "threads": event["threads"],
+                    "messages": event["messages"],
+                    "timestamp": event.get("timestamp", __import__("time").time()),
+                })
+            except asyncio.QueueFull:
+                pass
+        elif event_type == "create_thread":
+            try:
+                self._output_queue.put_nowait({
+                    "type": "create_thread",
+                    "thread_id": event["thread_id"],
+                    "name": event["name"],
+                    "participants": event["participants"],
+                    "timestamp": event.get("timestamp", __import__("time").time()),
+                })
+            except asyncio.QueueFull:
+                pass
+        elif event_type == "send_message":
+            try:
+                self._output_queue.put_nowait({
+                    "type": "send_message",
+                    "message_id": event["message_id"],
+                    "thread_id": event["thread_id"],
+                    "author": event["author"],
+                    "content": event["content"],
+                    "delivered_to": event.get("delivered_to", []),
+                    "timestamp": event.get("timestamp", __import__("time").time()),
+                })
+            except asyncio.QueueFull:
+                pass
 
     async def _output_consumer(self) -> None:
         """Consume output events from queue and emit to callbacks."""
@@ -253,16 +279,22 @@ class Session:
             event = await self._output_queue.get()
             if event is None:
                 break
-            print(f"DEBUG: output_consumer got event type={event.get('type')}", flush=True)
-            if event.get("type") == "tool" and self.on_tool_event:
+            event_type = event.get("type")
+            if event_type == "tool" and self.on_tool_event:
                 self.on_tool_event(event)
-            elif event.get("type") == "step" and self.on_step:
+            elif event_type == "step" and self.on_step:
                 self.on_step(event["agent_id"], event["result"])
-            elif event.get("type") == "read_resource" and self.on_tool_event:
-                # read_resource events are displayed as tool events
+            elif event_type == "read_resource" and self.on_tool_event:
                 self.on_tool_event(event)
-            elif event.get("type") == "read_resource":
-                # Fallback: if no on_tool_event, still handle read_resource
+            elif event_type == "create_thread" and self.on_tool_event:
+                self.on_tool_event(event)
+            elif event_type == "send_message" and self.on_tool_event:
+                self.on_tool_event(event)
+            elif event_type == "create_thread":
+                # Fallback if no on_tool_event
+                pass
+            elif event_type == "send_message":
+                # Fallback if no on_tool_event
                 pass
 
 

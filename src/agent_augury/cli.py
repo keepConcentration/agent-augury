@@ -215,6 +215,24 @@ def _log_tool_event(event: dict[str, Any]) -> None:
         print(f"{icon} \033[36m{agent_id}\033[0m: {tool}", flush=True)
 
 
+def _log_create_thread(event: dict[str, Any]) -> None:
+    """Print a create_thread event."""
+    tid = event["thread_id"]
+    name = event["name"]
+    participants = ", ".join(event["participants"])
+    print(f"🧵 \033[32m[{tid}] create_thread {name} ({participants})\033[0m", flush=True)
+
+
+def _log_send_message(event: dict[str, Any]) -> None:
+    """Print a send_message event."""
+    author = event["author"]
+    tid = event["thread_id"]
+    content = event["content"]
+    delivered = event.get("delivered_to", [])
+    targets = ", ".join(delivered) if delivered else "broadcast"
+    print(f"💬 \033[36m[{author} → {targets}][{tid}]\033[0m {content}", flush=True)
+
+
 def _log_read_resource(event: dict[str, Any]) -> None:
     """Print a read_resource event in real-time."""
     agent_id = event["agent_id"]

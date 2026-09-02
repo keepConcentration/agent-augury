@@ -167,15 +167,56 @@ class NousPortalOAuthBackend(OAuthModelBackend):
         if tools:
             payload["tools"] = [self._map_tool(t) for t in tools]
 
-        response = await client.post(
-            f"{self.base_url}/chat/completions",
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
+        try:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # If 401, try refreshing token once and retry
+            if exc.response.status_code == 401:
+                logger.info("Token expired, attempting refresh...")
+                try:
+                    # Force refresh by clearing cached token
+                    self._token = None
+                    token = await self.get_access_token()
+                    # Retry with new token
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    response.raise_for_status()
+                except Exception as retry_exc:
+                    return Completion(
+                        text=f"[backend error] Token refresh failed: {retry_exc}. Please re-authenticate."
+                    )
+            else:
+                # Non-401 HTTP error
+                detail = exc.response.text[:500] if exc.response is not None else ""
+                return Completion(
+                    text=(
+                        f"[backend error] HTTP {exc.response.status_code if exc.response is not None else '?'}"
+                        f" from {self.base_url}/chat/completions. "
+                        f"Detail: {detail}"
+                    )
+                )
+        except httpx.RequestError as exc:
+            return Completion(
+                text=(
+                    f"[backend error] Network error calling {self.base_url}/chat/completions: {exc}. "
+                    f"Please check your internet connection and the base URL."
+                )
+            )
+
         data = response.json()
 
         message = data["choices"][0]["message"]

@@ -134,13 +134,17 @@ class Session:
     # -- lifecycle -----------------------------------------------------------
 
     async def run(self, initial_prompt: str | None = None) -> int:
-        """Round-robin steps until every agent finishes or max_steps is hit.
+        """Parallel steps until every agent finishes or max_steps is hit.
 
-        Args:
-            initial_prompt: If provided, injected as the first user message
-                to the first agent.  Takes precedence over ``self.task``.
+        Each agent runs as an independent ``asyncio.Task``. All agents share
+        a global step budget (``max_steps``); the sum of every agent's steps
+        is capped. An agent finishes when it produces neither text nor tool
+        calls and has no pending inbox messages — same rule as the prior
+        round-robin loop.
 
-        Returns the total number of completed steps.
+        Output events (step summaries, tool calls) are pushed to the unified
+        ``_output_queue``; the single consumer task renders them in arrival
+        order, so tool logs stream in the order they actually fire.
         """
         # Start unified output consumer task
         self._output_task = asyncio.create_task(self._output_consumer())
@@ -150,7 +154,7 @@ class Session:
         elif self.task:
             self.agents[0].conversation.append({"role": "user", "content": self.task})
 
-        # gate-aware: inject gate state into agents each step
+        # gate-aware: inject gate state into agents
         if self.gate:
             # Pre-create the gate thread and bind it
             participant_ids = [a.agent_id for a in self.agents]
@@ -165,8 +169,6 @@ class Session:
         # v0.2: start the collaboration protocol
         if self.protocol:
             # Pre-create threads for each gate and bind them explicitly.
-            # This removes the dependency on callback-based binding and ensures
-            # gates are ready when the phase begins.
             for phase, gate in self.protocol._gates.items():
                 if gate is not None:
                     tid = await self.server.create_thread(
@@ -179,55 +181,72 @@ class Session:
                 agent.current_phase = self.protocol.phase
                 _inject_protocol_gate_state(agent, self.protocol)
 
-        finished = {a.agent_id: False for a in self.agents}
+        # Global step counter. asyncio is single-threaded, so += is atomic;
+        # the cap is checked at the top of each agent loop iteration.
         total_steps = 0
 
-        while total_steps < self.max_steps and not all(finished.values()):
-            progressed = False
-            for agent in self.agents:
-                if finished[agent.agent_id]:
-                    continue
-                # inject current gate state before each step
+        async def run_agent(agent: AgentLoop) -> None:
+            """Run one agent's step loop as long as it makes progress and the
+            global budget allows."""
+            nonlocal total_steps
+            while True:
+                # Global budget gate — checked before every step.
+                if total_steps >= self.max_steps:
+                    break
+
+                # Inject current gate state before each step.
                 if self.gate:
                     agent.gate_open = self.gate.is_open
                     agent.gate_thread_id = self.gate.thread_id
-                # v0.2: inject current protocol phase + gate state
+                # v0.2: inject current protocol phase + gate state.
                 if self.protocol:
                     agent.current_phase = self.protocol.phase
                     _inject_protocol_gate_state(agent, self.protocol)
+
                 try:
                     result = await agent.step()
+                except IndexError:
+                    # Script exhausted — agent has no more completions.
+                    # This is a normal finish, not an error.
+                    break
                 except Exception as exc:  # noqa: BLE001 — single agent failure
                     # Agent step failed — mark as finished so the session
                     # continues with remaining agents instead of aborting.
-                    error_msg = str(exc)
                     print(
-                        f"  [{agent.agent_id}] step failed: {error_msg}",
+                        f"  [{agent.agent_id}] step failed: {exc}",
                         flush=True,
                     )
-                    finished[agent.agent_id] = True
-                    continue
+                    break
 
+                # Increment step counter only after a successful step.
                 total_steps += 1
-                progressed = True
-                # Step summary queued for display
+
+                # Step summary queued for display.
                 await self._output_queue.put({
                     "type": "step",
                     "agent_id": agent.agent_id,
                     "result": result,
                     "timestamp": __import__("time").time(),
                 })
+
                 # An agent is finished only when it produces no output AND
                 # has no pending messages to process. If it sent messages,
-                # it should stay alive to read responses in the next round.
+                # it should stay alive to read responses in future steps.
                 has_pending = self.server.inbox_size(agent.agent_id) > 0
                 if not result.tool_calls and result.text is None and not has_pending:
-                    finished[agent.agent_id] = True
+                    break
 
-            if not progressed:
-                break
+                # Yield control so other agents can make progress.
+                # Without this, a single agent whose backend completes
+                # synchronously (e.g. cached/fake backends) could monopolize
+                # the event loop and starve the others.
+                await asyncio.sleep(0)
 
-        # Shutdown unified output consumer
+        # Launch all agents as parallel asyncio tasks.
+        tasks = [asyncio.create_task(run_agent(agent)) for agent in self.agents]
+        await asyncio.gather(*tasks)
+
+        # Shutdown unified output consumer.
         await self._output_queue.put(None)
         if self._output_task:
             await self._output_task

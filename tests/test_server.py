@@ -34,6 +34,50 @@ async def test_create_thread_auto_registers_unknown_participants():
     assert server.inbox_size("agent-1") == 0
 
 
+async def test_create_thread_reuse_returns_same_id():
+    """Same-name create_thread reuses the existing thread (D7 behavior)."""
+    server = MessageServer()
+    tid1 = await server.create_thread("plan", participants=["agent-1"])
+    tid2 = await server.create_thread("plan", participants=["agent-1"])
+    assert tid1 == tid2
+    assert len(server.snapshot()["threads"]) == 1
+
+
+async def test_create_thread_reuse_expands_participants_and_emits_event():
+    """D7 — reuse with a participant change must register newcomers and emit
+    a create_thread event so broadcast observers see the expansion."""
+    server = MessageServer()
+    tid = await server.create_thread("plan", participants=["agent-1", "agent-2"])
+    events = []
+    server.subscribe_events(events.append)
+
+    tid2 = await server.create_thread("plan", participants=["agent-1", "agent-2", "agent-3"])
+
+    assert tid2 == tid
+    assert server.get_thread(tid)["participants"] == ["agent-1", "agent-2", "agent-3"]
+    # New participant must be registered (addressable inbox) — regression guard
+    assert server.inbox_size("agent-3") == 0
+    # Exactly one create_thread event with reused=True and the expanded list
+    ct_events = [e for e in events if e["type"] == "create_thread"]
+    assert len(ct_events) == 1
+    assert ct_events[0]["reused"] is True
+    assert ct_events[0]["thread_id"] == tid
+    assert ct_events[0]["participants"] == ["agent-1", "agent-2", "agent-3"]
+
+
+async def test_create_thread_reuse_no_event_when_participants_unchanged():
+    """D7 — reuse with the same participant set must NOT emit an event."""
+    server = MessageServer()
+    tid = await server.create_thread("plan", participants=["agent-1", "agent-2"])
+    events = []
+    server.subscribe_events(events.append)
+
+    tid2 = await server.create_thread("plan", participants=["agent-1", "agent-2"])
+
+    assert tid2 == tid
+    assert events == []
+
+
 # ---------------------------------------------------------------------------
 # send_message: push to inbox, fire-and-forget
 # ---------------------------------------------------------------------------

@@ -27,6 +27,8 @@ class MessageServer:
         self._threads: dict[str, dict[str, Any]] = {}
         # messages in global send order; each carries an int `seq` for cursors
         self._messages: list[dict[str, Any]] = []
+        # message_id -> message dict index (O(1) lookup for drain_inbox)
+        self._message_index: dict[str, dict[str, Any]] = {}
         self._inboxes: dict[str, asyncio.Queue[str]] = {}
         self._cursors: dict[str, int] = {}
         self._cond: asyncio.Condition = asyncio.Condition()
@@ -56,8 +58,23 @@ class MessageServer:
                 # Update participants to include any new agents
                 existing = set(thread["participants"])
                 new = set(participants)
-                if new - existing:
+                added = new - existing
+                if added:
+                    # Register new participants FIRST (inbox/cursor) — otherwise
+                    # a later send to them would KeyError on the missing inbox.
+                    for p in sorted(added):
+                        self.register_agent(p)
                     thread["participants"] = sorted(existing | new)
+                    # Emit an event so broadcast observers see the expansion
+                    # (D7 — reuse with a participant change must be observable).
+                    self._emit_event({
+                        "type": "create_thread",
+                        "thread_id": thread["thread_id"],
+                        "name": name,
+                        "participants": list(thread["participants"]),
+                        "reused": True,
+                        "timestamp": int(time.time()),
+                    })
                 return thread["thread_id"]
         for p in participants:
             self.register_agent(p)
@@ -113,6 +130,7 @@ class MessageServer:
             "seq": len(self._messages),
         }
         self._messages.append(message)
+        self._message_index[message["message_id"]] = message
 
         if self._mode == "L3":
             for target in targets:
@@ -243,14 +261,12 @@ class MessageServer:
 
     def _unread_for(self, agent_id: str) -> list[dict[str, Any]]:
         cursor = self._cursors[agent_id]
+        # self._messages[cursor:] already guarantees seq >= cursor
         return [
             m
             for m in self._messages[cursor:]
-            if m["seq"] >= cursor and agent_id in m["delivered_to"]
+            if agent_id in m["delivered_to"]
         ]
 
     def _by_id(self, message_id: str) -> dict[str, Any] | None:
-        for m in self._messages:
-            if m["message_id"] == message_id:
-                return m
-        return None
+        return self._message_index.get(message_id)

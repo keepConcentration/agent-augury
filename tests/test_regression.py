@@ -465,3 +465,68 @@ def make_protocol(*agents):
     for a in agents:
         server.register_agent(a)
     return CollaborationProtocol(server, participants=list(agents))
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: Session resilience — single agent failure doesn't abort session
+# ---------------------------------------------------------------------------
+
+
+class FailingBackend(ModelBackend):
+    """Backend that always raises an exception."""
+
+    async def complete(self, messages, tools):
+        raise RuntimeError("Simulated backend failure (e.g., HTTP 404)")
+
+
+async def test_session_continues_when_one_agent_fails():
+    """Session must continue when one agent's step raises an exception."""
+    from agent_augury.session import Session
+
+    server = MessageServer()
+    server.register_agent("agent-1")
+    server.register_agent("agent-2")
+
+    # Agent-1 uses a failing backend; Agent-2 uses a working fake backend.
+    agent1 = AgentLoop(
+        agent_id="agent-1",
+        server=server,
+        backend=FailingBackend(),
+        system_prompt="You are agent-1.",
+    )
+    agent2 = AgentLoop(
+        agent_id="agent-2",
+        server=server,
+        backend=ScriptedBackend([Completion(text="hello from agent-2")]),
+        system_prompt="You are agent-2.",
+    )
+
+    session = Session(server=server, agents=[agent1, agent2], max_steps=5)
+    steps = await session.run()
+
+    # Session should complete with at least 1 step (agent-2's step).
+    # Agent-1 fails immediately, agent-2 succeeds with its one completion.
+    assert steps >= 1
+    # Agent-2's conversation should contain its response.
+    assert any("hello from agent-2" in str(m) for m in agent2.conversation)
+
+
+async def test_session_all_agents_fail_returns_zero_steps():
+    """Session with all agents failing should return 0 steps, not crash."""
+    from agent_augury.session import Session
+
+    server = MessageServer()
+    server.register_agent("agent-1")
+
+    agent1 = AgentLoop(
+        agent_id="agent-1",
+        server=server,
+        backend=FailingBackend(),
+        system_prompt="You are agent-1.",
+    )
+
+    session = Session(server=server, agents=[agent1], max_steps=5)
+    steps = await session.run()
+
+    # All agents failed immediately — 0 steps completed.
+    assert steps == 0

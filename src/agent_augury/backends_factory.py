@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
+from .auth.oauth import NOUS_PORTAL_CONFIG, DeviceCodeFlow
+from .auth.token_store import TokenStore
 from .backend.base import Completion, ModelBackend, ToolCall
 from .backend.fake import FakeModelBackend
 from .backend.nous_portal import NousPortalBackend
+from .backend.nous_portal_oauth import NousPortalOAuthBackend
 from .backend.openai_compat import OpenAICompatBackend
+from .model_listing import extract_model_ids
 
 
 def _completion_from_spec(entry: Any) -> Completion:
@@ -55,4 +60,51 @@ def build_backend(spec: dict[str, Any]) -> ModelBackend:
             model=spec["model"],
             base_url=spec.get("base_url"),
         )
+    if btype == "nous_oauth":
+        return NousPortalOAuthBackend(
+            model=spec["model"],
+            base_url=spec.get("base_url", "https://inference-api.nousresearch.com/v1"),
+        )
     raise ValueError(f"unknown backend type: {btype!r}")
+
+
+# -- Model listing helpers (synchronous, for wizard) -------------------------
+
+
+def _fetch_models_sync(base_url: str, api_key: str) -> list[str] | None:
+    """Synchronously fetch model IDs from an OpenAI-compatible /models endpoint."""
+    import httpx
+    try:
+        resp = httpx.get(
+            f"{base_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+    except Exception:
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+    return extract_model_ids(data.get("data") or [])
+
+
+def list_models_openai_compat(base_url: str, api_key: str) -> list[str] | None:
+    """List models for an OpenAI-compatible backend. Returns None on failure."""
+    return _fetch_models_sync(base_url, api_key)
+
+
+def list_models_nous_portal(base_url: str, api_key: str) -> list[str] | None:
+    """List models for Nous Portal (API key). Returns None on failure."""
+    return _fetch_models_sync(base_url, api_key)
+
+
+def list_models_nous_oauth(base_url: str) -> list[str] | None:
+    """List models for Nous Portal (OAuth). Uses stored token or returns None."""
+    store = TokenStore()
+    tokens = store.get_provider_tokens(NOUS_PORTAL_CONFIG.id)
+    access_token = tokens.get("access_token")
+    if not access_token:
+        return None
+    return _fetch_models_sync(base_url, access_token)

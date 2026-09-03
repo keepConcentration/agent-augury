@@ -98,13 +98,29 @@ async def test_tool_call_response_parses_json_arguments():
     assert call.id == "call_1"
 
 
-async def test_http_error_raises_with_status():
+async def test_http_error_returns_error_text():
+    """HTTP errors (4xx/5xx) must return error text, not raise."""
     def handler(request):
-        return httpx.Response(401, json={"error": "bad key"})
+        return httpx.Response(404, json={"error": "Not Found"})
 
     backend = make_backend(handler)
-    with pytest.raises(httpx.HTTPStatusError):
-        await backend.complete([], [])
+    completion = await backend.complete([], [])
+    assert completion.text is not None
+    assert "[backend error]" in completion.text
+    assert "404" in completion.text
+    assert "Not Found" in completion.text
+
+
+async def test_network_error_returns_error_text():
+    """Network errors (DNS, connection refused) must return error text, not raise."""
+    def handler(request):
+        raise httpx.RequestError("connection refused")
+
+    backend = make_backend(handler)
+    completion = await backend.complete([], [])
+    assert completion.text is not None
+    assert "[backend error]" in completion.text
+    assert "connection refused" in completion.text
 
 
 # ---------------------------------------------------------------------------

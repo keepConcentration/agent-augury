@@ -1,0 +1,21 @@
+# agent-augury with Nous Portal OAuth authentication
+#
+# This config uses the OAuth device code flow — no API key needed.
+# On first run, the CLI will open a browser for sign-in.
+# Tokens are stored at ~/.agent-augury/tokens.json (0o600 permissions).
+
+mode: L3
+max_steps: 20
+task: Multi-agent collaboration with OAuth authentication
+
+agents:
+  - id: agent-1
+    backend:
+      type: nous_oauth
+      model: nous-hermes-2
+      # base_url: https://inference-api.nousresearch.com/v1  # optional override
+
+  - id: agent-2
+    backend:
+      type: nous_oauth
+      model: nous-hermes-2

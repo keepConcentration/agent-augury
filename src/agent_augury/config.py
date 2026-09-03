@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 _VALID_MODES = ("L2", "L3")
+_VALID_BACKEND_TYPES = {"fake", "openai", "nous", "nous_oauth"}
 
 
 class ConfigError(Exception):
@@ -35,6 +36,12 @@ def load_config(path: str | Path) -> dict[str, Any]:
             raise ConfigError(f"agents[{i}] must be a mapping with an 'id'")
         if not isinstance(agent.get("backend"), dict):
             raise ConfigError(f"agents[{i}].backend must be a mapping")
+        backend = agent["backend"]
+        btype = backend.get("type")
+        if btype not in _VALID_BACKEND_TYPES:
+            raise ConfigError(
+                f"agents[{i}].backend.type must be one of {_VALID_BACKEND_TYPES}, got {btype!r}"
+            )
 
     data["mode"] = mode
     data.setdefault("task", None)

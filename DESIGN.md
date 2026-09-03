@@ -121,7 +121,7 @@ Coral-Protocol의 [AgentRadio](https://github.com/Coral-Protocol/AgentRadio) (�
 | **Channel (Mirror)** | 내부 서버 상태를 채널에 읽기 전용 표시 | `mirror_thread()`, `publish_readonly()`, `disconnect()` |
 | **Protocol** | 분할 합의 등 협업 게이트 (v0.1b~, P1~P5는 v0.2) | `run(session)` |
 | **Session** | 에이전트 묶음 + 내부 메시지 서버 + 생명주기 | `start()`, `stop()`, 상태 조회 |
-| **Message Server (SSOT)** | 스레드/메시지/멘션/대기의 진실 공급원 | `create_thread()`, `send_message()`, `wait_for_mention()` |
+| **Message Server (SSOT)** | 스레드/메시지/멘션의 진실 공급원 | `create_thread()`, `send_message()` |
 
 ### 3.3 채널 설계 결정 — "내부 메시지 서버가 진실(SSOT)이다"
 
@@ -130,7 +130,7 @@ Coral-Protocol의 [AgentRadio](https://github.com/Coral-Protocol/AgentRadio) (�
 **이유 (리뷰 반영, 2026-08-26):**
 
 - P1~P5·APPROVE·워크로그 같은 프로토콜 상태를 Discord의 기본 구조 위에 컨벤션으로 인코딩하려면(§3.4) 그 자체가 v0.1의 최대 리스크가 된다. SSOT를 채널에 두는 순간 프로토콜 상태가 외부 서비스 제약에 종속된다.
-- 내부 서버를 SSOT로 두면 스레드/멘션/`wait_for_mention`/상태관리를 제어 가능하게 짤 수 있고, 채널은 "지켜보는 뷰"로 격리되어 채널을 늘릴 때도 프로토콜을 건드리지 않는다.
+- 내부 서버를 SSOT로 두면 스레드/멘션/상태관리를 제어 가능하게 짤 수 있고, 채널은 "지켜보는 뷰"로 격리되어 채널을 늘릴 때도 프로토콜을 건드리지 않는다.
 - 패시브 어웨어니스 검증(L2→L3 통신 모드)은 채널 종류와 무관한 코어 로직이어야 하므로, 코어는 채널에서 분리하는 게 맞다.
 
 **대가(단점, 인지하고 수용):**
@@ -146,7 +146,6 @@ Coral-Protocol의 [AgentRadio](https://github.com/Coral-Protocol/AgentRadio) (�
 |------------|------|
 | `create_thread(name, participants)` | 스레드 레코드 생성, 스레드 ID 반환 |
 | `send_message(thread, content, mentions)` | 메시지 추가, **즉시 반환** (fire-and-forget) |
-| `wait_for_mention(timeout)` | 멘션 대기, 도착 시 **읽지 않은 메시지만(unread-only)** 반환. L2 대조 모드 전용(§3.5.5) |
 
 #### 3.4.1 최소 스키마
 
@@ -166,7 +165,7 @@ inbox    { agent_id: str, queue: [message_id] }  # 서버가 push, step()이 dra
 
 "전체 스레드 스냅샷"을 그대로 반환하면 컨텍스트가 즉시 폭증한다. v0.1 기본값은 **unread-only**로 고정하고, 방어 옵션을 둔다.
 
-- **기본 `unread-only`**: `wait_for_mention`이 호출자에게 **읽지 않은 멘션·메시지만** 반환 (호출자별 커서).
+- **기본 `unread-only`**: 호출자에게 **읽지 않은 멘션·메시지만** 반환 (호출자별 커서). (v0.3에서 `wait_for_mention`과 커서 기반 수신은 제거되었으며, inbox push + step() drain이 단일 경로다.)
 - 옵션 `last_n`: 최근 N개.
 - 옵션 `summary`: v0.2 이후 (컨텍스트 압축 시).
 - 복구 시점에는 `read_resource` 상당(전체 상태 덤프)을 명시적 도구로만 제공하고, 자동 주입하지 않는다.
@@ -190,11 +189,9 @@ L3에서 수신은 "도구 호출"이 아니라 **inbox에 push → step()이 �
 
 - **서버**: `send_message`가 대상의 **inbox에 즉시 push**.
 - **step()만 drain**: 각 `step()` 직전에 inbox를 drain해 `[radio]` 블록의 단일 user turn으로 삽입 (§3.6).
-- **패시브 = "전경에서 wait를 부르지 않음"**: 에이전트는 `wait_for_mention`을 전경에서 호출하지 않는다. 대신 inbox에 쌓인 메시지가 다음 step()에서 자동 흡수된다.
+- **패시브 = "전경에서 wait를 부르지 않음"**: 에이전트는 수신을 전경에서 기다리지 않는다. 대신 inbox에 쌓인 메시지가 다음 step()에서 자동 흡수된다. (과거 L2의 전경 blocking receive는 v0.3에서 제거.)
 
 > 단일 소비자 원칙: inbox를 소비하는 주체는 **step() 하나**뿐이다. 서버(push)와 step(drain)이 큐를 나눠 쓰므로 레이스가 없다. (B의 워처 태스크, C의 "워처가 받아서 push"는 v0.1에서 쓰지 않는다.)
-
-`wait_for_mention`은 **L2 대조 모드에서만 도구로 켠다** (§3.5.5). L3 경로는 오직 push+inbox다.
 
 #### 3.5.3 브로드캐스트 fan-out (v0.1a 기본값)
 
@@ -274,7 +271,6 @@ agent-augury/
         approval.py
   examples/
     demo.yaml             # 예시 세션 구성
-    l2_vs_l3_toy.py       # L2(전경) vs L3(배경) 대조 검증 스크립트
   tests/
 ```
 

@@ -312,3 +312,82 @@ def test_wizard_flow_quiet_false_by_default(tmp_path):
     assert result == 0
     assert len(calls) == 1
     assert calls[0]["quiet"] is False
+
+
+# ---------------------------------------------------------------------------
+# D2: _log_tool_event skips server-event-driven tools
+# ---------------------------------------------------------------------------
+
+
+def test_log_tool_event_skips_server_event_tools():
+    """send_message/create_thread/read_resource are already printed via
+    server events, so _log_tool_event must skip them in the tool branch
+    to avoid duplicate output."""
+    from agent_augury.cli import _log_tool_event
+    import io
+    from contextlib import redirect_stdout
+
+    event = {
+        "type": "tool",
+        "agent_id": "agent-1",
+        "tool": "send_message",
+    }
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        _log_tool_event(event)
+    assert buf.getvalue() == ""
+
+
+def test_log_tool_event_skips_create_tool_event():
+    """create_message tool event is skipped (already covered by server event)."""
+    from agent_augury.cli import _log_tool_event
+    import io
+    from contextlib import redirect_stdout
+
+    event = {
+        "type": "tool",
+        "agent_id": "agent-1",
+        "tool": "create_thread",
+    }
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        _log_tool_event(event)
+    assert buf.getvalue() == ""
+
+
+def test_log_tool_event_skips_read_resource_tool_event():
+    """read_resource tool event is skipped (already covered by server event)."""
+    from agent_augury.cli import _log_tool_event
+    import io
+    from contextlib import redirect_stdout
+
+    event = {
+        "type": "tool",
+        "agent_id": "agent-1",
+        "tool": "read_resource",
+    }
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        _log_tool_event(event)
+    assert buf.getvalue() == ""
+
+
+def test_log_tool_event_file_tools_still_printed():
+    """File tools (read_file, write_file, list_directory) are NOT server
+    events, so they must still be printed by _log_tool_event."""
+    from agent_augury.cli import _log_tool_event
+    import io
+    from contextlib import redirect_stdout
+
+    event = {
+        "type": "tool",
+        "agent_id": "agent-1",
+        "tool": "read_file",
+        "args": {"path": "/tmp/test.txt"},
+    }
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        _log_tool_event(event)
+    output = buf.getvalue()
+    assert "read_file" in output
+    assert "agent-1" in output

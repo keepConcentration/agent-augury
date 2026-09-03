@@ -204,6 +204,9 @@ def _log_tool_event(event: dict[str, Any]) -> None:
     elif event_type == "tool":
         agent_id = event["agent_id"]
         tool = event["tool"]
+        # D2-dedup: 서버 이벤트로 이미 출력되는 3종은 tool 이벤트에서 스킵
+        if tool in ("send_message", "create_thread", "read_resource"):
+            return
         args = event.get("args", {})
 
         # Tool icons
@@ -231,7 +234,19 @@ def _log_tool_event(event: dict[str, Any]) -> None:
 
 async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False) -> int:
     cfg = load_config(cfg_path)
-    session = Session.from_config(cfg, on_step=_log_step, on_tool_event=_log_tool_event)
+
+    # D2: quiet 모드 시 step/도구 라이브 로그 억제
+    def on_step(agent_id: str, result: StepResult) -> None:
+        if quiet:
+            return
+        _log_step(agent_id, result)
+
+    def on_tool_event(event: dict[str, Any]) -> None:
+        if quiet:
+            return
+        _log_tool_event(event)
+
+    session = Session.from_config(cfg, on_step=on_step, on_tool_event=on_tool_event)
 
     # No BroadcastLogger — all output goes through unified queue
     # broadcast = BroadcastLogger(quiet=quiet)

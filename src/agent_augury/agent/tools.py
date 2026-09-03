@@ -19,8 +19,9 @@ def _json(result: Any) -> str:
 class ToolBox:
     """Binds server operations into model-callable tools."""
 
-    def __init__(self, server: MessageServer) -> None:
+    def __init__(self, server: MessageServer, allowed_roots: list[str] | None = None) -> None:
         self.server = server
+        self.allowed_roots = allowed_roots
 
     # -- tool specs ----------------------------------------------------------
 
@@ -169,7 +170,7 @@ class ToolBox:
             return _json({"error": "path is required"})
         # Security: resolve to absolute path and check it's within allowed roots
         abs_path = os.path.abspath(path)
-        allowed_roots = args.get("_allowed_roots", [])
+        allowed_roots = self.allowed_roots
         if allowed_roots:
             if not any(abs_path.startswith(os.path.abspath(root)) for root in allowed_roots):
                 return _json({"error": f"path outside allowed roots: {path}"})
@@ -185,7 +186,7 @@ class ToolBox:
         import os
         path = args.get("path", ".")
         abs_path = os.path.abspath(path)
-        allowed_roots = args.get("_allowed_roots", [])
+        allowed_roots = self.allowed_roots
         if allowed_roots:
             if not any(abs_path.startswith(os.path.abspath(root)) for root in allowed_roots):
                 return _json({"error": f"path outside allowed roots: {path}"})
@@ -211,7 +212,7 @@ class ToolBox:
         if not path:
             return _json({"error": "path is required"})
         abs_path = os.path.abspath(path)
-        allowed_roots = args.get("_allowed_roots", [])
+        allowed_roots = self.allowed_roots
         if allowed_roots:
             if not any(abs_path.startswith(os.path.abspath(root)) for root in allowed_roots):
                 return _json({"error": f"path outside allowed roots: {path}"})

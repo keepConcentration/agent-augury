@@ -65,7 +65,7 @@ class Session:
     # -- assembly ------------------------------------------------------------
 
     @classmethod
-    def from_config(cls, cfg: dict[str, Any], on_step=None, on_tool_event=None) -> "Session":
+    def from_config(cls, cfg: dict[str, Any], on_step=None, on_tool_event=None, allowed_roots: list[str] | None = None) -> "Session":
         server = MessageServer()
         server.set_mode(cfg.get("mode", "L3"))
         agents: list[AgentLoop] = []
@@ -76,6 +76,7 @@ class Session:
                     agent_id=spec["id"],
                     server=server,
                     backend=build_backend(spec["backend"]),
+                    allowed_roots=allowed_roots,
                     on_tool_call=lambda agent_id, tool, args, result, _server=server: (
                         _server._emit_event({
                             "type": "tool",

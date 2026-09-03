@@ -42,6 +42,29 @@ def load_config(path: str | Path) -> dict[str, Any]:
             raise ConfigError(
                 f"agents[{i}].backend.type must be one of {_VALID_BACKEND_TYPES}, got {btype!r}"
             )
+        # D8: backend type별 필수 키를 빠르게 검증
+        if btype == "fake":
+            if "script" not in backend:
+                raise ConfigError(f"agents[{i}] fake backend requires 'script' key")
+        elif btype == "openai":
+            if "base_url" not in backend:
+                raise ConfigError(f"agents[{i}] openai backend requires 'base_url' key")
+            if "api_key_env" not in backend:
+                raise ConfigError(f"agents[{i}] openai backend requires 'api_key_env' key")
+        elif btype == "nous":
+            if "base_url" not in backend:
+                raise ConfigError(f"agents[{i}] nous backend requires 'base_url' key")
+            if "api_key_env" not in backend:
+                raise ConfigError(f"agents[{i}] nous backend requires 'api_key_env' key")
+        elif btype == "nous_oauth":
+            if "model" not in backend:
+                raise ConfigError(f"agents[{i}] nous_oauth backend requires 'model' key")
+
+    # mirror.url_env 검증
+    mirror = data.get("mirror")
+    if mirror is not None and isinstance(mirror, dict):
+        if "url_env" not in mirror:
+            raise ConfigError("mirror requires 'url_env' key")
 
     data["mode"] = mode
     data.setdefault("task", None)

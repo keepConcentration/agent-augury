@@ -65,11 +65,12 @@ class AgentLoop:
         system_prompt: str | None = None,
         local_tools: list[LocalTool] | None = None,
         on_tool_call: Callable[[str, str, dict[str, Any], Any], None] | None = None,
+        allowed_roots: list[str] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.server = server
         self.backend = backend
-        self.tools = ToolBox(server)
+        self.tools = ToolBox(server, allowed_roots=allowed_roots)
         self.local_tools: dict[str, LocalTool] = {t.name: t for t in local_tools or []}
         self.conversation: list[Message] = [
             {

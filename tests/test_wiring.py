@@ -448,3 +448,72 @@ async def test_protocol_phase_advances_with_gates(tmp_path):
 
     # Should have reached at least P4 (P3 gate opens → advance to P4)
     assert protocol.phase in ("P4_REVIEW", "P5_SUBMIT", "COMPLETED")
+
+
+# ---------------------------------------------------------------------------
+# D8: load_config backend key validation
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_fake_backend_missing_script_raises(tmp_path):
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "fake"}}],
+    })
+    with pytest.raises(ConfigError, match="fake backend requires 'script'"):
+        load_config(p)
+
+
+def test_load_config_openai_backend_missing_base_url_raises(tmp_path):
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "openai", "api_key_env": "X"}}],
+    })
+    with pytest.raises(ConfigError, match="openai backend requires 'base_url'"):
+        load_config(p)
+
+
+def test_load_config_openai_backend_missing_api_key_env_raises(tmp_path):
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "openai", "base_url": "http://x"}}],
+    })
+    with pytest.raises(ConfigError, match="openai backend requires 'api_key_env'"):
+        load_config(p)
+
+
+def test_load_config_nous_backend_missing_base_url_raises(tmp_path):
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "nous", "api_key_env": "X"}}],
+    })
+    with pytest.raises(ConfigError, match="nous backend requires 'base_url'"):
+        load_config(p)
+
+
+def test_load_config_nous_backend_missing_api_key_env_raises(tmp_path):
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "nous", "base_url": "http://x"}}],
+    })
+    with pytest.raises(ConfigError, match="nous backend requires 'api_key_env'"):
+        load_config(p)
+
+
+def test_load_config_nous_oauth_backend_missing_model_raises(tmp_path):
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "nous_oauth"}}],
+    })
+    with pytest.raises(ConfigError, match="nous_oauth backend requires 'model'"):
+        load_config(p)
+
+
+def test_load_config_mirror_missing_url_env_raises(tmp_path):
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["x"]}}],
+        "mirror": {"type": "discord_webhook"},
+    })
+    with pytest.raises(ConfigError, match="mirror requires 'url_env'"):
+        load_config(p)

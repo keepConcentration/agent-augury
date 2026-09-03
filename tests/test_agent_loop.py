@@ -262,3 +262,99 @@ async def test_step_with_http_404_returns_error_text():
     assert result.text is not None
     assert "[backend error]" in result.text
     assert "404" in result.text
+
+
+# ---------------------------------------------------------------------------
+# D9: allowed_roots security enforcement
+# ---------------------------------------------------------------------------
+
+
+async def test_toolbox_rejects_path_outside_allowed_roots(tmp_path):
+    """ToolBox with allowed_roots rejects paths outside the root."""
+    from agent_augury.agent.tools import ToolBox
+
+    server = MessageServer()
+    server.register_agent("agent-1")
+
+    # Create allowed root + file outside it
+    allowed_dir = tmp_path / "allowed"
+    allowed_dir.mkdir()
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("secret", encoding="utf-8")
+
+    tb = ToolBox(server, allowed_roots=[str(allowed_dir)])
+    result = await tb.execute("agent-1", "read_file", {"path": str(secret_file)})
+    payload = json.loads(result)
+    assert "error" in payload
+    assert "outside allowed roots" in payload["error"]
+
+
+async def test_toolbox_allows_path_within_allowed_roots(tmp_path):
+    """ToolBox with allowed_roots permits paths within the root."""
+    from agent_augury.agent.tools import ToolBox
+
+    server = MessageServer()
+    server.register_agent("agent-1")
+
+    allowed_dir = tmp_path / "allowed"
+    allowed_dir.mkdir()
+    safe_file = allowed_dir / "safe.txt"
+    safe_file.write_text("hello", encoding="utf-8")
+
+    tb = ToolBox(server, allowed_roots=[str(allowed_dir)])
+    result = await tb.execute("agent-1", "read_file", {"path": str(safe_file)})
+    payload = json.loads(result)
+    assert payload["content"] == "hello"
+
+
+async def test_toolbox_none_allowed_roots_preserves_unrestricted(tmp_path):
+    """allowed_roots=None preserves legacy unrestricted behavior (backward compat)."""
+    from agent_augury.agent.tools import ToolBox
+
+    server = MessageServer()
+    server.register_agent("agent-1")
+
+    any_file = tmp_path / "any.txt"
+    any_file.write_text("free", encoding="utf-8")
+
+    tb = ToolBox(server, allowed_roots=None)
+    result = await tb.execute("agent-1", "read_file", {"path": str(any_file)})
+    payload = json.loads(result)
+    assert payload["content"] == "free"
+
+
+async def test_toolbox_list_directory_respects_allowed_roots(tmp_path):
+    """list_directory also respects allowed_roots."""
+    from agent_augury.agent.tools import ToolBox
+
+    server = MessageServer()
+    server.register_agent("agent-1")
+
+    allowed_dir = tmp_path / "allowed"
+    allowed_dir.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+
+    tb = ToolBox(server, allowed_roots=[str(allowed_dir)])
+    result = await tb.execute("agent-1", "list_directory", {"path": str(outside_dir)})
+    payload = json.loads(result)
+    assert "error" in payload
+    assert "outside allowed roots" in payload["error"]
+
+
+async def test_toolbox_write_file_respects_allowed_roots(tmp_path):
+    """write_file also respects allowed_roots."""
+    from agent_augury.agent.tools import ToolBox
+
+    server = MessageServer()
+    server.register_agent("agent-1")
+
+    allowed_dir = tmp_path / "allowed"
+    allowed_dir.mkdir()
+    outside_file = tmp_path / "outside.txt"
+
+    tb = ToolBox(server, allowed_roots=[str(allowed_dir)])
+    result = await tb.execute("agent-1", "write_file", {"path": str(outside_file), "content": "x"})
+    payload = json.loads(result)
+    assert "error" in payload
+    assert "outside allowed roots" in payload["error"]

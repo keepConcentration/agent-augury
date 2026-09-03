@@ -310,7 +310,7 @@ def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys, monkeypatch):
     rc = main(["--config", str(cfg_path)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "[agent-1]" in out and "[agent-2]" in out
+    assert "💭 agent-1:" in out and "💭 agent-2:" in out
     assert "steps=" in out
 
 

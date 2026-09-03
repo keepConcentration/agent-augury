@@ -78,9 +78,10 @@ def test_broadcast_logger_send_message():
     with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
         logger(event)
         output = mock_stderr.getvalue()
-    # ANSI color codes are present
-    assert "\033[36m" in output
+    # No ANSI codes — plain text format
+    assert "\033[" not in output
     assert "hello world" in output
+    assert "[agent-1 → agent-2][thread-1]" in output
 
 
 def test_broadcast_logger_send_message_no_truncation():
@@ -140,7 +141,7 @@ def test_broadcast_logger_read_resource():
     with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
         logger(event)
         output = mock_stderr.getvalue()
-    assert "[read_resource] agent-1 (threads=3, messages=10)" in output
+    assert "📊 agent-1: read_resource (threads=3, messages=10)" in output
 
 
 def test_broadcast_logger_quiet_mode():
@@ -216,54 +217,98 @@ async def test_server_subscribe_events_isolates_from_subscribers():
 # ---------------------------------------------------------------------------
 
 
+def _make_run_recorder():
+    """Build an async stand-in for cli._run that records its arguments.
+
+    ``main()`` / ``_run_wizard_flow()`` call ``asyncio.run(_run(...))``;
+    substituting ``_run`` with this coroutine function lets us assert that
+    ``quiet`` (and the config path / initial task) actually reach the run
+    layer instead of only checking that ``asyncio.run`` was invoked.
+    """
+    calls = []
+
+    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False):
+        calls.append({"cfg_path": cfg_path, "initial_prompt": initial_prompt, "quiet": quiet})
+        return 0
+
+    return calls, fake_run
+
+
 def test_cli_quiet_flag_parsing():
+    """--quiet must reach _run(quiet=True) when --config is used (T1)."""
     from agent_augury.cli import main
-    # Verify the flag is accepted and passed through
-    with patch("agent_augury.cli.asyncio.run") as mock_run:
-        mock_run.return_value = 0
+
+    calls, fake_run = _make_run_recorder()
+    with patch("agent_augury.cli._run", fake_run):
         result = main(["--config", "fake.yaml", "--quiet"])
-        # Verify _run was called with quiet=True
-        call_args = mock_run.call_args
-        assert call_args is not None
-        # The coroutine was created with quiet=True
-        # call_args[0][0] would be the positional args to asyncio.run
-        # but since it's a coroutine, we check kwargs
-        assert call_args.kwargs.get("quiet") == True or result == 0
+
+    assert result == 0
+    assert len(calls) == 1
+    assert calls[0]["cfg_path"] == "fake.yaml"
+    assert calls[0]["quiet"] is True
+    assert calls[0]["initial_prompt"] is None
 
 
 def test_cli_quiet_flag_default_false():
+    """Without --quiet, _run must receive quiet=False (T1 default)."""
     from agent_augury.cli import main
-    with patch("agent_augury.cli.asyncio.run") as mock_run:
-        mock_run.return_value = 0
-        main(["--config", "fake.yaml"])
-        call_args = mock_run.call_args
-        assert call_args is not None
+
+    calls, fake_run = _make_run_recorder()
+    with patch("agent_augury.cli._run", fake_run):
+        result = main(["--config", "fake.yaml"])
+
+    assert result == 0
+    assert len(calls) == 1
+    assert calls[0]["quiet"] is False
 
 
-def test_wizard_flow_quiet_flag_passed():
-    """Verify that --quiet flag is passed through to _run in wizard flow."""
+VALID_MODEL_CONFIG = {
+    "mode": "L3",
+    "max_steps": 10,
+    "agents": [
+        {"id": "agent-1", "backend": {"type": "fake", "script": ["done"]}},
+    ],
+}
+
+
+def test_wizard_flow_quiet_flag_passed(tmp_path):
+    """--quiet in wizard flow must reach _run(quiet=True) (T2/T8).
+
+    Uses a *valid* saved model config (non-empty agents) so the reuse
+    branch is exercised with a config that would actually load — the old
+    ``{"agents": []}`` mock masked the real ConfigError edge (T8).
+    """
     from agent_augury.cli import _run_wizard_flow
-    with patch("agent_augury.cli.check_tty", return_value=True), \
+
+    out_path = tmp_path / "wizard_out.yaml"
+    calls, fake_run = _make_run_recorder()
+    with patch("agent_augury.cli._run", fake_run), \
+         patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
-         patch("agent_augury.cli.load_model_config", return_value={"agents": []}), \
-         patch("agent_augury.cli.run_wizard", return_value={"agents": []}), \
-         patch("agent_augury.cli.asyncio.run") as mock_run, \
+         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
          patch("builtins.input", return_value="test task"):
-        mock_run.return_value = 0
-        _run_wizard_flow(output_path=Path("test.yaml"), quiet=True)
-        # Verify asyncio.run was called
-        assert mock_run.called
+        result = _run_wizard_flow(output_path=out_path, quiet=True)
+
+    assert result == 0
+    assert len(calls) == 1
+    assert calls[0]["quiet"] is True
+    assert calls[0]["cfg_path"] == str(out_path)
+    assert calls[0]["initial_prompt"] == "test task"
 
 
-def test_wizard_flow_quiet_false_by_default():
-    """Verify that quiet defaults to False in wizard flow."""
+def test_wizard_flow_quiet_false_by_default(tmp_path):
+    """Wizard flow without --quiet must pass quiet=False to _run (T2)."""
     from agent_augury.cli import _run_wizard_flow
-    with patch("agent_augury.cli.check_tty", return_value=True), \
+
+    out_path = tmp_path / "wizard_out.yaml"
+    calls, fake_run = _make_run_recorder()
+    with patch("agent_augury.cli._run", fake_run), \
+         patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
-         patch("agent_augury.cli.load_model_config", return_value={"agents": []}), \
-         patch("agent_augury.cli.run_wizard", return_value={"agents": []}), \
-         patch("agent_augury.cli.asyncio.run") as mock_run, \
+         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
          patch("builtins.input", return_value="test task"):
-        mock_run.return_value = 0
-        _run_wizard_flow(output_path=Path("test.yaml"))
-        assert mock_run.called
+        result = _run_wizard_flow(output_path=out_path)
+
+    assert result == 0
+    assert len(calls) == 1
+    assert calls[0]["quiet"] is False

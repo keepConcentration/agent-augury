@@ -10,13 +10,15 @@ Additional flags:
   - ``agent-augury --reconfigure`` — discard saved model settings and run
     the full wizard from scratch, then save new settings.
   - ``agent-augury --quiet`` — suppress broadcast event output (only show
-    final summary).
+    final summary).  **Currently unimplemented**: accepted for CLI
+    compatibility but output is not suppressed yet.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import re
 import sys
 from pathlib import Path
@@ -62,6 +64,7 @@ class BroadcastLogger:
 
     Subscribes to the MessageServer event stream and prints a one-line
     summary of each create_thread / send_message / read_resource event.
+    No ANSI color codes — plain text only.
     """
 
     def __init__(self, *, quiet: bool = False) -> None:
@@ -81,7 +84,7 @@ class BroadcastLogger:
         name = event["name"]
         self._seen_threads[tid] = name
         participants = ", ".join(event["participants"])
-        self._print(f"\033[32m[{tid}] create_thread {name} ({participants})\033[0m")
+        self._print(f"🧵 [{tid}] create_thread {name} ({participants})")
 
     def _on_send_message(self, event: dict[str, Any]) -> None:
         author = event["author"]
@@ -91,14 +94,13 @@ class BroadcastLogger:
         content = _mask_sensitive(content)
         delivered = event.get("delivered_to", [])
         targets = ", ".join(delivered) if delivered else "broadcast"
-        # Color codes for different event types
-        self._print(f"\033[36m[{author} → {targets}][{tid}]\033[0m {content}")
+        self._print(f"💬 [{author} → {targets}][{tid}] {content}")
 
     def _on_read_resource(self, event: dict[str, Any]) -> None:
         agent_id = event["agent_id"]
         threads = event["threads"]
         messages = event["messages"]
-        self._print(f"\033[33m[read_resource] {agent_id} (threads={threads}, messages={messages})\033[0m")
+        self._print(f"📊 {agent_id}: read_resource (threads={threads}, messages={messages})")
 
     def _print(self, line: str) -> None:
         """Print a broadcast line to stderr with flush."""
@@ -150,31 +152,16 @@ def _prompt_output_path(default: Path = _DEFAULT_OUTPUT_PATH) -> Path:
         print(f"  Warning: invalid save path ({problem}). Press Enter for default or type a valid path.")
 
 
-def _format_tokens(count: int | str) -> str:
-    """Format token count as x.xk for readability."""
-    if isinstance(count, str):
-        return count
-    if count >= 1000:
-        return f"{count/1000:.1f}k"
-    return str(count)
-
-
 def _log_step(agent_id: str, result: StepResult) -> None:
-    # Agent ID in bold cyan
-    parts = [f"\033[1;36m[{agent_id}]\033[0m step drained={result.drained_count}"]
-    if result.tool_calls:
-        names = ",".join(c.name for c in result.tool_calls)
-        # Tool names in yellow
-        parts.append(f"\033[33mtools=({names})\033[0m")
-    if result.usage:
-        total = result.usage.get("total_tokens", 0)
-        # Token usage in magenta, only show total as x.xk
-        parts.append(f"\033[35mtokens={_format_tokens(total)}\033[0m")
-    if result.text:
-        text = result.text.replace("\n", " ")
-        # No truncation — show full text
-        parts.append(f"text={text!r}")
-    print(" ".join(parts), flush=True)
+    """Print a step summary line (no ANSI codes).
+
+    Only prints when the step produced text; steps with no text are silent.
+    Format: ``💭 agent_id: text`` (newlines flattened to a single space).
+    """
+    if not result.text:
+        return
+    text = result.text.replace("\n", " ")
+    print(f"💭 {agent_id}: {text}", flush=True)
 
 
 async def _close_session(session: Session) -> None:
@@ -188,57 +175,58 @@ async def _close_session(session: Session) -> None:
 
 
 def _log_tool_event(event: dict[str, Any]) -> None:
-    """Print a tool event in real-time (Hermes-style)."""
-    agent_id = event["agent_id"]
-    tool = event["tool"]
-    args = event.get("args", {})
-    
-    # Tool icons
-    icons = {
-        "read_file": "📖",
-        "write_file": "📝",
-        "list_directory": "📁",
-        "send_message": "💬",
-        "create_thread": "🧵",
-        "read_resource": "📊",
-        "wait_for_mention": "⏳",
-    }
-    icon = icons.get(tool, "🔧")
-    
-    # Extract path for file tools
-    path = args.get("path", "")
-    if path:
-        # Shorten path for display
-        short_path = path.split("/")[-1] if "/" in path else path
-        print(f"{icon} \033[36m{agent_id}\033[0m: {tool} \033[33m{short_path}\033[0m", flush=True)
-    else:
-        print(f"{icon} \033[36m{agent_id}\033[0m: {tool}", flush=True)
+    """Print a tool/broadcast event in real-time (Hermes-style, no ANSI codes).
 
+    Handles: tool, read_resource, create_thread, send_message.
+    """
+    event_type = event.get("type")
 
-def _log_create_thread(event: dict[str, Any]) -> None:
-    """Print a create_thread event."""
-    tid = event["thread_id"]
-    name = event["name"]
-    participants = ", ".join(event["participants"])
-    print(f"🧵 \033[32m[{tid}] create_thread {name} ({participants})\033[0m", flush=True)
+    if event_type == "create_thread":
+        tid = event["thread_id"]
+        name = event["name"]
+        participants = ", ".join(event["participants"])
+        print(f"🧵 [{tid}] create_thread {name} ({participants})", flush=True)
 
+    elif event_type == "send_message":
+        author = event["author"]
+        tid = event["thread_id"]
+        content = _mask_sensitive(event["content"])
+        delivered = event.get("delivered_to", [])
+        targets = ", ".join(delivered) if delivered else "broadcast"
+        print(f"💬 [{author} → {targets}][{tid}] {content}", flush=True)
 
-def _log_send_message(event: dict[str, Any]) -> None:
-    """Print a send_message event."""
-    author = event["author"]
-    tid = event["thread_id"]
-    content = event["content"]
-    delivered = event.get("delivered_to", [])
-    targets = ", ".join(delivered) if delivered else "broadcast"
-    print(f"💬 \033[36m[{author} → {targets}][{tid}]\033[0m {content}", flush=True)
+    elif event_type == "read_resource":
+        agent_id = event["agent_id"]
+        threads = event.get("threads", 0)
+        messages = event.get("messages", 0)
+        print(f"📊 {agent_id}: read_resource (threads={threads}, messages={messages})", flush=True)
 
+    elif event_type == "tool":
+        agent_id = event["agent_id"]
+        tool = event["tool"]
+        args = event.get("args", {})
 
-def _log_read_resource(event: dict[str, Any]) -> None:
-    """Print a read_resource event in real-time."""
-    agent_id = event["agent_id"]
-    threads = event.get("threads", 0)
-    messages = event.get("messages", 0)
-    print(f"📊 \033[36m{agent_id}\033[0m: read_resource (threads={threads}, messages={messages})", flush=True)
+        # Tool icons
+        icons = {
+            "read_file": "📖",
+            "write_file": "📝",
+            "list_directory": "📁",
+            "send_message": "💬",
+            "create_thread": "🧵",
+            "read_resource": "📊",
+            "wait_for_mention": "⏳",
+        }
+        icon = icons.get(tool, "🔧")
+
+        # Extract path for file tools (display only — shorten to basename).
+        path = args.get("path", "")
+        if path:
+            # Normalize backslashes so os.path.basename shortens Windows
+            # paths on any platform (D4: Windows `C:\...` was not shortened).
+            short_path = os.path.basename(path.replace("\\", "/"))
+            print(f"{icon} {agent_id}: {tool} {short_path}", flush=True)
+        else:
+            print(f"{icon} {agent_id}: {tool}", flush=True)
 
 
 async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False) -> int:
@@ -258,8 +246,8 @@ async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool 
         gate_state = "OPEN" if (session.gate and session.gate.is_open) else ("CLOSED" if session.gate else "n/a")
         snap = session.server.snapshot()
         print(
-            f"\033[1;32m--- session finished: steps={steps} threads={len(snap['threads'])} "
-            f"messages={len(snap['messages'])} gate={gate_state}\033[0m"
+            f"--- session finished: steps={steps} threads={len(snap['threads'])} "
+            f"messages={len(snap['messages'])} gate={gate_state}"
         )
         return 0
     finally:
@@ -361,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         "--quiet",
         action="store_true",
         default=False,
-        help="suppress broadcast event output (only show final summary)",
+        help="suppress broadcast event output (only show final summary) — currently unimplemented",
     )
     args = parser.parse_args(argv)
 

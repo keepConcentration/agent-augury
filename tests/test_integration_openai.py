@@ -107,14 +107,33 @@ async def test_p1_to_p5_protocol_yaml_e2e_fake():
 
 
 def test_cli_p1_to_p5_protocol_yaml(capsys):
-    """CLI entry runs the YAML protocol config offline."""
+    """CLI entry runs the YAML protocol config offline.
+
+    T4/D11 coverage (agent-3 v4, main tree): the old `"[agent-1]"` assertion
+    referenced a stale output format. Current CLI step lines are
+    `💭 {agent_id}: {text}`; broadcast lines are
+    `💬 [{author} → {targets}][{tid}] {content}`; there is no `[agent-1]`
+    literal in the normal path. This test asserts the real output markers AND
+    closes the T4/D11 gap: a protocol-only session (no top-level `gate:`)
+    must report `gate=n/a` in the summary — protocol.phase is not printed
+    (D11 observation).
+    """
     from agent_augury.cli import main
 
     rc = main(["--config", str(P1_P5_YAML)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "[agent-1]" in out
+    # step log lines use the current format (agent-1 emits text completions)
+    assert "💭 agent-1:" in out
+    # summary line + step/message/gate fields are present
     assert "session finished" in out
+    assert "steps=" in out
+    # protocol-only config → no standalone gate → gate=n/a (D11 coverage)
+    assert "gate=n/a" in out
+    # P1 READY: broadcasts fire for all participants
+    assert "READY:" in out
+    # gate threads are pre-created → create_thread events are printed
+    assert "create_thread" in out
 
 
 # ---------------------------------------------------------------------------

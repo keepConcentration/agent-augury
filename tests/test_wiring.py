@@ -79,7 +79,7 @@ async def test_session_builds_shared_server_and_agents(tmp_path):
     assert len({id(a.server) for a in session.agents}) == 1
 
 
-async def test_run_round_robin_and_task_injected_to_first_agent(tmp_path):
+async def test_run_parallel_and_task_injected_to_first_agent(tmp_path):
     session = Session.from_config(load_config(write_cfg(tmp_path, FAKE_CFG)))
     steps = await session.run()
 

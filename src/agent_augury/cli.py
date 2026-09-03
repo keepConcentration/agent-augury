@@ -260,9 +260,10 @@ async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool 
 
         gate_state = "OPEN" if (session.gate and session.gate.is_open) else ("CLOSED" if session.gate else "n/a")
         snap = session.server.snapshot()
+        phase_state = session.protocol.phase if session.protocol is not None else "n/a"
         print(
             f"--- session finished: steps={steps} threads={len(snap['threads'])} "
-            f"messages={len(snap['messages'])} gate={gate_state}"
+            f"messages={len(snap['messages'])} gate={gate_state} phase={phase_state}"
         )
         return 0
     finally:

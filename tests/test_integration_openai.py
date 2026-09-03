@@ -12,7 +12,6 @@ Offline tests in this module (YAML load + fake-backend P1~P5 E2E) always run.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -20,17 +19,7 @@ import pytest
 from agent_augury.backends_factory import build_backend
 from agent_augury.config import load_config
 from agent_augury.session import Session
-
-OPENAI_TESTS_ENABLED = os.environ.get("AUGURY_RUN_OPENAI_TESTS") == "1"
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-
-requires_openai = pytest.mark.skipif(
-    not (OPENAI_TESTS_ENABLED and OPENAI_API_KEY),
-    reason=(
-        "OpenAI integration tests are opt-in: set AUGURY_RUN_OPENAI_TESTS=1 "
-        "and OPENAI_API_KEY to run (incurs API cost)."
-    ),
-)
+from tests.conftest import requires_openai  # noqa: F401 — shared opt-in marker
 
 ROOT = Path(__file__).resolve().parents[1]
 P1_P5_YAML = ROOT / "examples" / "p1_to_p5_protocol.yaml"
@@ -115,8 +104,8 @@ def test_cli_p1_to_p5_protocol_yaml(capsys):
     `💬 [{author} → {targets}][{tid}] {content}`; there is no `[agent-1]`
     literal in the normal path. This test asserts the real output markers AND
     closes the T4/D11 gap: a protocol-only session (no top-level `gate:`)
-    must report `gate=n/a` in the summary — protocol.phase is not printed
-    (D11 observation).
+    must report `gate=n/a` in the summary, and now also reports the protocol
+    phase (D11) via `phase={protocol.phase}`.
     """
     from agent_augury.cli import main
 
@@ -125,11 +114,13 @@ def test_cli_p1_to_p5_protocol_yaml(capsys):
     assert rc == 0
     # step log lines use the current format (agent-1 emits text completions)
     assert "💭 agent-1:" in out
-    # summary line + step/message/gate fields are present
+    # summary line + step/message/gate/phase fields are present
     assert "session finished" in out
     assert "steps=" in out
     # protocol-only config → no standalone gate → gate=n/a (D11 coverage)
     assert "gate=n/a" in out
+    # D11: protocol phase is now reported in the summary
+    assert "phase=" in out
     # P1 READY: broadcasts fire for all participants
     assert "READY:" in out
     # gate threads are pre-created → create_thread events are printed

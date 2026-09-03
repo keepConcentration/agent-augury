@@ -1,4 +1,4 @@
-# agent-augury demo session (v0.1a)
+# agent-augury demo session (v0.2)
 #
 # Fake backends only — runs fully offline:
 #   agent-augury --config examples/demo.yaml

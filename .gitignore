@@ -14,3 +14,32 @@ htmlcov/
 .idea/
 .vscode/
 *.log
+
+# Root experiment/wizard scratch configs (not part of the runtime)
+/10
+/e2e task
+/L3
+/ㅣ
+/test.yaml
+
+# Agent/orchestrator scratch artifacts (debug dumps, handoff notes, queries)
+/_dump_*.py
+/_lifecycle_*.py
+/_query_*.py
+/_run_*.py
+/_discord_done_*.txt
+/query_*.py
+/tmp_query_*.py
+/CLI_CONFIG_*.md
+/N5A_*.md
+/SESSION_FLOW_*.md
+/TEST_STRUCTURE_*.md
+/VERIFICATION_*.md
+/CROSS_CUTTING_*.md
+/L3_*.md
+/FIRST_MULTI_AGENT_E2E.md
+/KANBAN_t_*.md
+/ARCHITECTURE*.md
+/.omc/
+/.worktrees/
+/scripts/

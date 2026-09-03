@@ -14,7 +14,7 @@
 #     base_url: https://api.openai.com/v1
 #     api_key_env: OPENAI_API_KEY
 
-mode: L3            # L2 | L3  (§3.5.5 listening-mode switch)
+mode: L3
 task: "42가 아니라 진짜 답을 찾아라"
 max_steps: 12
 

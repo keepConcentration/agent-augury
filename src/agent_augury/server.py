@@ -1,8 +1,7 @@
-"""Internal message server — the SSOT for threads/messages/mentions/waits.
+"""Internal message server — the SSOT for threads/messages/mentions.
 
 DESIGN.md §3.4 (schema & primitives), §3.5.2 (A model: send→inbox push,
-step() drains as single consumer), §3.5.3 (broadcast fan-out rules),
-§3.5.5 (L2 contrast mode: push off, foreground wait instead).
+step() drains as single consumer), §3.5.3 (broadcast fan-out rules).
 """
 
 from __future__ import annotations
@@ -11,8 +10,6 @@ import asyncio
 import itertools
 import time
 from typing import Any, Callable
-
-_VALID_MODES = ("L2", "L3")
 
 
 class MessageServer:
@@ -25,14 +22,11 @@ class MessageServer:
     def __init__(self) -> None:
         self._agents: set[str] = set()
         self._threads: dict[str, dict[str, Any]] = {}
-        # messages in global send order; each carries an int `seq` for cursors
+        # messages in global send order; each carries an int `seq` for ordering
         self._messages: list[dict[str, Any]] = []
         # message_id -> message dict index (O(1) lookup for drain_inbox)
         self._message_index: dict[str, dict[str, Any]] = {}
         self._inboxes: dict[str, asyncio.Queue[str]] = {}
-        self._cursors: dict[str, int] = {}
-        self._cond: asyncio.Condition = asyncio.Condition()
-        self._mode: str = "L3"
         self._thread_ids = itertools.count(1)
         self._message_ids = itertools.count(1)
         self._subscribers: list[Callable[[dict[str, Any]], None]] = []
@@ -47,7 +41,6 @@ class MessageServer:
             return
         self._agents.add(agent_id)
         self._inboxes[agent_id] = asyncio.Queue()
-        self._cursors[agent_id] = 0
 
     # -- primitives ---------------------------------------------------------
 
@@ -60,7 +53,7 @@ class MessageServer:
                 new = set(participants)
                 added = new - existing
                 if added:
-                    # Register new participants FIRST (inbox/cursor) — otherwise
+                    # Register new participants FIRST (inbox) — otherwise
                     # a later send to them would KeyError on the missing inbox.
                     for p in sorted(added):
                         self.register_agent(p)
@@ -105,7 +98,7 @@ class MessageServer:
 
         Delivery (§3.5.3): non-empty mentions → participants ∩ mentions;
         empty mentions → broadcast to participants minus the author.
-        L3 pushes to targets' inboxes; L2 records delivery only (no push).
+        Always pushes to targets' inboxes.
         """
         thread = self._threads.get(thread_id)
         if thread is None:
@@ -132,14 +125,11 @@ class MessageServer:
         self._messages.append(message)
         self._message_index[message["message_id"]] = message
 
-        if self._mode == "L3":
-            for target in targets:
-                self._inboxes[target].put_nowait(message["message_id"])
+        for target in targets:
+            self._inboxes[target].put_nowait(message["message_id"])
 
         for subscriber in self._subscribers:
             subscriber(message)
-        async with self._cond:
-            self._cond.notify_all()
 
         self._emit_event({
             "type": "send_message",
@@ -175,40 +165,6 @@ class MessageServer:
             except Exception:  # noqa: BLE001 — subscriber must not break server
                 pass
 
-    async def wait_for_mention(
-        self, agent_id: str, timeout: float | None = None
-    ) -> list[dict[str, Any]]:
-        """Foreground blocking receive — L2 contrast mode ONLY (§3.5.5).
-
-        Returns unread messages targeted at the caller (cursor-based,
-        unread-only) and advances the caller's cursor past them.
-        """
-        self._require_agent(agent_id)
-        if self._mode != "L2":
-            raise RuntimeError(
-                "wait_for_mention is only available in L2 contrast mode; "
-                "L3 receives via inbox push + step() drain"
-            )
-        deadline = None if timeout is None else time.monotonic() + timeout
-        async with self._cond:
-            while True:
-                batch = self._unread_for(agent_id)
-                if batch:
-                    self._cursors[agent_id] = batch[-1]["seq"] + 1
-                    return [dict(m) for m in batch]
-                remaining = None if deadline is None else deadline - time.monotonic()
-                if remaining is not None and remaining <= 0:
-                    raise TimeoutError(f"no mention for {agent_id} within timeout")
-                try:
-                    if remaining is None:
-                        await self._cond.wait()
-                    else:
-                        await asyncio.wait_for(self._cond.wait(), remaining)
-                except asyncio.TimeoutError:
-                    raise TimeoutError(
-                        f"no mention for {agent_id} within timeout"
-                    ) from None
-
     # -- inbox consumption (single consumer: step()) ------------------------
 
     def inbox_size(self, agent_id: str) -> int:
@@ -222,22 +178,12 @@ class MessageServer:
         out: list[dict[str, Any]] = []
         while not q.empty():
             mid = q.get_nowait()
-            msg = self._by_id(mid)
+            msg = self._message_index.get(mid)
             if msg is not None:
                 out.append(dict(msg))
         return out
 
-    # -- modes / views ------------------------------------------------------
-
-    def set_mode(self, mode: str) -> None:
-        """Switch communication mode (§3.5.5). Only 'listening' differs."""
-        if mode not in _VALID_MODES:
-            raise ValueError(f"mode must be one of {_VALID_MODES}, got {mode!r}")
-        self._mode = mode
-
-    @property
-    def mode(self) -> str:
-        return self._mode
+    # -- views --------------------------------------------------------------
 
     def get_thread(self, thread_id: str) -> dict[str, Any]:
         thread = self._threads.get(thread_id)
@@ -258,15 +204,3 @@ class MessageServer:
     def _require_agent(self, agent_id: str) -> None:
         if agent_id not in self._agents:
             raise KeyError(f"unknown agent: {agent_id}")
-
-    def _unread_for(self, agent_id: str) -> list[dict[str, Any]]:
-        cursor = self._cursors[agent_id]
-        # self._messages[cursor:] already guarantees seq >= cursor
-        return [
-            m
-            for m in self._messages[cursor:]
-            if agent_id in m["delivered_to"]
-        ]
-
-    def _by_id(self, message_id: str) -> dict[str, Any] | None:
-        return self._message_index.get(message_id)

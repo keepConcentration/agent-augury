@@ -13,8 +13,7 @@ standalone open-source project — not bound to any model, channel, or cloud run
 Agents listen **while they work**. Incoming teammate messages are pushed to an
 inbox by the in-process message server; each agent's next `step()` drains the
 inbox automatically. Communication never blocks the work — that is *passive
-awareness* (the paper's L3 mode). The blocking foreground `wait_for_mention`
-(the paper's L2) exists only as a contrast mode for verification.
+awareness*.
 
 ## Three primitives (implemented by the internal message server)
 
@@ -22,7 +21,7 @@ awareness* (the paper's L3 mode). The blocking foreground `wait_for_mention`
 |-----------|----------|
 | `create_thread(name, participants)` | Create a named thread, return its id |
 | `send_message(thread, content, mentions)` | Append + push to targets' inboxes; returns immediately (fire-and-forget) |
-| `wait_for_mention(timeout)` | Foreground blocking receive — L2 contrast mode only |
+| `read_resource()` | Explicit full state dump for recovery or aggregation |
 
 ## Status
 
@@ -30,8 +29,6 @@ v0.2 — P1~P5 full collaboration protocol.
 
 - 3+ agents (A/B/C) + internal message server (in-process asyncio, memory state)
 - Receive model: send → inbox push → `step()` auto-drain (single consumer)
-- Verification: L2 vs L3 contrast script with a Fake ModelBackend
-  (`examples/l2_vs_l3_toy.py`) — asserts search counts / final answer numerically.
 - Consensus gate: propose → unanimous APPROVE → gate OPEN → work shares
   (`examples/consensus_demo.py`) — order-based assertions on server sequence numbers.
 - **P1~P5 full protocol**: explore → split → execute → review → submit
@@ -57,7 +54,6 @@ Both run the identical gate protocol: propose → unanimous approve → gate OPE
 ```bash
 pip install -e ".[dev]"
 pytest tests/ -q                      # unit tests (offline; skips OpenAI integration)
-python examples/l2_vs_l3_toy.py       # L2 vs L3 contrast verification
 python examples/consensus_demo.py     # v0.1b consensus gate verification
 python examples/p1_to_p5_demo.py      # v0.2 P1~P5 full protocol verification
 agent-augury --config examples/p1_to_p5_protocol.yaml  # same P1~P5 flow via YAML (offline)

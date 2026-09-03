@@ -437,10 +437,9 @@ def _build_agent(
     return {"id": agent_id, "backend": backend}
 
 
-def _collect_model_settings(force_reconfigure: bool = False) -> tuple[str, int, list[dict[str, Any]]]:
-    """Phase 1: collect mode, max_steps, and agent/backend settings."""
+def _collect_model_settings(force_reconfigure: bool = False) -> tuple[int, list[dict[str, Any]]]:
+    """Phase 1: collect max_steps and agent/backend settings."""
     print("\n--- Model Configuration ---")
-    mode = _input("Session mode (L2/L3)", "L3")
     max_steps = _input_int("Max steps", 20)
 
     # Agents.
@@ -459,7 +458,7 @@ def _collect_model_settings(force_reconfigure: bool = False) -> tuple[str, int, 
         if add_more.lower() not in ("y", "yes"):
             break
 
-    return mode, max_steps, agents
+    return max_steps, agents
 
 
 def run_wizard(
@@ -486,21 +485,20 @@ def run_wizard(
 
     if existing_model_config is not None:
         # Reuse saved model settings — skip directly to config generation.
-        mode = existing_model_config.get("mode", "L3")
         max_steps = existing_model_config.get("max_steps", 20)
         agents = existing_model_config["agents"]
         print(
-            f"\nUsing saved model config: mode={mode}, max_steps={max_steps}, "
+            f"\nUsing saved model config: max_steps={max_steps}, "
             f"{len(agents)} agent(s)."
         )
     else:
         # Phase 1: collect model settings from user.
-        mode, max_steps, agents = _collect_model_settings(force_reconfigure=force_reconfigure)
+        max_steps, agents = _collect_model_settings(force_reconfigure=force_reconfigure)
         # Persist model settings immediately (path is internal to save_model_config).
-        save_model_config(mode, max_steps, agents)
+        save_model_config(max_steps, agents)
 
     return {
-        "mode": mode,
+        "mode": "L3",
         "max_steps": max_steps,
         "agents": agents,
     }

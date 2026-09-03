@@ -171,7 +171,7 @@ async def test_read_resource_returns_snapshot_json():
 # ---------------------------------------------------------------------------
 
 
-def test_l3_exposes_six_tools_not_wait():
+def test_l3_exposes_six_tools():
     server = MessageServer()
     agent = make_agent(server, "agent-1", [])
     names = {t["name"] for t in agent.tool_specs}
@@ -179,14 +179,6 @@ def test_l3_exposes_six_tools_not_wait():
         "create_thread", "send_message", "read_resource",
         "read_file", "list_directory", "write_file",
     }
-
-
-def test_l2_adds_wait_for_mention_tool():
-    server = MessageServer()
-    server.set_mode("L2")
-    agent = make_agent(server, "agent-1", [])
-    names = {t["name"] for t in agent.tool_specs}
-    assert "wait_for_mention" in names
 
 
 # ---------------------------------------------------------------------------

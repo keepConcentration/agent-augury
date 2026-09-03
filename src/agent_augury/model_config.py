@@ -1,6 +1,6 @@
 """Model config persistence — stores agent/backend settings between runs.
 
-Model settings (mode, max_steps, agent IDs, backend types, model names,
+Model settings (max_steps, agent IDs, backend types, model names,
 base URLs, env-var names) are separated from the session-level task
 description and persisted to ``~/.agent-augury/model_config.json``.  This
 lets subsequent runs skip the model-configuration phase and go straight to
@@ -24,19 +24,18 @@ def _resolve_path(path: Path | None = None) -> Path:
 
 
 def save_model_config(
-    mode: str,
     max_steps: int,
     agents: list[dict[str, Any]],
     path: Path | None = None,
 ) -> Path:
-    """Persist model settings (mode, max_steps, agents) to disk.
+    """Persist model settings (max_steps, agents) to disk.
 
     Returns the path written.  The file is written as JSON with
     ``ensure_ascii=False`` so Unicode agent IDs are human-readable.
     """
     target = _resolve_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    data = {"mode": mode, "max_steps": max_steps, "agents": agents}
+    data = {"max_steps": max_steps, "agents": agents}
     target.write_text(
         json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
     )

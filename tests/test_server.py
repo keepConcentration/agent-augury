@@ -25,7 +25,7 @@ async def test_create_thread_returns_id_and_records_participants():
 
 
 async def test_create_thread_auto_registers_unknown_participants():
-    """Server-level convenience: referencing an agent creates its inbox/cursor.
+    """Server-level convenience: referencing an agent creates its inbox.
     Config-typo validation is the session layer's job, not the server's."""
     server = MessageServer()
     tid = await server.create_thread("plan", participants=["agent-1", "agent-2"])
@@ -140,7 +140,7 @@ async def test_send_message_from_non_participant_is_rejected():
 
 
 # ---------------------------------------------------------------------------
-# drain_inbox (single consumer) + unread cursor
+# drain_inbox (single consumer)
 # ---------------------------------------------------------------------------
 
 
@@ -159,94 +159,6 @@ async def test_drain_returns_fifo_and_clears_queue():
     assert drained[0]["content"] == "first"
     # queue is now empty
     assert await server.drain_inbox("agent-2") == []
-
-
-# ---------------------------------------------------------------------------
-# wait_for_mention — L2 contrast mode only (cursor-based blocking read)
-# ---------------------------------------------------------------------------
-
-
-async def test_wait_for_mention_returns_unread_and_advances_cursor():
-    """§3.5.5 — L2: wait blocks until an unread mention arrives, consumes it once."""
-    server = MessageServer()
-    for a in ("agent-1", "agent-2"):
-        server.register_agent(a)
-    tid = await server.create_thread("t", participants=["agent-1", "agent-2"])
-    server.set_mode("L2")
-
-    m1 = await server.send_message(tid, author="agent-1", content="ping", mentions=["agent-2"])
-
-    got = await asyncio.wait_for(server.wait_for_mention("agent-2"), timeout=2.0)
-    assert len(got) == 1
-    assert got[0]["message_id"] == m1
-
-    # second wait times out: message was consumed (unread-only semantics)
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(server.wait_for_mention("agent-2"), timeout=0.1)
-
-
-async def test_wait_blocks_until_message_arrives_in_l2():
-    server = MessageServer()
-    for a in ("agent-1", "agent-2"):
-        server.register_agent(a)
-    tid = await server.create_thread("t", participants=["agent-1", "agent-2"])
-    server.set_mode("L2")
-
-    async def send_later():
-        await asyncio.sleep(0.05)
-        await server.send_message(tid, author="agent-1", content="late ping", mentions=["agent-2"])
-
-    task = asyncio.create_task(send_later())
-    got = await asyncio.wait_for(server.wait_for_mention("agent-2"), timeout=2.0)
-    await task
-    assert got[0]["content"] == "late ping"
-
-
-# ---------------------------------------------------------------------------
-# L2/L3 mode switch — push vs no-push are mutually exclusive paths
-# ---------------------------------------------------------------------------
-
-
-async def test_l2_mode_disables_push_but_wait_reads_cursor():
-    server = MessageServer()
-    for a in ("agent-1", "agent-2"):
-        server.register_agent(a)
-    tid = await server.create_thread("t", participants=["agent-1", "agent-2"])
-
-    server.set_mode("L2")
-    m1 = await server.send_message(tid, author="agent-1", content="ping", mentions=["agent-2"])
-
-    # L3 inbox stays empty — step() must not drain anything in L2
-    assert server.inbox_size("agent-2") == 0
-
-    got = await asyncio.wait_for(server.wait_for_mention("agent-2"), timeout=2.0)
-    assert got[0]["message_id"] == m1
-
-
-async def test_l3_push_never_reaches_wait_path():
-    """§3.5.2/§3.5.5 — L3 receive path is exclusively push+inbox.
-
-    A message pushed to the inbox is invisible to wait_for_mention; the wait
-    API itself refuses to run outside L2 contrast mode.
-    """
-    server = MessageServer()
-    for a in ("agent-1", "agent-2"):
-        server.register_agent(a)
-    tid = await server.create_thread("t", participants=["agent-1", "agent-2"])
-
-    server.set_mode("L3")  # default, explicit here for clarity
-    await server.send_message(tid, author="agent-1", content="ping", mentions=["agent-2"])
-
-    # message lives in the inbox, waiting for step() to drain it
-    assert server.inbox_size("agent-2") == 1
-    with pytest.raises(RuntimeError):
-        await asyncio.wait_for(server.wait_for_mention("agent-2"), timeout=0.15)
-
-
-def test_set_mode_rejects_unknown_mode():
-    server = MessageServer()
-    with pytest.raises(ValueError):
-        server.set_mode("L4")
 
 
 async def test_unknown_agent_operations_are_rejected():

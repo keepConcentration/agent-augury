@@ -169,7 +169,6 @@ def _log_tool_event(event: dict[str, Any]) -> None:
             "send_message": "💬",
             "create_thread": "🧵",
             "read_resource": "📊",
-            "wait_for_mention": "⏳",
         }
         icon = icons.get(tool, "🔧")
 
@@ -253,7 +252,7 @@ def _run_wizard_flow(
         if existing is not None and not force_reconfigure:
             # Build config from saved model settings
             cfg = {
-                "mode": existing.get("mode", "L3"),
+                "mode": "L3",
                 "max_steps": existing.get("max_steps", 20),
                 "agents": existing["agents"],
             }

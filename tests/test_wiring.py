@@ -73,7 +73,6 @@ def test_load_config_rejects_bad_mode(tmp_path):
 
 async def test_session_builds_shared_server_and_agents(tmp_path):
     session = Session.from_config(load_config(write_cfg(tmp_path, FAKE_CFG)))
-    assert session.server.mode == "L3"
     assert [a.agent_id for a in session.agents] == ["agent-1", "agent-2"]
     # all agents share ONE server instance (SSOT)
     assert len({id(a.server) for a in session.agents}) == 1

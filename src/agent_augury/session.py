@@ -64,7 +64,6 @@ class Session:
     @classmethod
     def from_config(cls, cfg: dict[str, Any], on_step=None, on_tool_event=None, allowed_roots: list[str] | None = None) -> "Session":
         server = MessageServer()
-        server.set_mode(cfg.get("mode", "L3"))
         agents: list[AgentLoop] = []
         for spec in cfg["agents"]:
             server.register_agent(spec["id"])

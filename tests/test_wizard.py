@@ -100,10 +100,9 @@ def test_input_int_returns_parsed_value():
 
 def test_wizard_fake_backend_produces_valid_config(tmp_path):
     """Wizard with a fake backend must produce a loadable YAML config."""
-    # Simulate user inputs for: mode, max_steps, agent-1 (fake),
+    # Simulate user inputs for: max_steps, agent-1 (fake),
     # script entries, no more agents, output path.
     inputs = iter([
-        "L3",           # mode
         "15",           # max_steps
         "agent-1",      # agent id
         "1",            # backend choice = fake
@@ -126,9 +125,8 @@ def test_wizard_fake_backend_produces_valid_config(tmp_path):
     # Model config should have been saved.
     mock_save.assert_called_once()
     call_args = mock_save.call_args
-    assert call_args[0][0] == "L3"  # mode
-    assert call_args[0][1] == 15    # max_steps
-    assert len(call_args[0][2]) == 1  # agents
+    assert call_args[0][0] == 15    # max_steps
+    assert len(call_args[0][1]) == 1  # agents
 
     # Must be loadable by the real config loader.
     cfg_path = tmp_path / "check.yaml"
@@ -144,7 +142,6 @@ def test_wizard_fake_backend_produces_valid_config(tmp_path):
 
 def test_wizard_openai_backend_uses_default_base_url(tmp_path):
     inputs = iter([
-        "L3",           # mode
         "20",           # max_steps
         "agent-1",      # agent id
         "2",            # backend choice = openai
@@ -172,7 +169,6 @@ def test_wizard_openai_backend_uses_default_base_url(tmp_path):
 
 def test_wizard_nous_backend_uses_default_base_url(tmp_path):
     inputs = iter([
-        "L3",           # mode
         "20",           # max_steps
         "agent-1",      # agent id
         "3",            # backend choice = nous
@@ -200,7 +196,6 @@ def test_wizard_nous_backend_uses_default_base_url(tmp_path):
 
 def test_wizard_multiple_agents(tmp_path):
     inputs = iter([
-        "L3",           # mode
         "30",           # max_steps
         "agent-1",      # agent-1 id
         "1",            # fake
@@ -232,7 +227,7 @@ def test_wizard_cancels_on_eof():
     def side_effect(_prompt):
         call_count[0] += 1
         if call_count[0] == 1:
-            return "L3"
+            return "15"
         raise EOFError()
 
     with patch("builtins.input", side_effect=side_effect):
@@ -248,7 +243,7 @@ def test_wizard_cancels_on_eof():
 def test_wizard_reuses_existing_model_config_skips_model_settings(tmp_path):
     """When existing_model_config is provided, model settings are reused."""
     existing = {
-        "mode": "L2",
+        "mode": "L3",
         "max_steps": 50,
         "agents": [
             {"id": "a1", "backend": {"type": "fake", "script": ["done"]}},
@@ -260,7 +255,7 @@ def test_wizard_reuses_existing_model_config_skips_model_settings(tmp_path):
         cfg = run_wizard(existing_model_config=existing)
 
     # Model settings come from existing config.
-    assert cfg["mode"] == "L2"
+    assert cfg["mode"] == "L3"
     assert cfg["max_steps"] == 50
     assert len(cfg["agents"]) == 1
     assert cfg["agents"][0]["id"] == "a1"
@@ -321,7 +316,7 @@ def test_cli_wizard_generates_valid_yaml(tmp_path):
 
     output = tmp_path / "wizard_out.yaml"
     inputs = iter([
-        "L3", "10",          # mode, max_steps
+        "10",                # max_steps
         "a1", "1", "hello", "",  # agent-1 (fake)
         "n",                 # no more agents
         str(output),         # output path
@@ -464,7 +459,6 @@ def test_check_tty_no_attach_on_non_windows():
 def test_wizard_second_agent_reuses_oauth_no_reauthentication():
     """Second agent with nous_oauth should reuse token, not re-authenticate."""
     inputs = iter([
-        "L3",           # mode
         "20",           # max_steps
         "agent-1",      # agent-1 id
         "4",            # backend = nous_oauth
@@ -503,7 +497,6 @@ def test_wizard_second_agent_reuses_oauth_real_token_store(tmp_path):
     })
 
     inputs = iter([
-        "L3",           # mode
         "20",           # max_steps
         "agent-1",      # agent-1 id
         "4",            # backend = nous_oauth
@@ -532,7 +525,6 @@ def test_wizard_second_agent_reuses_oauth_real_token_store(tmp_path):
 def test_wizard_second_agent_oauth_no_token_triggers_auth():
     """Second agent with nous_oauth and no token must authenticate."""
     inputs = iter([
-        "L3",           # mode
         "20",           # max_steps
         "agent-1",      # agent-1 id
         "4",            # backend = nous_oauth
@@ -572,8 +564,6 @@ def test_wizard_force_reconfigure_only_for_first_agent():
 
     def fake_input(prompt, default=None):
         nonlocal another_count
-        if "mode" in prompt:
-            return "L3"
         if "steps" in prompt:
             return "20"
         if "ID" in prompt:
@@ -603,8 +593,6 @@ def test_wizard_force_reconfigure_single_agent():
         return {"id": f"agent-{agent_index + 1}", "backend": {"type": "fake"}}
 
     def fake_input(prompt, default=None):
-        if "mode" in prompt:
-            return "L3"
         if "steps" in prompt:
             return "20"
         if "ID" in prompt:
@@ -623,7 +611,6 @@ def test_wizard_force_reconfigure_single_agent():
 def test_wizard_second_agent_reuses_api_key_env_var():
     """Second agent with same API key provider should offer env var reuse."""
     inputs = iter([
-        "L3",           # mode
         "20",           # max_steps
         "agent-1",      # agent-1 id
         "2",            # backend = openai
@@ -652,7 +639,6 @@ def test_wizard_second_agent_reuses_api_key_env_var():
 def test_wizard_second_agent_chooses_different_api_key_env():
     """User can override env var reuse and enter a new one."""
     inputs = iter([
-        "L3",           # mode
         "20",           # max_steps
         "agent-1",      # agent-1 id
         "2",            # backend = openai
@@ -681,7 +667,6 @@ def test_wizard_second_agent_chooses_different_api_key_env():
 def test_wizard_different_provider_triggers_new_auth():
     """Agent 2 with different provider (nous after openai) should ask for new credentials."""
     inputs = iter([
-        "L3",           # mode
         "20",           # max_steps
         "agent-1",      # agent-1 id
         "2",            # backend = openai

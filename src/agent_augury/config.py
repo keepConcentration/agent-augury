@@ -7,7 +7,6 @@ from typing import Any
 
 import yaml
 
-_VALID_MODES = ("L2", "L3")
 _VALID_BACKEND_TYPES = {"fake", "openai", "nous", "nous_oauth"}
 
 
@@ -24,9 +23,16 @@ def load_config(path: str | Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ConfigError("config root must be a mapping")
 
+    # mode key is accepted for backward compatibility but ignored.
+    # agent-augury is L3-only as of v0.3.
     mode = data.get("mode", "L3")
-    if mode not in _VALID_MODES:
-        raise ConfigError(f"mode must be one of {_VALID_MODES}, got {mode!r}")
+    if mode not in ("L2", "L3"):
+        raise ConfigError(f"mode must be 'L3' (or omitted), got {mode!r}")
+    if mode == "L2":
+        raise ConfigError(
+            "L2 contrast mode removed — agent-augury is L3-only as of v0.3. "
+            "Use 'mode: L3' or omit the key."
+        )
 
     agents = data.get("agents")
     if not isinstance(agents, list) or not agents:
@@ -66,7 +72,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
         if "url_env" not in mirror:
             raise ConfigError("mirror requires 'url_env' key")
 
-    data["mode"] = mode
+    data["mode"] = "L3"
     data.setdefault("task", None)
     data.setdefault("max_steps", 20)
     return data

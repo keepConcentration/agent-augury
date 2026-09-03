@@ -51,13 +51,12 @@ Coral-Protocol의 [AgentRadio](https://github.com/Coral-Protocol/AgentRadio) (�
 |------------|------|
 | `create_thread(name, participants)` | 이름 있는 대화 스레드를 열고 식별자를 반환 |
 | `send_message(thread, content, mentions)` | 스레드에 메시지를 붙이고 **즉시 반환** (듣는 사람 유무 무관, fire-and-forget) |
-| `wait_for_mention(timeout)` | 호출자 대상 멘션이 오면 **읽지 않은 메시지만(unread-only)** 반환. v0.1에서는 L2 모드/테스트용 API로만 존재 (§3.5.2의 push 모델 도입 후) |
 
-> 스냅샷은 "전체 스레드"가 아니라 **unread-only(호출자별 커서)** 가 기본값이며, 반환 형태는 §3.4.2를 따른다.
+> (v0.3부터 `wait_for_mention`(L2 foreground blocking)은 완전히 제거되었다. inbox push + step() drain이 유일한 수신 경로이며, 이 프로젝트의 목표인 패시브 어웨어니스(L3)만 제공한다.)
 
 ### 2.2 패시브 어웨어니스 (핵심 차별점)
 
-- **전경(blocking receive)** = `wait_for_mention`을 에이전트의 정상 작업 흐름에서 실행 → 듣는 동안 일을 멈춤. (원본 L2, 대조 모드 §3.5.5)
+- **전경(blocking receive)** = 과거 L2 대조 모드. v0.3에서 `wait_for_mention`과 함께 제거되었다.
 - **배경(passive awareness)** = 수신을 전경에서 기다리지 않는다. 서버가 메시지를 inbox에 push하고, `step()`이 다음 경계에서 자동 흡수 → 에이전트는 계속 일한다. (원본 L3 = 이 프로젝트의 목표, §3.5.2)
 
 ### 2.3 5단계 협업 프로토콜 (P1~P5) — 장기 목표
@@ -181,7 +180,7 @@ inbox    { agent_id: str, queue: [message_id] }  # 서버가 push, step()이 dra
 - `create_thread(name, participants)` — **도구**, 에이전트가 호출
 - `send_message(thread, content, mentions)` — **도구**, 에이전트가 호출 (fire-and-forget)
 - `read_resource()` — **도구**, 명시적 전체 상태 덤프 (복구/집계용, 자동 주입 없음)
-- `wait_for_mention(timeout)` — **L3에서는 도구로 노출하지 않는다.** L2 대조 모드에서만 켠다 (§3.5.5).
+- (참고: `wait_for_mention`(L2 foreground blocking)은 v0.3에서 완전히 제거되었다.)
 
 L3에서 수신은 "도구 호출"이 아니라 **inbox에 push → step()이 자동 흡수**다. 에이전트는 언제 듣는지를 제어하지 않는다 — 그게 패시브 어웨어니스의 본질이다.
 
@@ -216,16 +215,6 @@ L3에서 수신은 "도구 호출"이 아니라 **inbox에 push → step()이 �
 - **프로세스/스레드 격리는 v0.1에서 쓰지 않는다.** 에이전트 = 동일 루프 내 코루틴. (모델 호출은 어댑터가 비동기 HTTP로 띄움.)
 
 이 결정은 v0.1a에서 동시성·잠금 논쟁을 미리 제거하기 위한 것이며, 에이전트 규모가 커지면 프로세스 격리로 재검토한다. 병렬 실행 전환으로 백엔드 LLM 응답을 기다리는 동안 다른 에이전트가 블로킹되지 않으며, 도구 호출 로그가 발생 순서대로 실시간 흘러나온다.
-
-#### 3.5.5 L2 대조 모드 (대조 검증용)
-
-L2 vs L3 대조 검증(§6)을 위해 **통신 모드를 런타임 플래그로 전환**한다. 수신 경로를 이중으로 만들지 않기 위해 **push 유무 자체를 모드로 분기**한다.
-
-- **L3(기본)**: `send_message`가 대상 inbox에 push → `step()`이 drain. `wait_for_mention` 도구 **비노출**.
-- **L2(대조)**: **inbox push를 끈다.** `wait_for_mention`을 도구로 노출하고, 에이전트가 전경에서 호출해 **커서/로그에서 unread를 blocking으로 읽는다.** `step()`은 drain하지 않는다. (즉 push 경로와 wait 경로가 겹치지 않는다.)
-- 두 모드는 서버·도구 집합(단 wait 유무 제외)·프롬프트가 동일하고, **"듣는 방식"만 바뀐다.** — 원본 논문이 격리한 "단일 비트" 차이를 재현한다.
-
-> 토이 단언(§6)이 흔들리지 않는 이유: L2는 메시지가 inbox에 쌓이지 않고 wait가 커서에서 직접 읽으므로, "정정 흡수까지 wall-step이 더 크다"는 비교가 push 간섭 없이 성립한다.
 
 ### 3.6 강제 삽입 포맷 (v0.1a 고정)
 

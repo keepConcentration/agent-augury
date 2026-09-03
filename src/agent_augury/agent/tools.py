@@ -1,7 +1,7 @@
 """Agent-facing tools backed by the internal message server (§3.5.1).
 
-L3 exposes: create_thread, send_message, read_resource.
-L2 additionally exposes: wait_for_mention (foreground blocking receive).
+Exposes: create_thread, send_message, read_resource, read_file,
+list_directory, write_file.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ class ToolBox:
     # -- tool specs ----------------------------------------------------------
 
     def specs(self) -> list[dict[str, Any]]:
-        """JSON-schema tool specs; wait_for_mention only in L2 mode."""
-        specs: list[dict[str, Any]] = [
+        """JSON-schema tool specs."""
+        return [
             {
                 "name": "create_thread",
                 "description": "Open a named conversation thread with the given participants and return its id.",
@@ -103,23 +103,6 @@ class ToolBox:
                 },
             },
         ]
-        if self.server.mode == "L2":
-            specs.append(
-                {
-                    "name": "wait_for_mention",
-                    "description": "BLOCKING foreground receive: wait until an unread mention arrives and return it. Calling this pauses your work.",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "timeout": {
-                                "type": "number",
-                                "description": "seconds to wait; omit to wait indefinitely",
-                            }
-                        },
-                    },
-                }
-            )
-        return specs
 
     # -- execution -----------------------------------------------------------
 
@@ -147,11 +130,6 @@ class ToolBox:
                 "timestamp": int(__import__("time").time()),
             })
             return _json(snap)
-        if name == "wait_for_mention":
-            batch = await self.server.wait_for_mention(
-                agent_id, timeout=args.get("timeout")
-            )
-            return _json({"messages": batch})
         if name == "read_file":
             return await self._read_file(args)
         if name == "list_directory":

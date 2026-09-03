@@ -270,13 +270,23 @@ def test_select_model_interactive_manual_fallback():
 
 
 def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
-    """When model listing succeeds, user can pick from the list."""
-    import yaml
+    """CLI wizard E2E: model listing → pick → saved YAML → session launch (T3).
 
+    Replaces the former ghost test (0 assertions, never captured the config):
+    drives the full ``main([])`` wizard flow, asserts the picked model lands
+    in the saved YAML, and that ``_run`` is launched with that path + task.
+    """
     from agent_augury.cli import main
     from agent_augury.config import load_config
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    output_path = tmp_path / "wizard_out.yaml"
+
+    calls = []
+
+    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False):
+        calls.append({"cfg_path": cfg_path, "initial_prompt": initial_prompt, "quiet": quiet})
+        return 0
 
     # Mock the listing function to return models
     with patch("agent_augury.backends_factory.list_models_openai_compat") as mock_list:
@@ -289,17 +299,29 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
             "2",            # backend choice = openai
             "",             # base_url → default
             "OPENAI_API_KEY",  # api_key_env
-            "1",            # select model #1 from list
+            "1",            # select model #1 from list (gpt-4o)
             "n",            # no more agents
+            str(output_path),  # save config path
             "test task",    # task description
         ])
         with patch("builtins.input", side_effect=lambda _: next(inputs)), \
              patch("agent_augury.cli.check_tty", return_value=True), \
-             patch("agent_augury.wizard.save_model_config"):
-            cfg = main([])
+             patch("agent_augury.cli.model_config_exists", return_value=False), \
+             patch("agent_augury.wizard.save_model_config"), \
+             patch("agent_augury.cli._run", fake_run):
+            rc = main([])
 
-    # We can't easily capture the config from main(), so test via run_wizard directly
-    # (main() asks for output path and run-now; run_wizard is the core)
+    assert rc == 0
+    # The picked model landed in the saved YAML.
+    assert output_path.exists()
+    loaded = load_config(output_path)
+    assert loaded["agents"][0]["backend"]["model"] == "gpt-4o"
+    assert loaded["agents"][0]["backend"]["base_url"] == "https://api.openai.com/v1"
+    # The session was launched against the saved config with the task.
+    assert len(calls) == 1
+    assert calls[0]["cfg_path"] == str(output_path)
+    assert calls[0]["initial_prompt"] == "test task"
+    assert calls[0]["quiet"] is False
 
 
 def test_wizard_openai_model_listing_falls_back_to_manual(tmp_path, monkeypatch):

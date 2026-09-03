@@ -1,8 +1,9 @@
 """Session = agent bundle + internal message server + lifecycle (§3.2).
 
-Run loop: round-robin over agents; each turn is one step(). An agent is
-finished when its completion produced neither text nor tool calls, or when
-its scripted backend runs dry (IndexError).
+Run loop: parallel independent asyncio tasks; each agent runs one step()
+per iteration and yields cooperatively (``await asyncio.sleep(0)``). An
+agent is finished when its completion produced neither text nor tool
+calls, or when its scripted backend runs dry (IndexError).
 
 v0.2: integrates the P1~P5 collaboration protocol. When a protocol is
 configured, the session drives phase transitions and injects phase context

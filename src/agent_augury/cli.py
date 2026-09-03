@@ -59,54 +59,6 @@ def _mask_sensitive(text: str) -> str:
     return text
 
 
-class BroadcastLogger:
-    """Logs agent-to-agent broadcast events to stderr in real-time.
-
-    Subscribes to the MessageServer event stream and prints a one-line
-    summary of each create_thread / send_message / read_resource event.
-    No ANSI color codes — plain text only.
-    """
-
-    def __init__(self, *, quiet: bool = False) -> None:
-        self.quiet = quiet
-        self._seen_threads: dict[str, str] = {}  # thread_id -> name
-
-    def __call__(self, event: dict[str, Any]) -> None:
-        """Handle a broadcast event (called by MessageServer)."""
-        if self.quiet:
-            return
-        handler = getattr(self, f"_on_{event['type']}", None)
-        if handler is not None:
-            handler(event)
-
-    def _on_create_thread(self, event: dict[str, Any]) -> None:
-        tid = event["thread_id"]
-        name = event["name"]
-        self._seen_threads[tid] = name
-        participants = ", ".join(event["participants"])
-        self._print(f"🧵 [{tid}] create_thread {name} ({participants})")
-
-    def _on_send_message(self, event: dict[str, Any]) -> None:
-        author = event["author"]
-        tid = event["thread_id"]
-        content = event["content"]
-        # No truncation — show full content
-        content = _mask_sensitive(content)
-        delivered = event.get("delivered_to", [])
-        targets = ", ".join(delivered) if delivered else "broadcast"
-        self._print(f"💬 [{author} → {targets}][{tid}] {content}")
-
-    def _on_read_resource(self, event: dict[str, Any]) -> None:
-        agent_id = event["agent_id"]
-        threads = event["threads"]
-        messages = event["messages"]
-        self._print(f"📊 {agent_id}: read_resource (threads={threads}, messages={messages})")
-
-    def _print(self, line: str) -> None:
-        """Print a broadcast line to stderr with flush."""
-        print(line, file=sys.stderr, flush=True)
-
-
 def _output_path_problem(raw: str) -> str | None:
     """Return a short reason when *raw* is not a usable save path, else None."""
     if not raw:
@@ -247,10 +199,6 @@ async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool 
         _log_tool_event(event)
 
     session = Session.from_config(cfg, on_step=on_step, on_tool_event=on_tool_event)
-
-    # No BroadcastLogger — all output goes through unified queue
-    # broadcast = BroadcastLogger(quiet=quiet)
-    # session.server.subscribe_events(broadcast)
 
     try:
         steps = await session.run(initial_prompt=initial_prompt)

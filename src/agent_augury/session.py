@@ -55,9 +55,6 @@ class Session:
         self.mirror: Any = None
         # v0.2: P1~P5 collaboration protocol
         self.protocol: CollaborationProtocol | None = None
-        # Tool event queue for async output
-        self._tool_event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-        self._tool_event_task: asyncio.Task | None = None
         # Unified output queue for all display events (tools, steps, read_resource)
         self._output_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._output_task: asyncio.Task | None = None

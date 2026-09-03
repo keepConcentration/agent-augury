@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_augury.cli import BroadcastLogger, _mask_sensitive
+from agent_augury.cli import _mask_sensitive
 from agent_augury.server import MessageServer
 
 
@@ -39,124 +39,6 @@ def test_mask_sensitive_no_match():
     assert _mask_sensitive("hello world") == "hello world"
     # Already-masked content stays as-is
     assert _mask_sensitive("Authorization: Bearer ***") == "Authorization: Bearer ***"
-
-
-# ---------------------------------------------------------------------------
-# BroadcastLogger
-# ---------------------------------------------------------------------------
-
-
-def test_broadcast_logger_create_thread():
-    logger = BroadcastLogger()
-    event = {
-        "type": "create_thread",
-        "thread_id": "thread-1",
-        "name": "plan",
-        "participants": ["agent-1", "agent-2"],
-        "timestamp": 1234567890,
-    }
-    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-        logger(event)
-        output = mock_stderr.getvalue()
-    assert "[thread-1] create_thread plan (agent-1, agent-2)" in output
-
-
-def test_broadcast_logger_send_message():
-    logger = BroadcastLogger()
-    # Pre-populate thread name
-    logger._seen_threads["thread-1"] = "plan"
-    event = {
-        "type": "send_message",
-        "message_id": "msg-1",
-        "thread_id": "thread-1",
-        "author": "agent-1",
-        "content": "hello world",
-        "mentions": ["agent-2"],
-        "delivered_to": ["agent-2"],
-        "timestamp": 1234567890,
-    }
-    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-        logger(event)
-        output = mock_stderr.getvalue()
-    # No ANSI codes — plain text format
-    assert "\033[" not in output
-    assert "hello world" in output
-    assert "[agent-1 → agent-2][thread-1]" in output
-
-
-def test_broadcast_logger_send_message_no_truncation():
-    logger = BroadcastLogger()
-    logger._seen_threads["thread-1"] = "plan"
-    long_content = "a" * 100
-    event = {
-        "type": "send_message",
-        "message_id": "msg-1",
-        "thread_id": "thread-1",
-        "author": "agent-1",
-        "content": long_content,
-        "mentions": [],
-        "delivered_to": ["agent-2", "agent-3"],
-        "timestamp": 1234567890,
-    }
-    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-        logger(event)
-        output = mock_stderr.getvalue()
-    assert long_content in output
-    assert "[agent-1 → agent-2, agent-3][thread-1]" in output
-    # ANSI codes add overhead; check content length separately
-    content_start = output.find(long_content)
-    assert content_start != -1
-
-
-def test_broadcast_logger_send_message_masks_sensitive():
-    logger = BroadcastLogger()
-    logger._seen_threads["thread-1"] = "plan"
-    event = {
-        "type": "send_message",
-        "message_id": "msg-1",
-        "thread_id": "thread-1",
-        "author": "agent-1",
-        "content": "my token=secret123",
-        "mentions": [],
-        "delivered_to": ["agent-2"],
-        "timestamp": 1234567890,
-    }
-    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-        logger(event)
-        output = mock_stderr.getvalue()
-    assert "secret123" not in output
-    assert "***" in output
-    assert "[agent-1 → agent-2][thread-1]" in output
-
-
-def test_broadcast_logger_read_resource():
-    logger = BroadcastLogger()
-    event = {
-        "type": "read_resource",
-        "agent_id": "agent-1",
-        "threads": 3,
-        "messages": 10,
-        "timestamp": 1234567890,
-    }
-    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-        logger(event)
-        output = mock_stderr.getvalue()
-    assert "📊 agent-1: read_resource (threads=3, messages=10)" in output
-
-
-def test_broadcast_logger_quiet_mode():
-    logger = BroadcastLogger(quiet=True)
-    event = {
-        "type": "create_thread",
-        "thread_id": "thread-1",
-        "name": "plan",
-        "participants": ["agent-1"],
-        "timestamp": 1234567890,
-    }
-    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-        logger(event)
-        output = mock_stderr.getvalue()
-    assert output == ""
 
 
 # ---------------------------------------------------------------------------

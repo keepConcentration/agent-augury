@@ -184,10 +184,26 @@ class Session:
         Output events (step summaries, tool calls) are pushed to the unified
         ``_output_queue``; the single consumer task renders them in arrival
         order, so tool logs stream in the order they actually fire.
+
+        v0.3: bots are started (Discord login) at the beginning of the session
+        and stopped (connection cleanup) at the end, in the same asyncio loop.
         """
         # Start unified output consumer task
         self._output_task = asyncio.create_task(self._output_consumer())
 
+        # v0.3: start bots (login to Discord) — same asyncio loop
+        if self.bot_manager:
+            await self.bot_manager.start_all()
+
+        try:
+            return await self._run_impl(initial_prompt)
+        finally:
+            # v0.3: stop bots (close Discord connections, prevent leaks)
+            if self.bot_manager:
+                await self.bot_manager.stop_all()
+
+    async def _run_impl(self, initial_prompt: str | None = None) -> int:
+        """Core run logic (separated so start/stop wraps it cleanly)."""
         if initial_prompt:
             self.agents[0].conversation.append({"role": "user", "content": initial_prompt})
         elif self.task:

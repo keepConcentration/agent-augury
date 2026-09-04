@@ -362,7 +362,143 @@ class TestSessionBotManagerIntegration:
         session = Session.from_config(load_config(str(path)))
         assert session.bot_manager is None
 
+    @pytest.mark.asyncio
+    async def test_session_run_calls_start_and_stop_all(self, tmp_path):
+        """Session.run()이 start_all()/stop_all()을 호출하는지 검증."""
+        import yaml
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from agent_augury.session import Session
 
+        cfg = {
+            "mode": "L3",
+            "max_steps": 5,
+            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
+            "bots": [
+                {
+                    "agent_id": "a1",
+                    "token_env": "BOT_TOKEN_1",
+                    "channel_id": 123456789,
+                }
+            ],
+        }
+        path = tmp_path / "test.yaml"
+        path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+        mock_client = MagicMock()
+        mock_client.event = lambda func: func
+
+        with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+            with patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}):
+                session = Session.from_config(load_config(str(path)))
+
+        # Mock start_all / stop_all to track calls
+        session.bot_manager.start_all = AsyncMock()
+        session.bot_manager.stop_all = AsyncMock()
+
+        await session.run()
+
+        session.bot_manager.start_all.assert_awaited_once()
+        session.bot_manager.stop_all.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_session_run_calls_stop_all_on_exception(self, tmp_path):
+        """run() 중 예외 발생해도 stop_all()이 호출되는지 검증."""
+        import yaml
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from agent_augury.session import Session
+
+        cfg = {
+            "mode": "L3",
+            "max_steps": 5,
+            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
+            "bots": [
+                {
+                    "agent_id": "a1",
+                    "token_env": "BOT_TOKEN_1",
+                    "channel_id": 123456789,
+                }
+            ],
+        }
+        path = tmp_path / "test.yaml"
+        path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+        mock_client = MagicMock()
+        mock_client.event = lambda func: func
+
+        with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+            with patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}):
+                session = Session.from_config(load_config(str(path)))
+
+        # Force an exception during agent execution
+        async def raise_exc(*args, **kwargs):
+            raise RuntimeError("simulated failure")
+
+        # Patch run_agent's step to raise
+        original_run = session._run_impl
+
+        async def failing_run(initial_prompt=None):
+            # start_all already called by run(), now simulate failure
+            raise RuntimeError("simulated failure")
+
+        session._run_impl = failing_run
+
+        session.bot_manager.start_all = AsyncMock()
+        session.bot_manager.stop_all = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="simulated failure"):
+            await session.run()
+
+        # start_all was called, stop_all was called despite exception
+        session.bot_manager.start_all.assert_awaited_once()
+        session.bot_manager.stop_all.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_session_run_no_bots_is_safe(self, tmp_path):
+        """bot_manager 없을 때 run()이 정상 동작하는지 확인."""
+        import yaml
+        from agent_augury.session import Session
+
+        cfg = {
+            "mode": "L3",
+            "max_steps": 5,
+            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
+        }
+        path = tmp_path / "test.yaml"
+        path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+        session = Session.from_config(load_config(str(path)))
+        assert session.bot_manager is None
+
+        # Should complete without error
+        steps = await session.run()
+        assert steps >= 0
+
+    @pytest.mark.asyncio
+    async def test_session_run_empty_bot_manager_is_safe(self, tmp_path):
+        """bot_manager에 봇이 0개일 때 run()이 정상 동작하는지 확인."""
+        from agent_augury.channel.discord_bot import BotManager
+        from agent_augury.session import Session
+        from agent_augury.server import MessageServer
+        from agent_augury.agent.loop import AgentLoop
+        from agent_augury.backend.fake import FakeModelBackend
+
+        server = MessageServer()
+        server.register_agent("a1")
+        agent = AgentLoop(
+            agent_id="a1",
+            server=server,
+            backend=FakeModelBackend(script=["hi"]),
+        )
+        session = Session(
+            server=server,
+            agents=[agent],
+            max_steps=5,
+            bot_manager=BotManager(),  # empty
+        )
+
+        # Should complete without error
+        steps = await session.run()
+        assert steps >= 0
 # Helper to avoid circular import in tests
 def load_config(path):
     from agent_augury.config import load_config as _load

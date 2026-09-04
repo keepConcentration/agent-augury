@@ -12,6 +12,7 @@ from agent_augury.channel.discord_bot import (
     DiscordBotAdapter,
     _format_event,
 )
+from tests.conftest import build_cfg
 
 
 # ---------------------------------------------------------------------------
@@ -214,17 +215,16 @@ class TestBotsConfigValidation:
         import yaml
         from agent_augury.config import load_config
 
-        cfg = {
-            "mode": "L3",
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-            "bots": [
+        cfg = build_cfg(
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}}],
+            bots=[
                 {
                     "agent_id": "a1",
                     "token_env": "BOT_TOKEN_1",
                     "channel_id": 123456789,
                 }
             ],
-        }
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         loaded = load_config(str(path))
@@ -236,11 +236,10 @@ class TestBotsConfigValidation:
         import yaml
         from agent_augury.config import ConfigError, load_config
 
-        cfg = {
-            "mode": "L3",
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-            "bots": [{"token_env": "BOT_TOKEN_1", "channel_id": 123}],
-        }
+        cfg = build_cfg(
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}}],
+            bots=[{"token_env": "BOT_TOKEN_1", "channel_id": 123}],
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         with pytest.raises(ConfigError, match="agent_id"):
@@ -251,11 +250,10 @@ class TestBotsConfigValidation:
         import yaml
         from agent_augury.config import ConfigError, load_config
 
-        cfg = {
-            "mode": "L3",
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-            "bots": [{"agent_id": "a1", "channel_id": 123}],
-        }
+        cfg = build_cfg(
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}}],
+            bots=[{"agent_id": "a1", "channel_id": 123}],
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         with pytest.raises(ConfigError, match="token_env"):
@@ -266,11 +264,10 @@ class TestBotsConfigValidation:
         import yaml
         from agent_augury.config import ConfigError, load_config
 
-        cfg = {
-            "mode": "L3",
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-            "bots": [{"agent_id": "a1", "token_env": "BOT_TOKEN_1"}],
-        }
+        cfg = build_cfg(
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}}],
+            bots=[{"agent_id": "a1", "token_env": "BOT_TOKEN_1"}],
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         with pytest.raises(ConfigError, match="channel_id"):
@@ -281,13 +278,12 @@ class TestBotsConfigValidation:
         import yaml
         from agent_augury.config import ConfigError, load_config
 
-        cfg = {
-            "mode": "L3",
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-            "bots": [
+        cfg = build_cfg(
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}}],
+            bots=[
                 {"agent_id": "a1", "token_env": "BOT_TOKEN_1", "channel_id": "not-a-number"}
             ],
-        }
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         with pytest.raises(ConfigError, match="integer"):
@@ -298,11 +294,10 @@ class TestBotsConfigValidation:
         import yaml
         from agent_augury.config import ConfigError, load_config
 
-        cfg = {
-            "mode": "L3",
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-            "bots": {"agent_id": "a1"},
-        }
+        cfg = build_cfg(
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}}],
+            bots={"agent_id": "a1"},
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         with pytest.raises(ConfigError, match="list"):
@@ -315,24 +310,25 @@ class TestBotsConfigValidation:
 
 
 class TestSessionBotManagerIntegration:
-    def test_session_from_config_with_bots(self, tmp_path):
+    def test_session_from_config_with_bots(self, tmp_path, monkeypatch):
         """Session.from_config가 bots 섹션을 파싱하여 bot_manager를 생성."""
         from unittest.mock import MagicMock, patch
 
         import yaml
+        from agent_augury.config import load_config
         from agent_augury.session import Session
 
-        cfg = {
-            "mode": "L3",
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-            "bots": [
+        monkeypatch.setenv("TEST_API_KEY", "sk-test")
+        cfg = build_cfg(
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "TEST_API_KEY", "model": "m"}}],
+            bots=[
                 {
                     "agent_id": "a1",
                     "token_env": "BOT_TOKEN_1",
                     "channel_id": 123456789,
                 }
             ],
-        }
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
@@ -347,15 +343,16 @@ class TestSessionBotManagerIntegration:
         assert len(session.bot_manager) == 1
         assert "a1" in session.bot_manager
 
-    def test_session_from_config_without_bots(self, tmp_path):
+    def test_session_from_config_without_bots(self, tmp_path, monkeypatch):
         """bots 섹션 없으면 bot_manager는 None."""
         import yaml
+        from agent_augury.config import load_config
         from agent_augury.session import Session
 
-        cfg = {
-            "mode": "L3",
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-        }
+        monkeypatch.setenv("TEST_API_KEY", "sk-test")
+        cfg = build_cfg(
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "TEST_API_KEY", "model": "m"}}],
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
@@ -363,24 +360,25 @@ class TestSessionBotManagerIntegration:
         assert session.bot_manager is None
 
     @pytest.mark.asyncio
-    async def test_session_run_calls_start_and_stop_all(self, tmp_path):
+    async def test_session_run_calls_start_and_stop_all(self, tmp_path, monkeypatch):
         """Session.run()이 start_all()/stop_all()을 호출하는지 검증."""
         import yaml
         from unittest.mock import AsyncMock, MagicMock, patch
+        from agent_augury.config import load_config
         from agent_augury.session import Session
 
-        cfg = {
-            "mode": "L3",
-            "max_steps": 5,
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-            "bots": [
+        monkeypatch.setenv("TEST_API_KEY", "sk-test")
+        cfg = build_cfg(
+            max_steps=5,
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "TEST_API_KEY", "model": "m"}}],
+            bots=[
                 {
                     "agent_id": "a1",
                     "token_env": "BOT_TOKEN_1",
                     "channel_id": 123456789,
                 }
             ],
-        }
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
@@ -401,24 +399,25 @@ class TestSessionBotManagerIntegration:
         session.bot_manager.stop_all.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_session_run_calls_stop_all_on_exception(self, tmp_path):
+    async def test_session_run_calls_stop_all_on_exception(self, tmp_path, monkeypatch):
         """run() 중 예외 발생해도 stop_all()이 호출되는지 검증."""
         import yaml
         from unittest.mock import AsyncMock, MagicMock, patch
+        from agent_augury.config import load_config
         from agent_augury.session import Session
 
-        cfg = {
-            "mode": "L3",
-            "max_steps": 5,
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-            "bots": [
+        monkeypatch.setenv("TEST_API_KEY", "sk-test")
+        cfg = build_cfg(
+            max_steps=5,
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "TEST_API_KEY", "model": "m"}}],
+            bots=[
                 {
                     "agent_id": "a1",
                     "token_env": "BOT_TOKEN_1",
                     "channel_id": 123456789,
                 }
             ],
-        }
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
@@ -453,16 +452,17 @@ class TestSessionBotManagerIntegration:
         session.bot_manager.stop_all.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_session_run_no_bots_is_safe(self, tmp_path):
+    async def test_session_run_no_bots_is_safe(self, tmp_path, monkeypatch):
         """bot_manager 없을 때 run()이 정상 동작하는지 확인."""
         import yaml
+        from agent_augury.config import load_config
         from agent_augury.session import Session
 
-        cfg = {
-            "mode": "L3",
-            "max_steps": 5,
-            "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-        }
+        monkeypatch.setenv("TEST_API_KEY", "sk-test")
+        cfg = build_cfg(
+            max_steps=5,
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "TEST_API_KEY", "model": "m"}}],
+        )
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
@@ -498,9 +498,3 @@ class TestSessionBotManagerIntegration:
 
         # Should complete without error
         steps = await session.run()
-        assert steps >= 0
-# Helper to avoid circular import in tests
-def load_config(path):
-    from agent_augury.config import load_config as _load
-
-    return _load(path)

@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-_VALID_BACKEND_TYPES = {"fake", "openai", "nous", "nous_oauth"}
+_VALID_BACKEND_TYPES = {"openai", "nous", "nous_oauth"}
 
 
 class ConfigError(Exception):

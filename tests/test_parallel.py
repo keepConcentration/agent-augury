@@ -14,27 +14,17 @@ import pytest
 from agent_augury.backend.base import Completion, ToolCall
 from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.session import Session
-from agent_augury.server import MessageServer
-
-
-def _make_session(tmp_path, cfg):
-    """Build a Session from a config dict."""
-    import yaml
-    p = tmp_path / "session.yaml"
-    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    from agent_augury.config import load_config
-    return Session.from_config(load_config(p))
+from tests.conftest import build_cfg
 
 
 # ---------------------------------------------------------------------------
 # 1. Parallel execution: both agents make progress, not strictly alternating
 # ---------------------------------------------------------------------------
 
-TWO_AGENT_CFG = {
-    "mode": "L3",
-    "max_steps": 20,
-    "task": "collaborate",
-    "agents": [
+TWO_AGENT_CFG = build_cfg(
+    max_steps=20,
+    task="collaborate",
+    agents=[
         {
             "id": "agent-1",
             "backend": {
@@ -57,12 +47,12 @@ TWO_AGENT_CFG = {
             },
         },
     ],
-}
+)
 
 
 async def test_agents_run_in_parallel(tmp_path):
     """Both agents should complete their steps; total steps = sum of all agent steps."""
-    session = _make_session(tmp_path, TWO_AGENT_CFG)
+    session = Session.from_config(TWO_AGENT_CFG)
     steps = await session.run()
     # agent-1: 3 steps, agent-2: 2 steps = 5 total
     assert steps == 5
@@ -72,7 +62,7 @@ async def test_agents_run_in_parallel(tmp_path):
 
 async def test_parallel_agents_share_server(tmp_path):
     """All agents share one server instance (SSOT)."""
-    session = _make_session(tmp_path, TWO_AGENT_CFG)
+    session = Session.from_config(TWO_AGENT_CFG)
     await session.run()
     assert len({id(a.server) for a in session.agents}) == 1
 
@@ -85,11 +75,7 @@ async def test_tool_events_flush_in_order(tmp_path):
     """Tool events should arrive in the order they fire, not batched."""
     events = []
 
-    import yaml
-    p = tmp_path / "session.yaml"
-    p.write_text(yaml.safe_dump(TWO_AGENT_CFG), encoding="utf-8")
-    from agent_augury.config import load_config
-    session = Session.from_config(load_config(p), on_tool_event=lambda e: events.append(e))
+    session = Session.from_config(TWO_AGENT_CFG, on_tool_event=lambda e: events.append(e))
     await session.run()
 
     # Both agents fire tool events; we should see interleaved events
@@ -105,11 +91,10 @@ async def test_tool_events_flush_in_order(tmp_path):
 # 3. max_steps global sum gate
 # ---------------------------------------------------------------------------
 
-MAX_STEPS_CFG = {
-    "mode": "L3",
-    "max_steps": 3,
-    "task": "test",
-    "agents": [
+MAX_STEPS_CFG = build_cfg(
+    max_steps=3,
+    task="test",
+    agents=[
         {
             "id": "a1",
             "backend": {
@@ -129,23 +114,22 @@ MAX_STEPS_CFG = {
             },
         },
     ],
-}
+)
 
 
 async def test_max_steps_caps_total(tmp_path):
     """max_steps is a global cap across all agents."""
-    session = _make_session(tmp_path, MAX_STEPS_CFG)
+    session = Session.from_config(MAX_STEPS_CFG)
     steps = await session.run()
     assert steps == 3
 
 
 async def test_max_steps_respected_per_agent(tmp_path):
     """No single agent can exceed max_steps on its own."""
-    cfg = {
-        "mode": "L3",
-        "max_steps": 2,
-        "task": "test",
-        "agents": [
+    cfg = build_cfg(
+        max_steps=2,
+        task="test",
+        agents=[
             {
                 "id": "solo",
                 "backend": {
@@ -154,8 +138,8 @@ async def test_max_steps_respected_per_agent(tmp_path):
                 },
             },
         ],
-    }
-    session = _make_session(tmp_path, cfg)
+    )
+    session = Session.from_config(cfg)
     steps = await session.run()
     assert steps == 2
 
@@ -166,11 +150,10 @@ async def test_max_steps_respected_per_agent(tmp_path):
 
 async def test_all_agents_finish_when_script_exhausts(tmp_path):
     """When an agent's script runs out, it should finish gracefully."""
-    cfg = {
-        "mode": "L3",
-        "max_steps": 100,
-        "task": "test",
-        "agents": [
+    cfg = build_cfg(
+        max_steps=100,
+        task="test",
+        agents=[
             {
                 "id": "short",
                 "backend": {
@@ -186,8 +169,8 @@ async def test_all_agents_finish_when_script_exhausts(tmp_path):
                 },
             },
         ],
-    }
-    session = _make_session(tmp_path, cfg)
+    )
+    session = Session.from_config(cfg)
     steps = await session.run()
     # short: 1 step, long: 3 steps = 4 total
     assert steps == 4
@@ -199,11 +182,10 @@ async def test_all_agents_finish_when_script_exhausts(tmp_path):
 
 async def test_single_agent_parallel(tmp_path):
     """A single agent should still work correctly."""
-    cfg = {
-        "mode": "L3",
-        "max_steps": 10,
-        "task": "solo task",
-        "agents": [
+    cfg = build_cfg(
+        max_steps=10,
+        task="solo task",
+        agents=[
             {
                 "id": "only",
                 "backend": {
@@ -212,8 +194,8 @@ async def test_single_agent_parallel(tmp_path):
                 },
             },
         ],
-    }
-    session = _make_session(tmp_path, cfg)
+    )
+    session = Session.from_config(cfg)
     steps = await session.run()
     assert steps == 2
 
@@ -224,11 +206,10 @@ async def test_single_agent_parallel(tmp_path):
 
 async def test_agent_failure_isolated(tmp_path):
     """If one agent's script exhausts, the other agents continue."""
-    cfg = {
-        "mode": "L3",
-        "max_steps": 10,
-        "task": "test",
-        "agents": [
+    cfg = build_cfg(
+        max_steps=10,
+        task="test",
+        agents=[
             {
                 "id": "short",
                 "backend": {
@@ -244,8 +225,8 @@ async def test_agent_failure_isolated(tmp_path):
                 },
             },
         ],
-    }
-    session = _make_session(tmp_path, cfg)
+    )
+    session = Session.from_config(cfg)
     steps = await session.run()
     # short: 1 step (then IndexError → break), long: 3 steps = 4 total
     assert steps == 4
@@ -255,10 +236,9 @@ async def test_agent_failure_isolated(tmp_path):
 # 7. Protocol timing preserved under parallel execution
 # ---------------------------------------------------------------------------
 
-PROTOCOL_PARALLEL_CFG = {
-    "mode": "L3",
-    "max_steps": 30,
-    "protocol": {
+PROTOCOL_PARALLEL_CFG = build_cfg(
+    max_steps=30,
+    protocol={
         "participants": ["a1", "a2"],
         "assembler_id": "a1",
         "gates": {
@@ -266,7 +246,7 @@ PROTOCOL_PARALLEL_CFG = {
             "P3_EXECUTE": "execution",
         },
     },
-    "agents": [
+    agents=[
         {
             "id": "a1",
             "backend": {
@@ -295,12 +275,12 @@ PROTOCOL_PARALLEL_CFG = {
             },
         },
     ],
-}
+)
 
 
 async def test_protocol_gates_work_in_parallel(tmp_path):
     """P1~P3 gates should open correctly under parallel execution."""
-    session = _make_session(tmp_path, PROTOCOL_PARALLEL_CFG)
+    session = Session.from_config(PROTOCOL_PARALLEL_CFG)
     protocol = session.protocol
     assert protocol is not None
 

@@ -16,3 +16,19 @@ requires_openai = pytest.mark.skipif(
         "and OPENAI_API_KEY to run (incurs API cost)."
     ),
 )
+
+
+def build_cfg(**overrides):
+    """Build a valid config dict for Session.from_config, bypassing load_config.
+
+    Use this for tests that need fake backends (which are not valid in
+    production configs after the fake-backend removal from _VALID_BACKEND_TYPES).
+    """
+    cfg: dict = {
+        "mode": "L3",
+        "max_steps": 20,
+        "task": "test",
+        "agents": [],
+    }
+    cfg.update(overrides)
+    return cfg

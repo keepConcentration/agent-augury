@@ -10,6 +10,7 @@ from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.config import ConfigError, load_config
 from agent_augury.protocol.phases import P1_EXPLORE
 from agent_augury.session import Session
+from tests.conftest import build_cfg
 
 
 def write_cfg(tmp_path, body: dict):
@@ -18,11 +19,10 @@ def write_cfg(tmp_path, body: dict):
     return p
 
 
-FAKE_CFG = {
-    "mode": "L3",
-    "max_steps": 12,
-    "task": "find the answer",
-    "agents": [
+FAKE_CFG = build_cfg(
+    max_steps=12,
+    task="find the answer",
+    agents=[
         {"id": "agent-1", "backend": {"type": "fake", "script": ["thinking...", "answer: 43"]}},
         {
             "id": "agent-2",
@@ -38,7 +38,7 @@ FAKE_CFG = {
             },
         },
     ],
-}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,15 @@ FAKE_CFG = {
 
 
 def test_load_config_parses_mode_agents_task(tmp_path):
-    cfg = load_config(write_cfg(tmp_path, FAKE_CFG))
+    cfg = load_config(write_cfg(tmp_path, {
+        "mode": "L3",
+        "max_steps": 12,
+        "task": "find the answer",
+        "agents": [
+            {"id": "agent-1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}},
+            {"id": "agent-2", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}},
+        ],
+    }))
     assert cfg["mode"] == "L3"
     assert [a["id"] for a in cfg["agents"]] == ["agent-1", "agent-2"]
     assert cfg["task"] == "find the answer"
@@ -61,7 +69,12 @@ def test_load_config_rejects_missing_agents(tmp_path):
 
 
 def test_load_config_rejects_bad_mode(tmp_path):
-    bad = dict(FAKE_CFG, mode="L9")
+    bad = {
+        "mode": "L9",
+        "agents": [
+            {"id": "agent-1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}},
+        ],
+    }
     with pytest.raises(ConfigError):
         load_config(write_cfg(tmp_path, bad))
 
@@ -72,14 +85,14 @@ def test_load_config_rejects_bad_mode(tmp_path):
 
 
 async def test_session_builds_shared_server_and_agents(tmp_path):
-    session = Session.from_config(load_config(write_cfg(tmp_path, FAKE_CFG)))
+    session = Session.from_config(FAKE_CFG)
     assert [a.agent_id for a in session.agents] == ["agent-1", "agent-2"]
     # all agents share ONE server instance (SSOT)
     assert len({id(a.server) for a in session.agents}) == 1
 
 
 async def test_run_parallel_and_task_injected_to_first_agent(tmp_path):
-    session = Session.from_config(load_config(write_cfg(tmp_path, FAKE_CFG)))
+    session = Session.from_config(FAKE_CFG)
     steps = await session.run()
 
     agent1 = session.agents[0]
@@ -105,7 +118,7 @@ async def test_run_parallel_and_task_injected_to_first_agent(tmp_path):
 
 async def test_on_step_callback_fires_per_step(tmp_path):
     events = []
-    session = Session.from_config(load_config(write_cfg(tmp_path, FAKE_CFG)))
+    session = Session.from_config(FAKE_CFG)
     session.on_step = lambda aid, result: events.append((aid, result.drained_count))
     await session.run()
     assert len(events) >= 4
@@ -118,7 +131,7 @@ async def test_on_step_callback_fires_per_step(tmp_path):
 
 
 async def test_thread_reference_placeholder_resolves(tmp_path):
-    session = Session.from_config(load_config(write_cfg(tmp_path, FAKE_CFG)))
+    session = Session.from_config(FAKE_CFG)
     await session.run()
     snap = session.server.snapshot()
     msgs = [m for m in snap["messages"] if m["author"] == "agent-2" and m["thread_id"].startswith("thread-")]
@@ -131,11 +144,10 @@ async def test_thread_reference_placeholder_resolves(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-GATE_CFG = {
-    "mode": "L3",
-    "max_steps": 24,
-    "gate": {"thread_name": "plan"},
-    "agents": [
+GATE_CFG = build_cfg(
+    max_steps=24,
+    gate={"thread_name": "plan"},
+    agents=[
         {
             "id": "a1",
             "backend": {"type": "fake", "script": [
@@ -174,11 +186,11 @@ GATE_CFG = {
             ]},
         },
     ],
-}
+)
 
 
 async def test_session_wires_consensus_gate_and_opens_it(tmp_path):
-    session = Session.from_config(load_config(write_cfg(tmp_path, GATE_CFG)))
+    session = Session.from_config(GATE_CFG)
     await session.run()
 
     assert session.gate is not None
@@ -194,21 +206,26 @@ async def test_session_wires_consensus_gate_and_opens_it(tmp_path):
 
 
 async def test_session_without_gate_config_has_no_gate(tmp_path):
-    session = Session.from_config(load_config(write_cfg(tmp_path, FAKE_CFG)))
+    session = Session.from_config(FAKE_CFG)
     assert session.gate is None
 
 
 async def test_session_mirror_disabled_without_env(tmp_path, monkeypatch):
     monkeypatch.delenv("AUGURY_MIRROR_URL", raising=False)
     cfg = dict(GATE_CFG, mirror={"type": "discord_webhook", "url_env": "AUGURY_MIRROR_URL"})
-    session = Session.from_config(load_config(write_cfg(tmp_path, cfg)))
+    session = Session.from_config(cfg)
     assert session.mirror is None  # observation silently off — core unaffected
 
 
-def test_cli_accepts_gate_config(tmp_path, capsys):
+def test_cli_accepts_gate_config(tmp_path, capsys, monkeypatch):
     from agent_augury.cli import main
+    from unittest.mock import patch
 
-    rc = main(["--config", str(write_cfg(tmp_path, GATE_CFG))])
+    # Mock load_config to return a config with fake backends
+    # (fake is no longer valid in production configs after removal from _VALID_BACKEND_TYPES)
+    with patch("agent_augury.cli.load_config") as mock_load:
+        mock_load.return_value = GATE_CFG
+        rc = main(["--config", str(write_cfg(tmp_path, {}))])
     out = capsys.readouterr().out
     assert rc == 0
     assert "gate=OPEN" in out
@@ -247,11 +264,10 @@ def test_build_real_backend_missing_env_raises(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-GATE_BLOCK_CFG = {
-    "mode": "L3",
-    "max_steps": 24,
-    "gate": {"thread_name": "plan"},
-    "agents": [
+GATE_BLOCK_CFG = build_cfg(
+    max_steps=24,
+    gate={"thread_name": "plan"},
+    agents=[
         {
             "id": "a1",
             "backend": {"type": "fake", "script": [
@@ -284,12 +300,12 @@ GATE_BLOCK_CFG = {
             ]},
         },
     ],
-}
+)
 
 
 async def test_gate_blocks_work_share_until_open(tmp_path):
     """Gate CLOSED → work-share on non-gate thread is blocked with error."""
-    session = Session.from_config(load_config(write_cfg(tmp_path, GATE_BLOCK_CFG)))
+    session = Session.from_config(GATE_BLOCK_CFG)
     await session.run()
 
     snap = session.server.snapshot()
@@ -302,10 +318,14 @@ async def test_gate_blocks_work_share_until_open(tmp_path):
     assert work_msgs[0]["seq"] > session.gate.opened_at_seq
 
 
-def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys):
+def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys, monkeypatch):
     from agent_augury.cli import main
+    from unittest.mock import patch
 
-    rc = main(["--config", str(write_cfg(tmp_path, FAKE_CFG))])
+    # Mock load_config to return a config with fake backends
+    with patch("agent_augury.cli.load_config") as mock_load:
+        mock_load.return_value = FAKE_CFG
+        rc = main(["--config", str(write_cfg(tmp_path, {}))])
     out = capsys.readouterr().out
     assert rc == 0
     assert "💭 agent-1:" in out and "💭 agent-2:" in out
@@ -317,10 +337,9 @@ def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 
-PROTOCOL_PHASE_GATE_CFG = {
-    "mode": "L3",
-    "max_steps": 30,
-    "protocol": {
+PROTOCOL_PHASE_GATE_CFG = build_cfg(
+    max_steps=30,
+    protocol={
         "participants": ["a1", "a2"],
         "assembler_id": "a1",
         "gates": {
@@ -328,7 +347,7 @@ PROTOCOL_PHASE_GATE_CFG = {
             "P3_EXECUTE": "execution",
         },
     },
-    "agents": [
+    agents=[
         {
             "id": "a1",
             "backend": {
@@ -420,12 +439,12 @@ PROTOCOL_PHASE_GATE_CFG = {
             },
         },
     ],
-}
+)
 
 
 async def test_protocol_gate_state_injected_per_phase(tmp_path):
     """Gate state from the current phase is injected into agents."""
-    session = Session.from_config(load_config(write_cfg(tmp_path, PROTOCOL_PHASE_GATE_CFG)))
+    session = Session.from_config(PROTOCOL_PHASE_GATE_CFG)
     protocol = session.protocol
     assert protocol is not None
 
@@ -438,7 +457,7 @@ async def test_protocol_gate_state_injected_per_phase(tmp_path):
 
 async def test_protocol_phase_advances_with_gates(tmp_path):
     """Full protocol run: P1 → P2 (gate) → P3 (gate) → P4."""
-    session = Session.from_config(load_config(write_cfg(tmp_path, PROTOCOL_PHASE_GATE_CFG)))
+    session = Session.from_config(PROTOCOL_PHASE_GATE_CFG)
     protocol = session.protocol
     assert protocol is not None
 
@@ -505,4 +524,14 @@ def test_load_config_mirror_missing_url_env_raises(tmp_path):
         "mirror": {"type": "discord_webhook"},
     })
     with pytest.raises(ConfigError, match="mirror requires 'url_env'"):
+        load_config(p)
+
+
+def test_load_config_rejects_fake_backend_type(tmp_path):
+    """fake backend type must be rejected after removal from _VALID_BACKEND_TYPES."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
+    })
+    with pytest.raises(ConfigError, match="backend.type must be one of"):
         load_config(p)

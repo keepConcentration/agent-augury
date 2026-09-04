@@ -19,6 +19,7 @@ dependencies = [
     "PyYAML>=6.0",
     "aiosqlite>=0.20",
     "py-cord>=2.6",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

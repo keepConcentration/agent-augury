@@ -14,7 +14,21 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 from typing import Any, Callable
+
+# .env 자동 로딩 — cwd → 프로젝트 루트 순서로 탐색
+try:
+    from dotenv import load_dotenv
+    _cwd_env = Path.cwd() / ".env"
+    if _cwd_env.exists():
+        load_dotenv(_cwd_env, override=False)
+    else:
+        _root_env = Path(__file__).resolve().parents[2] / ".env"
+        if _root_env.exists():
+            load_dotenv(_root_env, override=False)
+except ImportError:
+    pass
 
 from .agent.loop import AgentLoop
 from .backends_factory import build_backend

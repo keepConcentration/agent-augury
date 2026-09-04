@@ -6,6 +6,8 @@
 #   3. 환경변수에 토큰 설정 (예: .env 파일 또는 셸 export):
 #        BOT_TOKEN_AGENT_1=xxxxx
 #        BOT_TOKEN_AGENT_2=xxxxx
+#        BOT_TOKEN_AGENT_3=xxxxx
+#        BOT_TOKEN_AGENT_4=xxxxx
 #   4. 채널 ID 확인 (Discord 개발자 모드 → 채널 우클릭 → ID 복사)
 #   5. 실행:
 #        agent-augury --config examples/multi_bot_demo.yaml
@@ -33,6 +35,20 @@ agents:
         - "I'll review the proposal."
         - "Looks good, let's proceed."
 
+  - id: agent-3
+    backend:
+      type: fake
+      script:
+        - "I'll refine the design."
+        - "Let's draft the implementation plan."
+
+  - id: agent-4
+    backend:
+      type: fake
+      script:
+        - "I'll handle QA and edge cases."
+        - "Everything checks out."
+
 # Discord 봇 N개 통합 설정
 # 각 봇은 agent_id에 바인딩되어 해당 에이전트의 이벤트만 전송합니다.
 # token_env: 환경변수 이름 (실제 토큰은 .env 파일에 두고 git 추적 금지)
@@ -43,4 +59,12 @@ bots:
 
   - agent_id: agent-2
     token_env: BOT_TOKEN_AGENT_2
+    channel_id: 1526401014536867853
+
+  - agent_id: agent-3
+    token_env: BOT_TOKEN_AGENT_3
+    channel_id: 1526401014536867853
+
+  - agent_id: agent-4
+    token_env: BOT_TOKEN_AGENT_4
     channel_id: 1526401014536867853

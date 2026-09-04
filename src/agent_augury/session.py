@@ -13,10 +13,12 @@ into each agent's system prompt.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Callable
 
 from .agent.loop import AgentLoop
 from .backends_factory import build_backend
+from .channel.discord_bot import BotManager, DiscordBotAdapter, _format_event
 from .channel.discord_mirror import mirror_from_config
 from .protocol.approval import ConsensusGate
 from .protocol.collaboration import CollaborationProtocol
@@ -44,6 +46,7 @@ class Session:
         *,
         task: str | None = None,
         max_steps: int = 20,
+        bot_manager: BotManager | None = None,
     ) -> None:
         self.server = server
         self.agents = agents
@@ -55,6 +58,8 @@ class Session:
         self.mirror: Any = None
         # v0.2: P1~P5 collaboration protocol
         self.protocol: CollaborationProtocol | None = None
+        # v0.3: Discord bot manager (N개 Client)
+        self.bot_manager = bot_manager
         # Unified output queue for all display events (tools, steps, read_resource)
         self._output_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._output_task: asyncio.Task | None = None
@@ -62,7 +67,13 @@ class Session:
     # -- assembly ------------------------------------------------------------
 
     @classmethod
-    def from_config(cls, cfg: dict[str, Any], on_step=None, on_tool_event=None, allowed_roots: list[str] | None = None) -> "Session":
+    def from_config(
+        cls,
+        cfg: dict[str, Any],
+        on_step=None,
+        on_tool_event=None,
+        allowed_roots: list[str] | None = None,
+    ) -> "Session":
         server = MessageServer()
         agents: list[AgentLoop] = []
         for spec in cfg["agents"]:
@@ -85,11 +96,27 @@ class Session:
                     ),
                 )
             )
+
+        # v0.3: bots 섹션 파싱 → BotManager 구성
+        bot_manager: BotManager | None = None
+        bots_spec = cfg.get("bots")
+        if bots_spec:
+            bot_manager = BotManager()
+            for bot_entry in bots_spec:
+                token = os.environ.get(bot_entry["token_env"], "")
+                adapter = DiscordBotAdapter(
+                    agent_id=bot_entry["agent_id"],
+                    token=token,
+                    channel_id=int(bot_entry["channel_id"]),
+                )
+                bot_manager.register(adapter)
+
         session = cls(
             server=server,
             agents=agents,
             task=cfg.get("task"),
             max_steps=int(cfg.get("max_steps", 20)),
+            bot_manager=bot_manager,
         )
         session.on_step = on_step
         session.on_tool_event = on_tool_event
@@ -252,7 +279,22 @@ class Session:
         return total_steps
 
     def _on_server_event(self, event: dict[str, Any]) -> None:
-        """Capture server events and queue them for unified output."""
+        """Capture server events and queue them for unified output.
+
+        Also routes events to the Discord bot manager (if configured).
+        """
+        # v0.3: 봇 라우팅 (발신 전용)
+        if self.bot_manager:
+            agent_id = event.get("agent_id")
+            if agent_id is None:
+                # events without agent_id (create_thread, send_message) —
+                # route by author if available
+                agent_id = event.get("author")
+            if agent_id:
+                content = _format_event(event)
+                if content:
+                    self.bot_manager.route_event(agent_id, content)
+
         event_type = event["type"]
         if event_type == "tool":
             try:

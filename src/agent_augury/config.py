@@ -72,6 +72,28 @@ def load_config(path: str | Path) -> dict[str, Any]:
         if "url_env" not in mirror:
             raise ConfigError("mirror requires 'url_env' key")
 
+# bots 섹션 검증 (N개 봇 통합)
+    bots = data.get("bots")
+    if bots is not None:
+        if not isinstance(bots, list):
+            raise ConfigError("'bots' must be a list")
+        for i, bot in enumerate(bots):
+            if not isinstance(bot, dict):
+                raise ConfigError(f"bots[{i}] must be a mapping")
+            if "agent_id" not in bot:
+                raise ConfigError(f"bots[{i}] requires 'agent_id'")
+            if "token_env" not in bot:
+                raise ConfigError(f"bots[{i}] requires 'token_env'")
+            if "channel_id" not in bot:
+                raise ConfigError(f"bots[{i}] requires 'channel_id'")
+            # channel_id는 int 변환 가능해야 함
+            try:
+                int(bot["channel_id"])
+            except (ValueError, TypeError) as exc:
+                raise ConfigError(
+                    f"bots[{i}].channel_id must be an integer, got {bot['channel_id']!r}"
+                ) from exc
+
     data["mode"] = "L3"
     data.setdefault("task", None)
     data.setdefault("max_steps", 20)

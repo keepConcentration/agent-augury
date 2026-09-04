@@ -1,0 +1,44 @@
+# Discord Bot N개 통합 데모 설정
+#
+# 사용법:
+#   1. Discord Developer Portal에서 앱 생성 → Bot 토큰 발급
+#   2. 각 봇을 원하는 서버에 초대 (Bot 토큰 필요)
+#   3. 환경변수에 토큰 설정:
+#        export BOT_TOKEN_AGENT_1=xxxxx
+#        export BOT_TOKEN_AGENT_2=xxxxx
+#   4. 채널 ID 확인 (Discord 개발자 모드 → 채널 우클릭 → ID 복사)
+#   5. 실행:
+#        agent-augury --config examples/multi_bot_demo.yaml
+#
+# 참고: 봇 토큰은 환경변수에서 읽으므로 YAML에는 env 이름만 기록합니다.
+
+mode: L3
+max_steps: 10
+task: "Multi-agent collaboration with Discord bot mirroring"
+
+agents:
+  - id: agent-1
+    backend:
+      type: fake
+      script:
+        - "I'll start by exploring the problem."
+        - "Let me read the source code."
+        - "I have a proposal."
+
+  - id: agent-2
+    backend:
+      type: fake
+      script:
+        - "I'll review the proposal."
+        - "Looks good, let's proceed."
+
+# Discord 봇 N개 통합 설정
+# 각 봇은 agent_id에 바인딩되어 해당 에이전트의 이벤트만 전송합니다.
+bots:
+  - agent_id: agent-1
+    token_env: BOT_TOKEN_AGENT_1    # 환경변수명 (실제 토큰은 env에서)
+    channel_id: 123456789012345678  # 교체 필요: agent-1 전용 채널 ID
+
+  - agent_id: agent-2
+    token_env: BOT_TOKEN_AGENT_2
+    channel_id: 123456789012345679  # 교체 필요: agent-2 전용 채널 ID

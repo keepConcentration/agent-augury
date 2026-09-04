@@ -302,11 +302,10 @@ async def test_gate_blocks_work_share_until_open(tmp_path):
     assert work_msgs[0]["seq"] > session.gate.opened_at_seq
 
 
-def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys, monkeypatch):
+def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys):
     from agent_augury.cli import main
 
-    cfg_path = write_cfg(tmp_path, FAKE_CFG)
-    rc = main(["--config", str(cfg_path)])
+    rc = main(["--config", str(write_cfg(tmp_path, FAKE_CFG))])
     out = capsys.readouterr().out
     assert rc == 0
     assert "💭 agent-1:" in out and "💭 agent-2:" in out
@@ -454,15 +453,6 @@ async def test_protocol_phase_advances_with_gates(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_load_config_fake_backend_missing_script_raises(tmp_path):
-    p = write_cfg(tmp_path, {
-        "mode": "L3",
-        "agents": [{"id": "a1", "backend": {"type": "fake"}}],
-    })
-    with pytest.raises(ConfigError, match="fake backend requires 'script'"):
-        load_config(p)
-
-
 def test_load_config_openai_backend_missing_base_url_raises(tmp_path):
     p = write_cfg(tmp_path, {
         "mode": "L3",
@@ -511,7 +501,7 @@ def test_load_config_nous_oauth_backend_missing_model_raises(tmp_path):
 def test_load_config_mirror_missing_url_env_raises(tmp_path):
     p = write_cfg(tmp_path, {
         "mode": "L3",
-        "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["x"]}}],
+        "agents": [{"id": "a1", "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"}}],
         "mirror": {"type": "discord_webhook"},
     })
     with pytest.raises(ConfigError, match="mirror requires 'url_env'"):

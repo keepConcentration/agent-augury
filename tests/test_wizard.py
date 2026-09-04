@@ -98,29 +98,30 @@ def test_input_int_returns_parsed_value():
 # ---------------------------------------------------------------------------
 
 
-def test_wizard_fake_backend_produces_valid_config(tmp_path):
-    """Wizard with a fake backend must produce a loadable YAML config."""
-    # Simulate user inputs for: max_steps, agent-1 (fake),
-    # script entries, no more agents, output path.
+def test_wizard_openai_backend_produces_valid_config(tmp_path):
+    """Wizard with an openai backend must produce a loadable YAML config."""
+    # Simulate user inputs for: max_steps, agent-1 (openai),
+    # api_key_env, model, no more agents, output path.
     inputs = iter([
         "15",           # max_steps
         "agent-1",      # agent id
-        "1",            # backend choice = fake
-        "hello",        # script entry 1
-        "world",        # script entry 2
-        "",             # empty → finish script
+        "1",            # backend choice = openai
+        "",             # base_url → default
+        "OPENAI_API_KEY",  # api_key_env
+        "gpt-4o-mini",  # model (manual entry when listing fails)
         "n",            # no more agents
     ])
     with patch("builtins.input", side_effect=lambda _: next(inputs)), \
-         patch("agent_augury.wizard.save_model_config") as mock_save:
+         patch("agent_augury.wizard.save_model_config") as mock_save, \
+         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
 
     assert cfg["mode"] == "L3"
     assert cfg["max_steps"] == 15
     assert len(cfg["agents"]) == 1
     assert cfg["agents"][0]["id"] == "agent-1"
-    assert cfg["agents"][0]["backend"]["type"] == "fake"
-    assert cfg["agents"][0]["backend"]["script"] == ["hello", "world"]
+    assert cfg["agents"][0]["backend"]["type"] == "openai"
+    assert cfg["agents"][0]["backend"]["model"] == "gpt-4o-mini"
 
     # Model config should have been saved.
     mock_save.assert_called_once()
@@ -144,7 +145,7 @@ def test_wizard_openai_backend_uses_default_base_url(tmp_path):
     inputs = iter([
         "20",           # max_steps
         "agent-1",      # agent id
-        "2",            # backend choice = openai
+        "1",            # backend choice = openai
         "",             # base_url → default
         "OPENAI_API_KEY",  # api_key_env
         "gpt-4o-mini",  # model (manual entry when listing fails)
@@ -171,7 +172,7 @@ def test_wizard_nous_backend_uses_default_base_url(tmp_path):
     inputs = iter([
         "20",           # max_steps
         "agent-1",      # agent id
-        "3",            # backend choice = nous
+        "2",            # backend choice = nous
         "",             # base_url → default
         "NOUS_API_KEY", # api_key_env
         "Hermes-4",     # model (manual entry when listing fails)
@@ -198,16 +199,21 @@ def test_wizard_multiple_agents(tmp_path):
     inputs = iter([
         "30",           # max_steps
         "agent-1",      # agent-1 id
-        "1",            # fake
-        "step1", "",    # script
+        "1",            # openai
+        "",             # base_url → default
+        "OPENAI_API_KEY",  # api_key_env
+        "gpt-4o-mini",  # model
         "y",            # add another
         "agent-2",      # agent-2 id
-        "1",            # fake
-        "step2", "",    # script
+        "1",            # openai
+        "",             # base_url → default (from existing)
+        "y",            # reuse env var
+        "gpt-4o-mini",  # model
         "n",            # no more
     ])
     with patch("builtins.input", side_effect=lambda _: next(inputs)), \
-         patch("agent_augury.wizard.save_model_config"):
+         patch("agent_augury.wizard.save_model_config"), \
+         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
 
     assert len(cfg["agents"]) == 2
@@ -246,7 +252,7 @@ def test_wizard_reuses_existing_model_config_skips_model_settings(tmp_path):
         "mode": "L3",
         "max_steps": 50,
         "agents": [
-            {"id": "a1", "backend": {"type": "fake", "script": ["done"]}},
+            {"id": "a1", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}},
         ],
     }
     inputs = iter([])  # No inputs needed — model settings are reused.
@@ -279,8 +285,9 @@ def test_cli_without_config_non_tty_returns_error(capsys):
     assert "TTY" in err or "tty" in err
 
 
-def test_cli_with_config_still_works(tmp_path, capsys):
+def test_cli_with_config_still_works(tmp_path, capsys, monkeypatch):
     """Existing --config mode must be unaffected by wizard changes."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     from agent_augury.cli import main
 
     cfg = {
@@ -288,7 +295,7 @@ def test_cli_with_config_still_works(tmp_path, capsys):
         "max_steps": 5,
         "task": "smoke test",
         "agents": [
-            {"id": "a1", "backend": {"type": "fake", "script": ["done"]}},
+            {"id": "a1", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}},
         ],
     }
     cfg_path = tmp_path / "test.yaml"
@@ -310,14 +317,15 @@ def test_cli_output_without_config_errors(tmp_path, capsys):
     assert "--output" in err
 
 
-def test_cli_wizard_generates_valid_yaml(tmp_path):
+def test_cli_wizard_generates_valid_yaml(tmp_path, monkeypatch):
     """End-to-end: wizard output must be loadable by load_config."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     from agent_augury.cli import main
 
     output = tmp_path / "wizard_out.yaml"
     inputs = iter([
         "10",                # max_steps
-        "a1", "1", "hello", "",  # agent-1 (fake)
+        "a1", "1", "", "OPENAI_API_KEY", "gpt-4o-mini",  # agent-1 (openai)
         "n",                 # no more agents
         str(output),         # output path
         "e2e task",          # initial task
@@ -336,11 +344,13 @@ def test_cli_wizard_generates_valid_yaml(tmp_path):
     # Verify the generated YAML is valid.
     loaded = load_config(output)
     assert loaded["mode"] == "L3"
-    assert loaded["agents"][0]["backend"]["script"] == ["hello"]
+    assert loaded["agents"][0]["backend"]["type"] == "openai"
+    assert loaded["agents"][0]["backend"]["model"] == "gpt-4o-mini"
 
 
-def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path):
+def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch):
     """When model config exists, 'Save config to' prompt is skipped."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     from agent_augury.cli import main
     import os
 
@@ -356,7 +366,7 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path):
             "mode": "L3",
             "max_steps": 10,
             "agents": [
-                {"id": "a1", "backend": {"type": "fake", "script": ["hello"]}},
+                {"id": "a1", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}},
             ],
         }
         with patch("builtins.input", side_effect=lambda _: next(inputs)), \
@@ -372,7 +382,8 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path):
 
         loaded = load_config(output)
         assert loaded["mode"] == "L3"
-        assert loaded["agents"][0]["backend"]["script"] == ["hello"]
+        assert loaded["agents"][0]["backend"]["type"] == "openai"
+        assert loaded["agents"][0]["backend"]["model"] == "gpt-4o-mini"
     finally:
         os.chdir(old_cwd)
 
@@ -461,11 +472,11 @@ def test_wizard_second_agent_reuses_oauth_no_reauthentication():
     inputs = iter([
         "20",           # max_steps
         "agent-1",      # agent-1 id
-        "4",            # backend = nous_oauth
+        "3",            # backend = nous_oauth
         "Hermes-4",     # model for agent-1 (manual entry)
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "4",            # backend = nous_oauth (same provider)
+        "3",            # backend = nous_oauth (same provider)
         "Hermes-4",     # model for agent-2 (manual entry)
         "n",            # no more agents
     ])
@@ -499,11 +510,11 @@ def test_wizard_second_agent_reuses_oauth_real_token_store(tmp_path):
     inputs = iter([
         "20",           # max_steps
         "agent-1",      # agent-1 id
-        "4",            # backend = nous_oauth
+        "3",            # backend = nous_oauth
         "Hermes-4",     # model for agent-1 (manual entry)
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "4",            # backend = nous_oauth (same provider)
+        "3",            # backend = nous_oauth (same provider)
         "Hermes-4",     # model for agent-2 (manual entry)
         "n",            # no more agents
     ])
@@ -527,11 +538,11 @@ def test_wizard_second_agent_oauth_no_token_triggers_auth():
     inputs = iter([
         "20",           # max_steps
         "agent-1",      # agent-1 id
-        "4",            # backend = nous_oauth
+        "3",            # backend = nous_oauth
         "Hermes-4",     # model for agent-1 (manual entry)
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "4",            # backend = nous_oauth (same provider)
+        "3",            # backend = nous_oauth (same provider)
         "Hermes-4",     # model for agent-2 (manual entry)
         "n",            # no more agents
     ])
@@ -560,7 +571,7 @@ def test_wizard_force_reconfigure_only_for_first_agent():
 
     def fake_build_agent(agent_index, existing_agents=None, force_reconfigure=False):
         call_args.append(force_reconfigure)
-        return {"id": f"agent-{agent_index + 1}", "backend": {"type": "fake"}}
+        return {"id": f"agent-{agent_index + 1}", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}}
 
     def fake_input(prompt, default=None):
         nonlocal another_count
@@ -590,7 +601,7 @@ def test_wizard_force_reconfigure_single_agent():
 
     def fake_build_agent(agent_index, existing_agents=None, force_reconfigure=False):
         call_args.append(force_reconfigure)
-        return {"id": f"agent-{agent_index + 1}", "backend": {"type": "fake"}}
+        return {"id": f"agent-{agent_index + 1}", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}}
 
     def fake_input(prompt, default=None):
         if "steps" in prompt:
@@ -613,13 +624,13 @@ def test_wizard_second_agent_reuses_api_key_env_var():
     inputs = iter([
         "20",           # max_steps
         "agent-1",      # agent-1 id
-        "2",            # backend = openai
+        "1",            # backend = openai
         "",             # base_url → default
         "OPENAI_API_KEY",  # api_key_env
         "gpt-4o",       # model for agent-1
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "2",            # backend = openai (same provider)
+        "1",            # backend = openai (same provider)
         "",             # base_url → default (from existing)
         "y",            # reuse env var
         "gpt-4o-mini",  # model for agent-2
@@ -641,13 +652,13 @@ def test_wizard_second_agent_chooses_different_api_key_env():
     inputs = iter([
         "20",           # max_steps
         "agent-1",      # agent-1 id
-        "2",            # backend = openai
+        "1",            # backend = openai
         "",             # base_url → default
         "OPENAI_API_KEY",  # api_key_env
         "gpt-4o",       # model for agent-1
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "2",            # backend = openai (same provider)
+        "1",            # backend = openai (same provider)
         "",             # base_url → default (from existing)
         "n",            # DON'T reuse env var
         "OTHER_API_KEY",  # new env var
@@ -669,13 +680,13 @@ def test_wizard_different_provider_triggers_new_auth():
     inputs = iter([
         "20",           # max_steps
         "agent-1",      # agent-1 id
-        "2",            # backend = openai
+        "1",            # backend = openai
         "",             # base_url → default
         "OPENAI_API_KEY",  # api_key_env
         "gpt-4o",       # model for agent-1
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "3",            # backend = nous (different provider)
+        "2",            # backend = nous (different provider)
         "",             # base_url → default
         "NOUS_API_KEY", # new api_key_env
         "Hermes-4",     # model for agent-2

@@ -296,7 +296,7 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
             "L3",           # mode
             "10",           # max_steps
             "agent-1",      # agent id
-            "2",            # backend choice = openai
+            "1",            # backend choice = openai
             "",             # base_url → default
             "OPENAI_API_KEY",  # api_key_env
             "1",            # select model #1 from list (gpt-4o)
@@ -337,7 +337,7 @@ def test_wizard_openai_model_listing_falls_back_to_manual(tmp_path, monkeypatch)
             "L3",           # mode
             "10",           # max_steps
             "agent-1",      # agent id
-            "2",            # backend choice = openai
+            "1",            # backend choice = openai
             "",             # base_url → default
             "OPENAI_API_KEY",  # api_key_env
             "my-custom-model",  # manual model entry (required)
@@ -364,7 +364,7 @@ def test_wizard_openai_model_listing_user_picks_model(tmp_path, monkeypatch):
             "L3",           # mode
             "10",           # max_steps
             "agent-1",      # agent id
-            "2",            # backend choice = openai
+            "1",            # backend choice = openai
             "",             # base_url → default
             "OPENAI_API_KEY",  # api_key_env
             "2",            # select model #2 (gpt-4o-mini)
@@ -389,7 +389,7 @@ def test_wizard_nous_oauth_with_model_listing(tmp_path):
             "L3",           # mode
             "10",           # max_steps
             "agent-1",      # agent id
-            "4",            # backend choice = nous_oauth
+            "3",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
             "test task",    # task description
@@ -414,7 +414,7 @@ def test_wizard_nous_oauth_no_base_url_prompt(tmp_path):
             "L3",           # mode
             "10",           # max_steps
             "agent-1",      # agent id
-            "4",            # backend choice = nous_oauth
+            "3",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
             "test task",    # task description
@@ -458,7 +458,7 @@ def test_wizard_nous_oauth_reuses_valid_token(tmp_path):
             "L3",           # mode
             "10",           # max_steps
             "agent-1",      # agent id
-            "4",            # backend choice = nous_oauth
+            "3",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
             "test task",    # task description
@@ -502,7 +502,7 @@ def test_wizard_nous_oauth_force_reconfigure(tmp_path):
             "L3",           # mode
             "10",           # max_steps
             "agent-1",      # agent id
-            "4",            # backend choice = nous_oauth
+            "3",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
             "test task",    # task description
@@ -531,7 +531,7 @@ def test_wizard_nous_oauth_auth_fallback_manual(tmp_path):
             "L3",           # mode
             "10",           # max_steps
             "agent-1",      # agent id
-            "4",            # backend choice = nous_oauth
+            "3",            # backend choice = nous_oauth
             "manual-model", # manual model entry after auth failure
             "n",            # no more agents
             "test task",    # task description

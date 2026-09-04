@@ -29,10 +29,9 @@ from .model_config import (
 # -- constants ---------------------------------------------------------------
 
 BACKEND_OPTIONS: dict[str, tuple[str, str]] = {
-    "1": ("fake", "Fake (offline, scripted)"),
-    "2": ("openai", "OpenAI-compatible API"),
-    "3": ("nous", "Nous Portal (API key)"),
-    "4": ("nous_oauth", "Nous Portal (OAuth device code)"),
+    "1": ("openai", "OpenAI-compatible API"),
+    "2": ("nous", "Nous Portal (API key)"),
+    "3": ("nous_oauth", "Nous Portal (OAuth device code)"),
 }
 
 NOUS_DEFAULT_BASE_URL = "https://inference-api.nousresearch.com/v1"
@@ -323,7 +322,7 @@ def _select_backend() -> str:
         choice = _input("Choice", "1")
         if choice in BACKEND_OPTIONS:
             return BACKEND_OPTIONS[choice][0]
-        print(f"  (invalid choice: {choice!r} — enter 1, 2, 3, or 4)")
+        print(f"  (invalid choice: {choice!r} — enter 1, 2, or 3)")
 
 
 def _collect_model_for_backend(
@@ -378,17 +377,7 @@ def _build_agent(
 
     backend: dict[str, Any] = {"type": backend_type}
 
-    if backend_type == "fake":
-        # Fake backend — collect scripted text responses.
-        print("  (fake backend — enter scripted text responses, empty line to finish)")
-        script: list[str] = []
-        while True:
-            entry = _input("  script entry", "")
-            if not entry:
-                break
-            script.append(entry)
-        backend["script"] = script if script else ["done"]
-    elif backend_type == "nous_oauth":
+    if backend_type == "nous_oauth":
         # OAuth — use default Base URL internally, no prompt.
         # Authentication starts immediately (or reuses valid token).
         base_url = NOUS_DEFAULT_BASE_URL

@@ -49,10 +49,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
                 f"agents[{i}].backend.type must be one of {_VALID_BACKEND_TYPES}, got {btype!r}"
             )
         # D8: backend type별 필수 키를 빠르게 검증
-        if btype == "fake":
-            if "script" not in backend:
-                raise ConfigError(f"agents[{i}] fake backend requires 'script' key")
-        elif btype == "openai":
+        if btype == "openai":
             if "base_url" not in backend:
                 raise ConfigError(f"agents[{i}] openai backend requires 'base_url' key")
             if "api_key_env" not in backend:

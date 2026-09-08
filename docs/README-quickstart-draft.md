@@ -18,6 +18,11 @@
 >   는 현재 `load_config`가 `type: fake`를 거부해서 **실패**한다. 결함 1 수정(권장: fake 재허용 +
 >   `allow_fake`/`--demo` 플래그) 후에만 이 절의 CLI 명령이 유효. 수정 전에는 `python examples/p1_to_p5_demo.py`
 >   (직접 실행)와 `pytest tests/ -q`만 유효.
+> - **벤치마크 상태 (agent-4 갱신, 2026-08 — agent-2 독립 재현):**
+>   `examples/benchmark/`는 **README.md만 존재**하고 `run_l3_passive_awareness.py`/테스트는 아직
+>   구현 전 (OSS_STRATEGY §10 D1: 방향은 "L3-only 재정의"로 확정, 구현은 Phase 2).
+>   → 아래 본문에는 벤치마크 실행 명령을 넣지 않는다. README 최종 반영 시에도
+>   "Phase 2 (예정)" 표기로만 언급할 것. ci.yml에도 구현 전까지 추가 금지 (이미 주석으로 기록).
 > - 위 갭이 해소되기 전까지 이 초안을 README.md에 직접 반영하지 말 것.
 
 ---
@@ -98,7 +103,7 @@ agent-augury --config session.yaml
 | `agent-augury` | 인터랙티브 위저드 (모델 설정 저장 후 YAML 생성) |
 | `agent-augury --config session.yaml` | YAML로 실행 |
 | `agent-augury --reconfigure` | 저장된 모델 설정 폐기 후 위저드 재실행 |
-| `agent-augury --quiet` | 브로드캐스트 로그 억제 (요약만) |
+| `agent-augury --quiet` | 브로드캐스트 로그 억제 (요약만) — 구현됨 (v0.3) |
 
 ### 5. 오프라인 데모 (API 키 없이)
 
@@ -127,6 +132,8 @@ pytest tests/ -q
 
 > 버전 라벨: 모든 예제 YAML 헤더의 버전 표기를 코드(v0.3)와 정렬 필요.
 > `multi_bot_demo.yaml`의 `channel_id`는 env로 이동 필요 (결함 5).
+> `p1_to_p5_protocol.yaml` 헤더의 "v0.2" 표기도 정렬 대상 (agent-2 발견).
+> 벤치마크(`examples/benchmark/`)는 Phase 2 예정 — 아직 실행 명령 없음.
 
 ---
 

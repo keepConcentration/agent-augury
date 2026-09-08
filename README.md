@@ -69,6 +69,118 @@ agent-augury --config examples/consensus_openai.yaml  # E2E with a real LLM (nee
 #   pytest tests/test_integration_openai.py -m openai -v
 ```
 
+## Running locally (Windows + .venv)
+
+The quickest way to run agent-augury on Windows is from a project-local
+`.venv`. The `agent-augury` console script is installed into
+`.venv\Scripts\` — use that instead of a global Python install, which
+lacks the project's dependencies (aiosqlite, PyYAML, etc.).
+
+```powershell
+# PowerShell — from the project root
+.venv\Scripts\agent-augury
+
+# cmd
+.venv\Scripts\agent-augury.exe
+```
+
+> **Why `.venv`?** A globally installed `agent-augury` (e.g. via
+> `pip install` into a system Python) has no access to the project's
+> dependencies and will fail with `ModuleNotFoundError`. Always run
+> through the project's `.venv`.
+
+To run `agent-augury` from any directory, add `.venv\Scripts` to your
+user environment `PATH`:
+
+```powershell
+# PowerShell (persistent)
+[Environment]::SetEnvironmentVariable(
+    "Path",
+    "$env:USERPROFILE\IdeaProjects\agent-augury\.venv\Scripts;" +
+    [Environment]::GetEnvironmentVariable("Path", "User"),
+    "User"
+)
+```
+
+After reopening your terminal, `agent-augury` works from anywhere.
+
+### Interactive wizard
+
+Running `agent-augury` without `--config` launches an interactive
+wizard that builds a YAML config through a conversation:
+
+```powershell
+agent-augury
+```
+
+The wizard walks through:
+
+1. **Max steps** — total step cap across all agents. `0` means
+   *unlimited* (the default). A positive integer caps the entire
+   session.
+2. **Backend / provider** — choose per agent:
+   - `openai` — OpenAI-compatible API
+   - `nous` — Nous Portal (API key)
+   - `nous_oauth` — Nous Portal (OAuth device code — no API key)
+3. **Add another agent?** — repeat step 2 for multi-agent setups.
+
+The wizard then asks for an initial task and starts the session.
+
+> **No API keys on disk.** Only environment variable *names* are stored
+> (e.g. `OPENAI_API_KEY`). Actual values are read from your environment
+> or a `.env` file at runtime.
+
+### Saved model settings
+
+Model settings (max_steps, agent IDs, backend types, model names,
+base URLs, env-var names) are persisted to
+`~/.agent-augury/model_config.json`. On the next run, the wizard
+detects this file and skips straight to the task prompt — no need to
+re-enter backends or agent structure.
+
+Use `--reconfigure` to discard the saved settings and re-run the full
+wizard from scratch:
+
+```powershell
+agent-augury --reconfigure
+```
+
+### OAuth (nous_oauth) — one-time authentication
+
+When you pick `nous_oauth`, the wizard opens a browser for the OAuth
+device-code flow. The resulting token is stored at
+`~/.agent-augury/tokens.json` (mode `0o600`) and **shared across all
+agents using the same provider** — so even with 3+ agents on
+`nous_oauth`, the browser opens only once.
+
+- Token expiry → automatic refresh.
+- Refresh fails → one re-authentication, then the new token is saved.
+
+### Running from a YAML config
+
+Skip the wizard entirely by pointing at a pre-built YAML:
+
+```powershell
+agent-augury --config examples\p1_to_p5_protocol.yaml
+agent-augury --config examples\consensus_openai.yaml
+```
+
+Use `--output` to control where the wizard writes the generated YAML
+(only valid without `--config`):
+
+```powershell
+agent-augury --output my_session.yaml
+```
+
+### Command-line options
+
+| Flag | Description |
+|------|-------------|
+| `--config <yaml>` | Run directly from a YAML file (skips wizard) |
+| `--reconfigure` | Discard saved model settings and re-run the wizard |
+| `--output <path>` | Wizard output path (only valid without `--config`) |
+| `--quiet` | Suppress broadcast events (currently unimplemented) |
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

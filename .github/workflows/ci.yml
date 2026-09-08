@@ -1,0 +1,84 @@
+# agent-augury CI — lint + offline tests + build (Phase 1: 배포 가능 상태)
+#
+# 원칙 (OSS_STRATEGY.md §5 Phase 1):
+# - 오프라인 테스트만 CI에서 실행 (openai 통합은 opt-in — 비용/키 불필요)
+# - ruff check + pytest -q 가 게이트
+# - 태그 푸시 시 PyPI 릴리스 자동화 (별도 워크플로: release.yml)
+#
+# ⚠️ 리스크 기록 (agent-3 교차 검증, 2026-08):
+#   `uv pip install --system -e ".[dev]"`는 py-cord(핵심 deps)를 설치한다.
+#   py-cord의 Python 3.12 지원 여부가 미확인 → 3.12 매트릭스에서 설치 실패
+#   가능성. 실제 CI 1회 실행 전까지는 3.12를 유지하되, 실패 시:
+#     a) python: ["3.11"]만 유지, 또는
+#     b) py-cord lazy import 후 extras 분리 (OSS_STRATEGY §2.2, v0.4+)
+#
+# ✅ examples/benchmark/ (agent-3, 2026-09):
+#   examples/benchmark/run_l3_passive_awareness.py + test_l3_passive_awareness.py
+#   구현 완료 (L3-only 재정의, 오프라인·결정적). OSS_STRATEGY §10 D1 해소.
+#   → 아래 pytest 경로에 examples/benchmark/ 를 포함한다.
+#
+# 참고: agent-augury는 Windows 개발 환경에서 만들어졌으므로 Windows 러너를
+# 매트릭스에 포함한다 (cli.py 경로 처리, wizard TTY 등 플랫폼별 회귀 방지).
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Install dev extras
+        run: uv pip install --system -e ".[dev]"
+      - name: Ruff check
+        run: ruff check src tests examples/benchmark
+
+  test:
+    name: test (${{ matrix.os }} / py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.12"]   # 3.12는 py-cord 호환성 리스크 — 실패 시 3.11만 유지
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev extras
+        run: uv pip install --system -e ".[dev]"
+      - name: Run offline test suite
+        run: pytest tests/ examples/benchmark/ -q
+        env:
+          # openai 통합 테스트는 opt-in — CI에서는 절대 실행하지 않음
+          AUGURY_RUN_OPENAI_TESTS: "0"
+      # agent-2/agent-3 검증: tests/ 21개 모듈 + examples/benchmark/ 5건 전부 오프라인
+      # (test_integration_openai의 openai 3건은 requires_openai 마커로 자동 skip)
+
+  build:
+    name: build sdist+wheel
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Build package
+        run: uv build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

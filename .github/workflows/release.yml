@@ -1,0 +1,50 @@
+# agent-augury PyPI 릴리스 — 태그 기반 자동 배포
+#
+# 트리거: `v0.3.0` 같은 태그 푸시
+#
+# ⚠️ 최초 릴리스 절차 (agent-3 권고 반영):
+#   Trusted Publishing(OIDC)는 PyPI 프로젝트에 OIDC 설정이 선행돼야 한다.
+#   OIDC 미설정 상태에서 태그를 푸시하면 publish 스텝이 실패한다.
+#   → **최초 1회는 수동으로**: `uv build` → `twine upload dist/*`
+#     (docs/pypi-name-check.md §4 참고), 이후 OIDC(또는 token)를 붙이고
+#     이 워크플로를 활성화한다.
+#
+# 준비물 (OIDC 활성화 후):
+#   PyPI → project settings → publishing → "Trusted Publishers"에
+#   이 repo의 환경 연결 (workflow 이름: release.yml)
+#
+# OSS_STRATEGY.md §5 Phase 1의 "uv build + PyPI 릴리스 자동화 (태그 기반)" 항목.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: publish to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Trusted Publishing (PyPI OIDC) 사용 시
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Build
+        run: uv build
+      - name: Publish to PyPI
+        # Trusted Publishing (권장, OIDC 설정 후): PYPI_API_TOKEN 불필요
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+      # 대안: API token 사용 시 위 스텝을 아래로 교체
+      # - name: Publish to PyPI (token)
+      #   env:
+      #     TWINE_USERNAME: __token__
+      #     TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      #   run: uvx twine upload dist/*

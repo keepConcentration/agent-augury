@@ -10,7 +10,7 @@
 #        BOT_TOKEN_AGENT_4=xxxxx
 #   4. 채널 ID 확인 (Discord 개발자 모드 → 채널 우클릭 → ID 복사)
 #   5. 실행:
-#        agent-augury --config examples/multi_bot_demo.yaml
+#        agent-augury --demo --config examples/multi_bot_demo.yaml
 #
 # 참고: 봇 토큰은 환경변수에서 읽으므로 YAML에는 env 이름만 기록합니다.
 #       실제 토큰은 .env 파일(또는 셸 환경)에 두고, 절대 git에 커밋하지 마세요.

@@ -109,8 +109,8 @@ def _make_run_recorder():
     """
     calls = []
 
-    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False):
-        calls.append({"cfg_path": cfg_path, "initial_prompt": initial_prompt, "quiet": quiet})
+    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False, allow_fake=False):
+        calls.append({"cfg_path": cfg_path, "initial_prompt": initial_prompt, "quiet": quiet, "allow_fake": allow_fake})
         return 0
 
     return calls, fake_run
@@ -142,6 +142,33 @@ def test_cli_quiet_flag_default_false():
     assert result == 0
     assert len(calls) == 1
     assert calls[0]["quiet"] is False
+
+
+def test_cli_demo_flag_passed():
+    """--demo must reach _run(allow_fake=True) when --config is used."""
+    from agent_augury.cli import main
+
+    calls, fake_run = _make_run_recorder()
+    with patch("agent_augury.cli._run", fake_run):
+        result = main(["--config", "fake.yaml", "--demo"])
+
+    assert result == 0
+    assert len(calls) == 1
+    assert calls[0]["allow_fake"] is True
+    assert calls[0]["cfg_path"] == "fake.yaml"
+
+
+def test_cli_demo_flag_default_false():
+    """Without --demo, _run must receive allow_fake=False (default)."""
+    from agent_augury.cli import main
+
+    calls, fake_run = _make_run_recorder()
+    with patch("agent_augury.cli._run", fake_run):
+        result = main(["--config", "fake.yaml"])
+
+    assert result == 0
+    assert len(calls) == 1
+    assert calls[0]["allow_fake"] is False
 
 
 VALID_MODEL_CONFIG = {

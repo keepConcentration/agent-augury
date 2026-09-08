@@ -60,8 +60,8 @@ pip install -e ".[dev]"
 pytest tests/ -q                      # unit tests (offline; skips OpenAI integration)
 python examples/consensus_demo.py     # v0.1b consensus gate verification
 python examples/p1_to_p5_demo.py      # v0.2 P1~P5 full protocol verification
-agent-augury --config examples/p1_to_p5_protocol.yaml  # same P1~P5 flow via YAML (offline)
-agent-augury --config examples/demo.yaml   # E2E demo with a fake backend
+agent-augury --demo --config examples/p1_to_p5_protocol.yaml  # same P1~P5 flow via YAML (offline)
+agent-augury --demo --config examples/demo.yaml   # E2E demo with a fake backend
 agent-augury --config examples/consensus_openai.yaml  # E2E with a real LLM (needs OPENAI_API_KEY)
 
 # Opt-in OpenAI API smoke (incurs cost):
@@ -161,7 +161,7 @@ agents using the same provider** — so even with 3+ agents on
 Skip the wizard entirely by pointing at a pre-built YAML:
 
 ```powershell
-agent-augury --config examples\p1_to_p5_protocol.yaml
+agent-augury --demo --config examples\p1_to_p5_protocol.yaml
 agent-augury --config examples\consensus_openai.yaml
 ```
 
@@ -177,6 +177,7 @@ agent-augury --output my_session.yaml
 | Flag | Description |
 |------|-------------|
 | `--config <yaml>` | Run directly from a YAML file (skips wizard) |
+| `--demo` | Allow type:fake backends in config (offline demo/benchmark) |
 | `--reconfigure` | Discard saved model settings and re-run the wizard |
 | `--output <path>` | Wizard output path (only valid without `--config`) |
 | `--quiet` | Suppress broadcast events (currently unimplemented) |

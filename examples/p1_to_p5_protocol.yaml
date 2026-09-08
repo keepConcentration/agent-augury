@@ -1,7 +1,7 @@
 # agent-augury v0.2 — P1~P5 full collaboration protocol (YAML)
 #
 # Fake backends only — runs fully offline:
-#   agent-augury --config examples/p1_to_p5_protocol.yaml
+#   agent-augury --demo --config examples/p1_to_p5_protocol.yaml
 #   pytest tests/test_integration_openai.py -k p1_to_p5_protocol_yaml_e2e_fake -q
 #
 # Mirrors examples/p1_to_p5_demo.py for YAML-driven E2E verification.

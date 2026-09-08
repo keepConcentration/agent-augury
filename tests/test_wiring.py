@@ -533,5 +533,25 @@ def test_load_config_rejects_fake_backend_type(tmp_path):
         "mode": "L3",
         "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
     })
-    with pytest.raises(ConfigError, match="backend.type must be one of"):
+    with pytest.raises(ConfigError, match="backend.type"):
+        load_config(p)
+
+
+def test_load_config_allow_fake_true_permits_fake_backend(tmp_path):
+    """allow_fake=True permits type: fake backends (offline demo/benchmark)."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
+    })
+    cfg = load_config(p, allow_fake=True)
+    assert cfg["agents"][0]["backend"]["type"] == "fake"
+
+
+def test_load_config_allow_fake_default_rejects_fake(tmp_path):
+    """allow_fake defaults to False → type: fake still rejected."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
+    })
+    with pytest.raises(ConfigError):
         load_config(p)

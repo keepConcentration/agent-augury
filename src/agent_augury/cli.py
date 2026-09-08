@@ -183,8 +183,8 @@ def _log_tool_event(event: dict[str, Any]) -> None:
             print(f"{icon} {agent_id}: {tool}", flush=True)
 
 
-async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False) -> int:
-    cfg = load_config(cfg_path)
+async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False) -> int:
+    cfg = load_config(cfg_path, allow_fake=allow_fake)
 
     # D2: quiet 모드 시 step/도구 라이브 로그 억제
     def on_step(agent_id: str, result: StepResult) -> None:
@@ -314,6 +314,12 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="suppress broadcast event output (only show final summary) — currently unimplemented",
     )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        default=False,
+        help="allow type:fake backends in config (offline demo/benchmark)",
+    )
     args = parser.parse_args(argv)
 
     # Validate flag combinations before anything else.
@@ -330,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         try:
-            return asyncio.run(_run(args.config, quiet=args.quiet))
+            return asyncio.run(_run(args.config, quiet=args.quiet, allow_fake=args.demo))
         except Exception as exc:  # noqa: BLE001 — CLI boundary
             print(f"error: {exc}", file=sys.stderr)
             return 1

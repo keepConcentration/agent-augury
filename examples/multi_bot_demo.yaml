@@ -55,16 +55,16 @@ agents:
 bots:
   - agent_id: agent-1
     token_env: BOT_TOKEN_AGENT_1
-    channel_id: 1526401014536867853
+    channel_id: ${BOT_CHANNEL_ID_AGENT_1}
 
   - agent_id: agent-2
     token_env: BOT_TOKEN_AGENT_2
-    channel_id: 1526401014536867853
+    channel_id: ${BOT_CHANNEL_ID_AGENT_2}
 
   - agent_id: agent-3
     token_env: BOT_TOKEN_AGENT_3
-    channel_id: 1526401014536867853
+    channel_id: ${BOT_CHANNEL_ID_AGENT_3}
 
   - agent_id: agent-4
     token_env: BOT_TOKEN_AGENT_4
-    channel_id: 1526401014536867853
+    channel_id: ${BOT_CHANNEL_ID_AGENT_4}

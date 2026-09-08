@@ -10,8 +10,7 @@ Additional flags:
   - ``agent-augury --reconfigure`` — discard saved model settings and run
     the full wizard from scratch, then save new settings.
   - ``agent-augury --quiet`` — suppress broadcast event output (only show
-    final summary).  **Currently unimplemented**: accepted for CLI
-    compatibility but output is not suppressed yet.
+    final summary).
 """
 
 from __future__ import annotations
@@ -312,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
         "--quiet",
         action="store_true",
         default=False,
-        help="suppress broadcast event output (only show final summary) — currently unimplemented",
+        help="suppress broadcast event output (only show final summary)",
     )
     parser.add_argument(
         "--demo",

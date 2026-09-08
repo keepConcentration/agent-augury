@@ -1,4 +1,4 @@
-# agent-augury v0.1b — real OpenAI-compatible backend example
+# agent-augury v0.3 — real OpenAI-compatible backend example
 #
 # E2E configuration: a real LLM (OpenAI-compatible API) generates PROPOSE/APPROVE
 # messages autonomously. Secrets are read from environment variables only — never

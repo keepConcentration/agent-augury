@@ -5,9 +5,29 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import os
+import re
+
 import yaml
 
 _VALID_BACKEND_TYPES = {"openai", "nous", "nous_oauth"}
+
+_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand_env_refs(data: Any) -> Any:
+    """Replace ``${VAR_NAME}`` placeholders with os.environ values.
+
+    Works recursively on nested dicts/lists. Unresolved variables are left
+    as-is (the caller will surface a clearer error at validation time).
+    """
+    if isinstance(data, str):
+        return _ENV_VAR_PATTERN.sub(lambda m: os.environ.get(m.group(1), m.group(0)), data)
+    if isinstance(data, dict):
+        return {k: _expand_env_refs(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_expand_env_refs(item) for item in data]
+    return data
 
 
 class ConfigError(Exception):
@@ -22,6 +42,9 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
         raise ConfigError(f"invalid YAML: {exc}") from exc
     if not isinstance(data, dict):
         raise ConfigError("config root must be a mapping")
+
+    # Expand ${ENV_VAR} references from os.environ
+    data = _expand_env_refs(data)
 
     # mode key is accepted for backward compatibility but ignored.
     # agent-augury is L3-only as of v0.3.

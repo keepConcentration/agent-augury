@@ -1,6 +1,6 @@
 # agent-augury — 독립 오픈소스 설계 문서
 
-> 상태: v0.2 구현 완료 · 2026-08-27 · 프로젝트명 `agent-augury` (D1 확정)
+> 상태: v0.3 구현 완료 · 2026-08-27 · 프로젝트명 `agent-augury` (D1 확정)
 > 범위: "패시브 어웨어니스(Passive Awareness) 멀티에이전트" 개념을 담은, Hermes와 독립된 오픈소스 프로젝트
 > 이 문서는 Coral-Protocol [AgentRadio](https://github.com/Coral-Protocol/AgentRadio)의 **개념을 계승**하되 독립 재구현한다. 원본 레포명 `AgentRadio`는 상단의 링크·참고에서만 그대로 쓰고, **이 프로젝트 자기 이름은 `agent-augury`다.**
 
@@ -22,7 +22,7 @@ Coral-Protocol의 [AgentRadio](https://github.com/Coral-Protocol/AgentRadio) (�
 
 ### 1.2 우리가 만드는 것
 
-이 프로젝트(`agent-augury`)는 **AgentRadio의 "개념(패시브 어웨어니스 + 협업 프로토콜)"을 계승**하되, 모델·채널·런타임 어느 것에도 묶이지 않는 독립 오픈소스로 재구현한다. 협업 프로토콜 전체(P1~P5)는 장기 목표로 계승하고, **구현은 v0.2에서** 다룬다 (§6).
+이 프로젝트(`agent-augury`)는 **AgentRadio의 "개념(패시브 어웨어니스 + 협업 프로토콜)"을 계승**하되, 모델·채널·런타임 어느 것에도 묶이지 않는 독립 오픈소스로 재구현한다. 협업 프로토콜 전체(P1~P5)는 장기 목표로 계승하고, **구현은 v0.3에서** 다룬다 (§6).
 
 | 차원 | 원본 AgentRadio | 이 프로젝트 |
 |------|----------------|-------------|

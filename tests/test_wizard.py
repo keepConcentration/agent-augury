@@ -103,7 +103,6 @@ def test_wizard_openai_backend_produces_valid_config(tmp_path):
     # Simulate user inputs for: max_steps, agent-1 (openai),
     # api_key_env, model, no more agents, output path.
     inputs = iter([
-        "15",           # max_steps
         "agent-1",      # agent id
         "1",            # backend choice = openai
         "",             # base_url → default
@@ -117,7 +116,7 @@ def test_wizard_openai_backend_produces_valid_config(tmp_path):
         cfg = run_wizard()
 
     assert cfg["mode"] == "L3"
-    assert cfg["max_steps"] == 15
+    assert cfg["max_steps"] == 0
     assert len(cfg["agents"]) == 1
     assert cfg["agents"][0]["id"] == "agent-1"
     assert cfg["agents"][0]["backend"]["type"] == "openai"
@@ -126,7 +125,7 @@ def test_wizard_openai_backend_produces_valid_config(tmp_path):
     # Model config should have been saved.
     mock_save.assert_called_once()
     call_args = mock_save.call_args
-    assert call_args[0][0] == 15    # max_steps
+    assert call_args[0][0] == 0      # max_steps
     assert len(call_args[0][1]) == 1  # agents
 
     # Must be loadable by the real config loader.
@@ -143,7 +142,6 @@ def test_wizard_openai_backend_produces_valid_config(tmp_path):
 
 def test_wizard_openai_backend_uses_default_base_url(tmp_path):
     inputs = iter([
-        "20",           # max_steps
         "agent-1",      # agent id
         "1",            # backend choice = openai
         "",             # base_url → default
@@ -170,7 +168,6 @@ def test_wizard_openai_backend_uses_default_base_url(tmp_path):
 
 def test_wizard_nous_backend_uses_default_base_url(tmp_path):
     inputs = iter([
-        "20",           # max_steps
         "agent-1",      # agent id
         "2",            # backend choice = nous
         "",             # base_url → default
@@ -197,7 +194,6 @@ def test_wizard_nous_backend_uses_default_base_url(tmp_path):
 
 def test_wizard_multiple_agents(tmp_path):
     inputs = iter([
-        "30",           # max_steps
         "agent-1",      # agent-1 id
         "1",            # openai
         "",             # base_url → default
@@ -233,7 +229,7 @@ def test_wizard_cancels_on_eof():
     def side_effect(_prompt):
         call_count[0] += 1
         if call_count[0] == 1:
-            return "15"
+            return "agent-1"
         raise EOFError()
 
     with patch("builtins.input", side_effect=side_effect):
@@ -324,19 +320,20 @@ def test_cli_wizard_generates_valid_yaml(tmp_path, monkeypatch):
 
     output = tmp_path / "wizard_out.yaml"
     inputs = iter([
-        "10",                # max_steps
         "a1", "1", "", "OPENAI_API_KEY", "gpt-4o-mini",  # agent-1 (openai)
         "n",                 # no more agents
-        str(output),         # output path
         "e2e task",          # initial task
     ])
     # Patch check_tty in the module that imported it (cli), not the origin.
     # Also ensure no existing model config is loaded.
+    # Mock asyncio.run to prevent actual agent execution (would loop forever
+    # with max_steps=0 and a fake API key).
     with patch("builtins.input", side_effect=lambda _: next(inputs)), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.wizard.save_model_config"), \
-         patch("agent_augury.cli.model_config_exists", return_value=False):
-        rc = main([])
+         patch("agent_augury.cli.model_config_exists", return_value=False), \
+         patch("agent_augury.cli.asyncio.run", return_value=0):
+        rc = main(["--output", str(output)])
 
     assert rc == 0
     assert output.exists()
@@ -373,7 +370,8 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
              patch("agent_augury.cli.check_tty", return_value=True), \
              patch("agent_augury.cli.model_config_exists", return_value=True), \
              patch("agent_augury.cli.load_model_config", return_value=existing), \
-             patch("agent_augury.wizard.save_model_config"):
+             patch("agent_augury.wizard.save_model_config"), \
+             patch("agent_augury.cli.asyncio.run", return_value=0):
             rc = main([])
 
         assert rc == 0
@@ -470,7 +468,6 @@ def test_check_tty_no_attach_on_non_windows():
 def test_wizard_second_agent_reuses_oauth_no_reauthentication():
     """Second agent with nous_oauth should reuse token, not re-authenticate."""
     inputs = iter([
-        "20",           # max_steps
         "agent-1",      # agent-1 id
         "3",            # backend = nous_oauth
         "Hermes-4",     # model for agent-1 (manual entry)
@@ -508,7 +505,6 @@ def test_wizard_second_agent_reuses_oauth_real_token_store(tmp_path):
     })
 
     inputs = iter([
-        "20",           # max_steps
         "agent-1",      # agent-1 id
         "3",            # backend = nous_oauth
         "Hermes-4",     # model for agent-1 (manual entry)
@@ -536,7 +532,6 @@ def test_wizard_second_agent_reuses_oauth_real_token_store(tmp_path):
 def test_wizard_second_agent_oauth_no_token_triggers_auth():
     """Second agent with nous_oauth and no token must authenticate."""
     inputs = iter([
-        "20",           # max_steps
         "agent-1",      # agent-1 id
         "3",            # backend = nous_oauth
         "Hermes-4",     # model for agent-1 (manual entry)
@@ -575,8 +570,6 @@ def test_wizard_force_reconfigure_only_for_first_agent():
 
     def fake_input(prompt, default=None):
         nonlocal another_count
-        if "steps" in prompt:
-            return "20"
         if "ID" in prompt:
             return f"agent-{len(call_args) + 1}"
         if "another" in prompt.lower():
@@ -604,8 +597,6 @@ def test_wizard_force_reconfigure_single_agent():
         return {"id": f"agent-{agent_index + 1}", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}}
 
     def fake_input(prompt, default=None):
-        if "steps" in prompt:
-            return "20"
         if "ID" in prompt:
             return f"agent-{len(call_args) + 1}"
         if "another" in prompt.lower():
@@ -622,7 +613,6 @@ def test_wizard_force_reconfigure_single_agent():
 def test_wizard_second_agent_reuses_api_key_env_var():
     """Second agent with same API key provider should offer env var reuse."""
     inputs = iter([
-        "20",           # max_steps
         "agent-1",      # agent-1 id
         "1",            # backend = openai
         "",             # base_url → default
@@ -650,7 +640,6 @@ def test_wizard_second_agent_reuses_api_key_env_var():
 def test_wizard_second_agent_chooses_different_api_key_env():
     """User can override env var reuse and enter a new one."""
     inputs = iter([
-        "20",           # max_steps
         "agent-1",      # agent-1 id
         "1",            # backend = openai
         "",             # base_url → default
@@ -678,7 +667,6 @@ def test_wizard_second_agent_chooses_different_api_key_env():
 def test_wizard_different_provider_triggers_new_auth():
     """Agent 2 with different provider (nous after openai) should ask for new credentials."""
     inputs = iter([
-        "20",           # max_steps
         "agent-1",      # agent-1 id
         "1",            # backend = openai
         "",             # base_url → default

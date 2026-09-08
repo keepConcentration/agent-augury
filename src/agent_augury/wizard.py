@@ -429,7 +429,7 @@ def _build_agent(
 def _collect_model_settings(force_reconfigure: bool = False) -> tuple[int, list[dict[str, Any]]]:
     """Phase 1: collect max_steps and agent/backend settings."""
     print("\n--- Model Configuration ---")
-    max_steps = _input_int("Max steps (0=unlimited)", 0)
+    max_steps = 0  # unlimited by default; skip prompt for faster setup
 
     # Agents.
     agents: list[dict[str, Any]] = []

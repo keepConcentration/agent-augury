@@ -293,15 +293,12 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
         mock_list.return_value = ["gpt-4o", "gpt-4o-mini"]
 
         inputs = iter([
-            "L3",           # mode
-            "10",           # max_steps
             "agent-1",      # agent id
             "1",            # backend choice = openai
             "",             # base_url → default
             "OPENAI_API_KEY",  # api_key_env
             "1",            # select model #1 from list (gpt-4o)
             "n",            # no more agents
-            str(output_path),  # save config path
             "test task",    # task description
         ])
         with patch("builtins.input", side_effect=lambda _: next(inputs)), \
@@ -309,7 +306,7 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
              patch("agent_augury.cli.model_config_exists", return_value=False), \
              patch("agent_augury.wizard.save_model_config"), \
              patch("agent_augury.cli._run", fake_run):
-            rc = main([])
+            rc = main(["--output", str(output_path)])
 
     assert rc == 0
     # The picked model landed in the saved YAML.
@@ -334,8 +331,6 @@ def test_wizard_openai_model_listing_falls_back_to_manual(tmp_path, monkeypatch)
         mock_list.return_value = None  # listing failed
 
         inputs = iter([
-            "L3",           # mode
-            "10",           # max_steps
             "agent-1",      # agent id
             "1",            # backend choice = openai
             "",             # base_url → default
@@ -361,8 +356,6 @@ def test_wizard_openai_model_listing_user_picks_model(tmp_path, monkeypatch):
         mock_list.return_value = ["gpt-4o", "gpt-4o-mini"]
 
         inputs = iter([
-            "L3",           # mode
-            "10",           # max_steps
             "agent-1",      # agent id
             "1",            # backend choice = openai
             "",             # base_url → default
@@ -386,13 +379,10 @@ def test_wizard_nous_oauth_with_model_listing(tmp_path):
         mock_list.return_value = ["Hermes-4", "Hermes-3"]
 
         inputs = iter([
-            "L3",           # mode
-            "10",           # max_steps
             "agent-1",      # agent id
             "3",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
-            "test task",    # task description
         ])
         with patch("builtins.input", side_effect=lambda _: next(inputs)), \
              patch("agent_augury.wizard.save_model_config"), \
@@ -411,13 +401,10 @@ def test_wizard_nous_oauth_no_base_url_prompt(tmp_path):
         mock_list.return_value = ["Hermes-4"]
 
         inputs = iter([
-            "L3",           # mode
-            "10",           # max_steps
             "agent-1",      # agent id
             "3",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
-            "test task",    # task description
         ])
         with patch("builtins.input", side_effect=lambda _: next(inputs)) as mock_input, \
              patch("agent_augury.wizard.save_model_config"), \
@@ -455,13 +442,10 @@ def test_wizard_nous_oauth_reuses_valid_token(tmp_path):
         mock_list.return_value = ["Hermes-4"]
 
         inputs = iter([
-            "L3",           # mode
-            "10",           # max_steps
             "agent-1",      # agent id
             "3",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
-            "test task",    # task description
         ])
         with patch("builtins.input", side_effect=lambda _: next(inputs)), \
              patch("agent_augury.wizard.save_model_config"), \
@@ -499,13 +483,10 @@ def test_wizard_nous_oauth_force_reconfigure(tmp_path):
         mock_list.return_value = ["Hermes-4"]
 
         inputs = iter([
-            "L3",           # mode
-            "10",           # max_steps
             "agent-1",      # agent id
             "3",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
-            "test task",    # task description
         ])
         with patch("builtins.input", side_effect=lambda _: next(inputs)), \
              patch("agent_augury.wizard.save_model_config"), \
@@ -528,13 +509,10 @@ def test_wizard_nous_oauth_auth_fallback_manual(tmp_path):
         mock_list.return_value = ["Hermes-4"]
 
         inputs = iter([
-            "L3",           # mode
-            "10",           # max_steps
             "agent-1",      # agent id
             "3",            # backend choice = nous_oauth
             "manual-model", # manual model entry after auth failure
             "n",            # no more agents
-            "test task",    # task description
         ])
         with patch("builtins.input", side_effect=lambda _: next(inputs)), \
              patch("agent_augury.wizard.save_model_config"), \

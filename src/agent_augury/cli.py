@@ -267,10 +267,7 @@ def _run_wizard_flow(
             cfg = run_wizard(existing_model_config=existing, force_reconfigure=force_reconfigure)
             # Determine output path.
             if output_path is None:
-                if existing is not None:
-                    output_path = _DEFAULT_OUTPUT_PATH
-                else:
-                    output_path = _prompt_output_path()
+                output_path = _DEFAULT_OUTPUT_PATH
             else:
                 output_path = _resolve_output_path(str(output_path))
             _save_config(cfg, output_path)

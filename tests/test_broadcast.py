@@ -181,7 +181,7 @@ VALID_MODEL_CONFIG = {
 
 
 def test_wizard_flow_quiet_flag_passed(tmp_path):
-    """--quiet in wizard flow must reach _run(quiet=True) (T2/T8).
+    """--quiet in wizard flow must reach _run_repl(quiet=True) (T2/T8).
 
     Uses a *valid* saved model config (non-empty agents) so the reuse
     branch is exercised with a config that would actually load — the old
@@ -191,7 +191,7 @@ def test_wizard_flow_quiet_flag_passed(tmp_path):
 
     out_path = tmp_path / "wizard_out.yaml"
     calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run", fake_run), \
+    with patch("agent_augury.cli._run_repl", fake_run), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
          patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
@@ -206,12 +206,12 @@ def test_wizard_flow_quiet_flag_passed(tmp_path):
 
 
 def test_wizard_flow_quiet_false_by_default(tmp_path):
-    """Wizard flow without --quiet must pass quiet=False to _run (T2)."""
+    """Wizard flow without --quiet must pass quiet=False to _run_repl (T2)."""
     from agent_augury.cli import _run_wizard_flow
 
     out_path = tmp_path / "wizard_out.yaml"
     calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run", fake_run), \
+    with patch("agent_augury.cli._run_repl", fake_run), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
          patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \

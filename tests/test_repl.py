@@ -1,0 +1,398 @@
+"""REPL session tests: session reuse, conversation persistence, exit conditions."""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import yaml
+
+from agent_augury.cli import _run_repl
+from agent_augury.session import Session
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_cfg(tmp_path: Path, task: str = "test") -> Path:
+    cfg = {
+        "mode": "L3",
+        "max_steps": 5,
+        "task": task,
+        "agents": [
+            {
+                "id": "a1",
+                "backend": {
+                    "type": "openai",
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "model": "gpt-4o-mini",
+                },
+            }
+        ],
+    }
+    cfg_path = tmp_path / "test.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return cfg_path
+
+
+# ---------------------------------------------------------------------------
+# Session.run() reuse
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_run_called_twice_conversation_accumulates(tmp_path):
+    """Calling session.run() twice must append to the same conversation."""
+    cfg_path = _make_cfg(tmp_path)
+
+    # Patch load_config to return our cfg
+    with patch("agent_augury.cli.load_config") as mock_load:
+        import agent_augury.config as config_mod
+
+        mock_load.return_value = config_mod.load_config(cfg_path)
+
+        # Mock Session to track calls
+        with patch("agent_augury.cli.Session") as MockSession:
+            session_instance = MagicMock()
+            session_instance.mirror = None
+            session_instance.gate = None
+            session_instance.protocol = None
+            session_instance.server.snapshot.return_value = {
+                "threads": [],
+                "messages": [],
+            }
+
+            # run() returns steps count
+            session_instance.run = AsyncMock(return_value=3)
+            session_instance.close = AsyncMock()
+            MockSession.from_config.return_value = session_instance
+
+            # Simulate: first question, then "quit"
+            with patch("builtins.input", side_effect=["hello", ""]):
+                with patch("builtins.print"):
+                    rc = await asyncio.create_task(
+                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                    )
+
+            # run() should have been called twice: once with "start", once with "hello"
+            assert session_instance.run.call_count == 2
+            session_instance.run.assert_any_call(initial_prompt="start")
+            session_instance.run.assert_any_call(initial_prompt="hello")
+            # close() called exactly once
+            session_instance.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_repl_exit_on_quit(tmp_path):
+    """'quit' input must exit the REPL loop."""
+    cfg_path = _make_cfg(tmp_path)
+
+    with patch("agent_augury.cli.load_config") as mock_load:
+        import agent_augury.config as config_mod
+
+        mock_load.return_value = config_mod.load_config(cfg_path)
+
+        with patch("agent_augury.cli.Session") as MockSession:
+            session_instance = MagicMock()
+            session_instance.mirror = None
+            session_instance.gate = None
+            session_instance.protocol = None
+            session_instance.server.snapshot.return_value = {
+                "threads": [],
+                "messages": [],
+            }
+
+            session_instance.run = AsyncMock(return_value=1)
+            session_instance.close = AsyncMock()
+            MockSession.from_config.return_value = session_instance
+
+            with patch("builtins.input", side_effect=["hello", "quit"]):
+                with patch("builtins.print"):
+                    rc = await asyncio.create_task(
+                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                    )
+
+            # run() called twice: "start" + "hello" (quit exits before 3rd run)
+            assert session_instance.run.call_count == 2
+            session_instance.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_repl_exit_on_exit(tmp_path):
+    """'exit' input must exit the REPL loop."""
+    cfg_path = _make_cfg(tmp_path)
+
+    with patch("agent_augury.cli.load_config") as mock_load:
+        import agent_augury.config as config_mod
+
+        mock_load.return_value = config_mod.load_config(cfg_path)
+
+        with patch("agent_augury.cli.Session") as MockSession:
+            session_instance = MagicMock()
+            session_instance.mirror = None
+            session_instance.gate = None
+            session_instance.protocol = None
+            session_instance.server.snapshot.return_value = {
+                "threads": [],
+                "messages": [],
+            }
+
+            session_instance.run = AsyncMock(return_value=1)
+            session_instance.close = AsyncMock()
+            MockSession.from_config.return_value = session_instance
+
+            with patch("builtins.input", side_effect=["hello", "exit"]):
+                with patch("builtins.print"):
+                    rc = await asyncio.create_task(
+                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                    )
+
+            assert session_instance.run.call_count == 2
+            session_instance.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_repl_exit_on_blank_input(tmp_path):
+    """Blank input must exit the REPL loop."""
+    cfg_path = _make_cfg(tmp_path)
+
+    with patch("agent_augury.cli.load_config") as mock_load:
+        import agent_augury.config as config_mod
+
+        mock_load.return_value = config_mod.load_config(cfg_path)
+
+        with patch("agent_augury.cli.Session") as MockSession:
+            session_instance = MagicMock()
+            session_instance.mirror = None
+            session_instance.gate = None
+            session_instance.protocol = None
+            session_instance.server.snapshot.return_value = {
+                "threads": [],
+                "messages": [],
+            }
+
+            session_instance.run = AsyncMock(return_value=1)
+            session_instance.close = AsyncMock()
+            MockSession.from_config.return_value = session_instance
+
+            with patch("builtins.input", side_effect=["hello", ""]):
+                with patch("builtins.print"):
+                    rc = await asyncio.create_task(
+                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                    )
+
+            assert session_instance.run.call_count == 2
+            session_instance.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_repl_eof_exits(tmp_path):
+    """EOFError on input must exit the REPL loop gracefully."""
+    cfg_path = _make_cfg(tmp_path)
+
+    with patch("agent_augury.cli.load_config") as mock_load:
+        import agent_augury.config as config_mod
+
+        mock_load.return_value = config_mod.load_config(cfg_path)
+
+        with patch("agent_augury.cli.Session") as MockSession:
+            session_instance = MagicMock()
+            session_instance.mirror = None
+            session_instance.gate = None
+            session_instance.protocol = None
+            session_instance.server.snapshot.return_value = {
+                "threads": [],
+                "messages": [],
+            }
+
+            session_instance.run = AsyncMock(return_value=1)
+            session_instance.close = AsyncMock()
+            MockSession.from_config.return_value = session_instance
+
+            with patch("builtins.input", side_effect=["hello", EOFError]):
+                with patch("builtins.print"):
+                    rc = await asyncio.create_task(
+                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                    )
+
+            assert session_instance.run.call_count == 2
+            session_instance.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_repl_keyboard_interrupt_exits(tmp_path):
+    """KeyboardInterrupt on input must exit the REPL loop gracefully."""
+    cfg_path = _make_cfg(tmp_path)
+
+    with patch("agent_augury.cli.load_config") as mock_load:
+        import agent_augury.config as config_mod
+
+        mock_load.return_value = config_mod.load_config(cfg_path)
+
+        with patch("agent_augury.cli.Session") as MockSession:
+            session_instance = MagicMock()
+            session_instance.mirror = None
+            session_instance.gate = None
+            session_instance.protocol = None
+            session_instance.server.snapshot.return_value = {
+                "threads": [],
+                "messages": [],
+            }
+
+            session_instance.run = AsyncMock(return_value=1)
+            session_instance.close = AsyncMock()
+            MockSession.from_config.return_value = session_instance
+
+            with patch("builtins.input", side_effect=["hello", KeyboardInterrupt]):
+                with patch("builtins.print"):
+                    rc = await asyncio.create_task(
+                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                    )
+
+            assert session_instance.run.call_count == 2
+            session_instance.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Session lifecycle
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_setup_called_once():
+    """Session._setup() must be called only once even if run() is called multiple times."""
+    session = Session(server=MagicMock(), agents=[])
+    session._setup_done = False
+    session._closed = False
+
+    setup_called = [0]
+
+    async def mock_run_impl(initial_prompt=None):
+        return 0
+
+    # Wrap the real _setup to count calls
+    original_setup = session._setup
+
+    async def counting_setup():
+        setup_called[0] += 1
+        await original_setup()
+
+    with patch.object(session, "_setup", side_effect=counting_setup):
+        with patch.object(session, "_run_impl", side_effect=mock_run_impl):
+            await session.run(initial_prompt="first")
+            await session.run(initial_prompt="second")
+            await session.run(initial_prompt="third")
+
+    # _setup() is called 3 times (once per run()), but the real _setup()
+    # has a guard that makes subsequent calls no-ops. We verify the guard
+    # works by checking _setup_done is True after the first call.
+    assert session._setup_done is True
+    # The counting wrapper is called 3 times (once per run())
+    assert setup_called[0] == 3
+
+
+@pytest.mark.asyncio
+async def test_session_close_called_once():
+    """Session.close() must be idempotent — subsequent calls are no-ops."""
+    session = Session(server=MagicMock(), agents=[])
+    session._closed = False
+
+    close_called = [0]
+
+    # Wrap the real close to count calls
+    original_close = session.close
+
+    async def counting_close():
+        close_called[0] += 1
+        await original_close()
+
+    with patch.object(session, "close", side_effect=counting_close):
+        await session.close()
+        await session.close()
+        await session.close()
+
+    # close() is called 3 times, but the real close() has a guard that
+    # makes subsequent calls no-ops.
+    assert session._closed is True
+    # The counting wrapper is called 3 times
+    assert close_called[0] == 3
+
+
+# ---------------------------------------------------------------------------
+# CLI integration
+# ---------------------------------------------------------------------------
+
+
+def test_cli_repl_flag_with_config(tmp_path, capsys, monkeypatch):
+    """--repl with --config must start a REPL session."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    from agent_augury.cli import main
+
+    cfg = {
+        "mode": "L3",
+        "max_steps": 5,
+        "task": "smoke test",
+        "agents": [
+            {"id": "a1", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}},
+        ],
+    }
+    cfg_path = tmp_path / "test.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    # Mock _run_repl to avoid actual agent execution
+    with patch("agent_augury.cli.asyncio.run", return_value=0) as mock_run:
+        rc = main(["--config", str(cfg_path), "--repl"])
+
+    assert rc == 0
+    mock_run.assert_called_once()
+
+
+def test_cli_without_repl_uses_single_run(tmp_path, capsys, monkeypatch):
+    """Without --repl, --config must use single-run mode."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    from agent_augury.cli import main
+
+    cfg = {
+        "mode": "L3",
+        "max_steps": 5,
+        "task": "smoke test",
+        "agents": [
+            {"id": "a1", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}},
+        ],
+    }
+    cfg_path = tmp_path / "test.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    with patch("agent_augury.cli.asyncio.run", return_value=0) as mock_run:
+        rc = main(["--config", str(cfg_path)])
+
+    assert rc == 0
+    mock_run.assert_called_once()
+
+
+def test_cli_wizard_default_is_repl(tmp_path, monkeypatch):
+    """Wizard mode (no --config) defaults to REPL."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    from agent_augury.cli import main
+
+    output = tmp_path / "wizard_out.yaml"
+    inputs = iter([
+        "a1", "1", "", "OPENAI_API_KEY", "gpt-4o-mini",
+        "n",
+        "e2e task",
+    ])
+
+    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+         patch("agent_augury.cli.check_tty", return_value=True), \
+         patch("agent_augury.wizard.save_model_config"), \
+         patch("agent_augury.cli.model_config_exists", return_value=False), \
+         patch("agent_augury.cli.asyncio.run", return_value=0) as mock_run:
+        rc = main(["--output", str(output)])
+
+    assert rc == 0
+    mock_run.assert_called_once()

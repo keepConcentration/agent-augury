@@ -396,11 +396,15 @@ class TestSessionBotManagerIntegration:
         await session.run()
 
         session.bot_manager.start_all.assert_awaited_once()
-        session.bot_manager.stop_all.assert_awaited_once()
+        # stop_all is NOT called by run() anymore — it's called by close()
+        session.bot_manager.stop_all.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_session_run_calls_stop_all_on_exception(self, tmp_path, monkeypatch):
-        """run() 중 예외 발생해도 stop_all()이 호출되는지 검증."""
+        """run() 중 예외 발생해도 start_all은 호출되었는지 검증.
+
+        새 라이프사이클에서는 stop_all()이 close()에서 호출됩니다.
+        """
         import yaml
         from unittest.mock import AsyncMock, MagicMock, patch
         from agent_augury.config import load_config
@@ -447,9 +451,9 @@ class TestSessionBotManagerIntegration:
         with pytest.raises(RuntimeError, match="simulated failure"):
             await session.run()
 
-        # start_all was called, stop_all was called despite exception
+        # start_all was called, stop_all was NOT called by run()
         session.bot_manager.start_all.assert_awaited_once()
-        session.bot_manager.stop_all.assert_awaited_once()
+        session.bot_manager.stop_all.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_session_run_no_bots_is_safe(self, tmp_path, monkeypatch):

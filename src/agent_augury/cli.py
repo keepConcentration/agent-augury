@@ -11,6 +11,8 @@ Additional flags:
     the full wizard from scratch, then save new settings.
   - ``agent-augury --quiet`` — suppress broadcast event output (only show
     final summary).
+  - ``agent-augury --repl`` — start a REPL session that keeps the conversation
+    context across multiple questions (session reuse).
 """
 
 from __future__ import annotations
@@ -182,6 +184,70 @@ def _log_tool_event(event: dict[str, Any]) -> None:
             print(f"{icon} {agent_id}: {tool}", flush=True)
 
 
+async def _run_repl(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False) -> int:
+    """Run a REPL session: keep the conversation context across multiple questions.
+
+    The session is created once, then ``session.run()`` is called repeatedly
+    in a loop. The user's previous conversation is preserved, so they can
+    continue where they left off. quit/exit/blank input exits the loop.
+    """
+    cfg = load_config(cfg_path, allow_fake=allow_fake)
+
+    def on_step(agent_id: str, result: StepResult) -> None:
+        if quiet:
+            return
+        _log_step(agent_id, result)
+
+    def on_tool_event(event: dict[str, Any]) -> None:
+        if quiet:
+            return
+        _log_tool_event(event)
+
+    session = Session.from_config(cfg, on_step=on_step, on_tool_event=on_tool_event)
+
+    try:
+        # First run with the initial prompt
+        steps = await session.run(initial_prompt=initial_prompt)
+
+        if session.mirror is not None:
+            await session.mirror.flush()
+
+        gate_state = "OPEN" if (session.gate and session.gate.is_open) else ("CLOSED" if session.gate else "n/a")
+        snap = session.server.snapshot()
+        phase_state = session.protocol.phase if session.protocol is not None else "n/a"
+        print(
+            f"--- session finished: steps={steps} threads={len(snap['threads'])} "
+            f"messages={len(snap['messages'])} gate={gate_state} phase={phase_state}"
+        )
+
+        # REPL loop
+        while True:
+            print("\n--- Next question? (enter=quit) ---")
+            try:
+                question = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not question or question.lower() in ("quit", "exit"):
+                break
+
+            steps = await session.run(initial_prompt=question)
+
+            if session.mirror is not None:
+                await session.mirror.flush()
+
+            gate_state = "OPEN" if (session.gate and session.gate.is_open) else ("CLOSED" if session.gate else "n/a")
+            snap = session.server.snapshot()
+            phase_state = session.protocol.phase if session.protocol is not None else "n/a"
+            print(
+                f"--- session finished: steps={steps} threads={len(snap['threads'])} "
+                f"messages={len(snap['messages'])} gate={gate_state} phase={phase_state}"
+            )
+
+        return 0
+    finally:
+        await session.close()
+
+
 async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False) -> int:
     cfg = load_config(cfg_path, allow_fake=allow_fake)
 
@@ -226,6 +292,7 @@ def _run_wizard_flow(
     output_path: Path | None = None,
     force_reconfigure: bool = False,
     quiet: bool = False,
+    repl: bool = True,
 ) -> int:
     """Run the interactive wizard, save the YAML, then start a session."""
     if not check_tty():
@@ -282,7 +349,10 @@ def _run_wizard_flow(
     if not task:
         task = "Multi-agent collaboration"
 
-    return asyncio.run(_run(str(output_path), initial_prompt=task, quiet=quiet))
+    if repl:
+        return asyncio.run(_run_repl(str(output_path), initial_prompt=task, quiet=quiet))
+    else:
+        return asyncio.run(_run(str(output_path), initial_prompt=task, quiet=quiet))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -316,6 +386,12 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="allow type:fake backends in config (offline demo/benchmark)",
     )
+    parser.add_argument(
+        "--repl",
+        action="store_true",
+        default=False,
+        help="start a REPL session that keeps conversation context across multiple questions",
+    )
     args = parser.parse_args(argv)
 
     # Validate flag combinations before anything else.
@@ -332,6 +408,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         try:
+            if args.repl:
+                return asyncio.run(_run_repl(args.config, quiet=args.quiet, allow_fake=args.demo))
             return asyncio.run(_run(args.config, quiet=args.quiet, allow_fake=args.demo))
         except Exception as exc:  # noqa: BLE001 — CLI boundary
             print(f"error: {exc}", file=sys.stderr)
@@ -340,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     # Mode 2: interactive wizard.
     output_path = Path(args.output) if args.output else None
     try:
-        return _run_wizard_flow(output_path, force_reconfigure=args.reconfigure, quiet=args.quiet)
+        return _run_wizard_flow(output_path, force_reconfigure=args.reconfigure, quiet=args.quiet, repl=args.repl)
     except Exception as exc:  # noqa: BLE001 — CLI boundary
         print(f"error: {exc}", file=sys.stderr)
         return 1

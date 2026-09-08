@@ -78,6 +78,8 @@ class Session:
         # Unified output queue for all display events (tools, steps, read_resource)
         self._output_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._output_task: asyncio.Task | None = None
+        self._setup_done: bool = False
+        self._closed: bool = False
 
     # -- assembly ------------------------------------------------------------
 
@@ -176,50 +178,21 @@ class Session:
 
     # -- lifecycle -----------------------------------------------------------
 
-    async def run(self, initial_prompt: str | None = None) -> int:
-        """Parallel steps until every agent finishes or max_steps is hit.
+    async def _setup(self) -> None:
+        """One-time initialization: start bots, bind gates, start protocol.
 
-        Each agent runs as an independent ``asyncio.Task``. All agents share
-        a global step budget (``max_steps``); the sum of every agent's steps
-        is capped. An agent finishes when it produces neither text nor tool
-        calls and has no pending inbox messages — same rule as the prior
-        round-robin loop.
-
-        Output events (step summaries, tool calls) are pushed to the unified
-        ``_output_queue``; the single consumer task renders them in arrival
-        order, so tool logs stream in the order they actually fire.
-
-        v0.3: bots are started (Discord login) at the beginning of the session
-        and stopped (connection cleanup) at the end, in the same asyncio loop.
+        Safe to call multiple times — subsequent calls are no-ops.
         """
+        if self._setup_done:
+            return
+        self._setup_done = True
+
         # Start unified output consumer task
         self._output_task = asyncio.create_task(self._output_consumer())
 
         # v0.3: start bots (login to Discord) — same asyncio loop
         if self.bot_manager:
             await self.bot_manager.start_all()
-
-        try:
-            return await self._run_impl(initial_prompt)
-        finally:
-            # v0.3: stop bots (close Discord connections, prevent leaks)
-            if self.bot_manager:
-                await self.bot_manager.stop_all()
-
-    async def _run_impl(self, initial_prompt: str | None = None) -> int:
-        """Core run logic (separated so start/stop wraps it cleanly)."""
-        if initial_prompt:
-            self.agents[0].conversation.append({"role": "user", "content": initial_prompt})
-        elif self.task:
-            self.agents[0].conversation.append({"role": "user", "content": self.task})
-
-        # v0.3: detect user language from initial prompt → inject into all agents
-        from .agent.system_prompt import detect_language
-        user_text = initial_prompt or self.task or ""
-        detected_lang = detect_language(user_text)
-        if detected_lang:
-            for agent in self.agents:
-                agent.language = detected_lang
 
         # gate-aware: inject gate state into agents
         if self.gate:
@@ -247,6 +220,44 @@ class Session:
             for agent in self.agents:
                 agent.current_phase = self.protocol.phase
                 _inject_protocol_gate_state(agent, self.protocol)
+
+    async def run(self, initial_prompt: str | None = None) -> int:
+        """Parallel steps until every agent finishes or max_steps is hit.
+
+        Each agent runs as an independent ``asyncio.Task``. All agents share
+        a global step budget (``max_steps``); the sum of every agent's steps
+        is capped. An agent finishes when it produces neither text nor tool
+        calls and has no pending inbox messages — same rule as the prior
+        round-robin loop.
+
+        Output events (step summaries, tool calls) are pushed to the unified
+        ``_output_queue``; the single consumer task renders them in arrival
+        order, so tool logs stream in the order they actually fire.
+
+        v0.3: bots are started (Discord login) at the beginning of the session
+        and stopped (connection cleanup) at the end, in the same asyncio loop.
+
+        Reusable: call run() multiple times to continue the conversation.
+        The first call initializes bots/gates/protocol; subsequent calls
+        reuse them. Call close() when done to release resources.
+        """
+        await self._setup()
+        return await self._run_impl(initial_prompt)
+
+    async def _run_impl(self, initial_prompt: str | None = None) -> int:
+        """Core run logic (separated so start/stop wraps it cleanly)."""
+        if initial_prompt:
+            self.agents[0].conversation.append({"role": "user", "content": initial_prompt})
+        elif self.task:
+            self.agents[0].conversation.append({"role": "user", "content": self.task})
+
+        # v0.3: detect user language from initial prompt → inject into all agents
+        from .agent.system_prompt import detect_language
+        user_text = initial_prompt or self.task or ""
+        detected_lang = detect_language(user_text)
+        if detected_lang:
+            for agent in self.agents:
+                agent.language = detected_lang
 
         # Global step counter. asyncio is single-threaded, so += is atomic;
         # the cap is checked at the top of each agent loop iteration.
@@ -313,12 +324,33 @@ class Session:
         tasks = [asyncio.create_task(run_agent(agent)) for agent in self.agents]
         await asyncio.gather(*tasks)
 
+        return total_steps
+
+    async def close(self) -> None:
+        """Release resources: stop bots, close mirror, close backends.
+
+        Call when the session is no longer needed. Safe to call multiple
+        times — subsequent calls are no-ops.
+        """
+        if self._closed:
+            return
+        self._closed = True
+
         # Shutdown unified output consumer.
         await self._output_queue.put(None)
         if self._output_task:
             await self._output_task
 
-        return total_steps
+        # v0.3: stop bots (close Discord connections, prevent leaks)
+        if self.bot_manager:
+            await self.bot_manager.stop_all()
+
+        if self.mirror is not None:
+            await self.mirror.aclose()
+        for agent in self.agents:
+            aclose = getattr(agent.backend, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     def _on_server_event(self, event: dict[str, Any]) -> None:
         """Capture server events and queue them for unified output.

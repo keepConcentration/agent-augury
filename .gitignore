@@ -17,6 +17,7 @@ htmlcov/
 *.log
 
 # Root experiment/wizard scratch configs (not part of the runtime)
+/agent-augury-session.yaml
 /10
 /e2e task
 /L3

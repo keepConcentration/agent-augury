@@ -25,7 +25,7 @@ awareness*.
 
 ## Status
 
-v0.2 — P1~P5 full collaboration protocol.
+v0.3 — OAuth provider-level authentication, unlimited steps by default.
 
 - 3+ agents (A/B/C) + internal message server (in-process asyncio, memory state)
 - Receive model: send → inbox push → `step()` auto-drain (single consumer)
@@ -37,6 +37,10 @@ v0.2 — P1~P5 full collaboration protocol.
   LLM generates PROPOSE/APPROVE messages autonomously (secrets via `.env` only).
 - Discord observation mirror: read-only webhook flush; core never reads back.
 - Phase transition hooks: explicit `PhaseManager` for v0.2 P1~P5 expansion.
+- **OAuth provider-level auth**: multiple agents sharing `nous_oauth` authenticate
+  only once — the token is reused across all backends for the same provider.
+- **Unlimited steps by default**: `max_steps=0` means no cap; set a positive
+  integer to limit total steps across all agents.
 
 ## Fake demo vs. real collaboration
 

@@ -253,7 +253,7 @@ def _run_wizard_flow(
             # Build config from saved model settings
             cfg = {
                 "mode": "L3",
-                "max_steps": existing.get("max_steps", 20),
+                "max_steps": existing.get("max_steps", 0),
                 "agents": existing["agents"],
             }
             # Use default output path

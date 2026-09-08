@@ -34,6 +34,7 @@ from .agent.loop import AgentLoop
 from .backends_factory import build_backend
 from .channel.discord_bot import BotManager, DiscordBotAdapter, _format_event
 from .channel.discord_mirror import mirror_from_config
+from .auth.token_store import TokenStore
 from .protocol.approval import ConsensusGate
 from .protocol.collaboration import CollaborationProtocol
 from .protocol.phases import (
@@ -59,7 +60,7 @@ class Session:
         agents: list[AgentLoop],
         *,
         task: str | None = None,
-        max_steps: int = 20,
+        max_steps: int = 0,
         bot_manager: BotManager | None = None,
     ) -> None:
         self.server = server
@@ -87,16 +88,19 @@ class Session:
         on_step=None,
         on_tool_event=None,
         allowed_roots: list[str] | None = None,
+        token_store: TokenStore | None = None,
     ) -> "Session":
         server = MessageServer()
         agents: list[AgentLoop] = []
+        # Shared token store so all backends use the same OAuth tokens
+        shared_token_store = token_store or TokenStore()
         for spec in cfg["agents"]:
             server.register_agent(spec["id"])
             agents.append(
                 AgentLoop(
                     agent_id=spec["id"],
                     server=server,
-                    backend=build_backend(spec["backend"]),
+                    backend=build_backend(spec["backend"], token_store=shared_token_store),
                     allowed_roots=allowed_roots,
                     on_tool_call=lambda agent_id, tool, args, result, _server=server: (
                         _server._emit_event({
@@ -129,7 +133,7 @@ class Session:
             server=server,
             agents=agents,
             task=cfg.get("task"),
-            max_steps=int(cfg.get("max_steps", 20)),
+            max_steps=int(cfg.get("max_steps", 0)),
             bot_manager=bot_manager,
         )
         session.on_step = on_step
@@ -246,7 +250,7 @@ class Session:
             nonlocal total_steps
             while True:
                 # Global budget gate — checked before every step.
-                if total_steps >= self.max_steps:
+                if self.max_steps and total_steps >= self.max_steps:
                     break
 
                 # Inject current gate state before each step.

@@ -41,7 +41,7 @@ def _api_key_from_env(spec: dict[str, Any]) -> str:
     return value
 
 
-def build_backend(spec: dict[str, Any]) -> ModelBackend:
+def build_backend(spec: dict[str, Any], token_store: TokenStore | None = None) -> ModelBackend:
     btype = spec.get("type")
     if btype == "fake":
         return FakeModelBackend([_completion_from_spec(e) for e in spec.get("script", [])])
@@ -64,11 +64,29 @@ def build_backend(spec: dict[str, Any]) -> ModelBackend:
         return NousPortalOAuthBackend(
             model=spec["model"],
             base_url=spec.get("base_url", "https://inference-api.nousresearch.com/v1"),
+            token_store=token_store,
         )
     raise ValueError(f"unknown backend type: {btype!r}")
 
 
-# -- Model listing helpers (synchronous, for wizard) -------------------------
+# -- Auth lock registry (provider-level serialization) ---------------------
+
+
+_AUTH_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _get_auth_lock(provider_id: str) -> asyncio.Lock:
+    """Return (or create) the per-provider authentication lock.
+
+    Ensures that when multiple backends share the same provider, only one
+    runs the device code flow at a time — others wait and then reuse the
+    resulting token from the shared TokenStore.
+    """
+    lock = _AUTH_LOCKS.get(provider_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _AUTH_LOCKS[provider_id] = lock
+    return lock
 
 
 def _fetch_models_sync(base_url: str, api_key: str) -> list[str] | None:

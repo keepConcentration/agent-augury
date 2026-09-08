@@ -50,7 +50,20 @@ class NousPortalOAuthBackend(OAuthModelBackend):
         self._token: Optional[TokenResponse] = None
 
     async def get_access_token(self) -> str:
-        """Resolve a valid access token, refreshing or re-authing as needed."""
+        """Resolve a valid access token, refreshing or re-authing as needed.
+
+        Per-provider lock ensures that concurrent calls from multiple backends
+        sharing the same provider serialize: the first call authenticates,
+        subsequent calls wait and then reuse the stored token.
+        """
+        from ..backends_factory import _get_auth_lock
+
+        lock = _get_auth_lock(self._config.id)
+        async with lock:
+            return await self._get_access_token_unlocked()
+
+    async def _get_access_token_unlocked(self) -> str:
+        """Internal: resolve token (caller must hold the per-provider lock)."""
         if self._token and not is_token_expiring(self._token.expires_at):
             return self._token.access_token
 
@@ -87,7 +100,6 @@ class NousPortalOAuthBackend(OAuthModelBackend):
     async def _authenticate(self) -> str:
         """Run full device code flow."""
         flow = DeviceCodeFlow(self._config, http_client_factory=self._make_sync_client)
-        import asyncio
         token = await asyncio.to_thread(
             lambda: flow.authenticate(on_user_code=self._on_user_code, open_browser=True)
         )

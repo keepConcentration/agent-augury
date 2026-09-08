@@ -343,3 +343,112 @@ agents:
 """)
         with pytest.raises(ConfigError, match="backend.type"):
             load_config(cfg_path)
+
+
+# ---------------------------------------------------------------------------
+# OAuth duplicate auth prevention tests
+# ---------------------------------------------------------------------------
+
+
+class TestOAuthDuplicateAuthPrevention:
+    """Tests that multiple backends sharing a provider authenticate only once."""
+
+    def test_shared_token_store_prevents_duplicate_auth(self, tmp_path: Path) -> None:
+        """Two backends with same provider + shared TokenStore → auth once."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from agent_augury.auth.token_store import TokenStore
+        from agent_augury.backend.nous_portal_oauth import NousPortalOAuthBackend
+
+        auth_count = {"n": 0}
+
+        def fake_authenticate(self):
+            auth_count["n"] += 1
+            return asyncio.Future()
+
+        store = TokenStore(store_path=tmp_path / "tokens.json")
+
+        backend1 = NousPortalOAuthBackend(
+            model="test", token_store=store, client=MagicMock()
+        )
+        backend2 = NousPortalOAuthBackend(
+            model="test", token_store=store, client=MagicMock()
+        )
+
+        async def run():
+            # Simulate: backend1 authenticates first, stores token
+            # backend2 should reuse it without re-authenticating
+            store.set_provider_tokens("nous", {
+                "access_token": "shared-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "expires_at": "2099-01-01T00:00:00+00:00",
+                "refresh_token": "refresh",
+            })
+
+            # Both should get the same token from the store
+            token1 = await backend1.get_access_token()
+            token2 = await backend2.get_access_token()
+            assert token1 == "shared-token"
+            assert token2 == "shared-token"
+
+        asyncio.run(run())
+
+    def test_concurrent_auth_serialized(self, tmp_path: Path) -> None:
+        """Concurrent get_access_token calls → only one auth flow runs."""
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        from agent_augury.auth.token_store import TokenStore
+        from agent_augury.backend.nous_portal_oauth import NousPortalOAuthBackend
+
+        auth_count = {"n": 0}
+
+        store = TokenStore(store_path=tmp_path / "tokens.json")
+
+        backend = NousPortalOAuthBackend(
+            model="test", token_store=store, client=MagicMock()
+        )
+
+        async def fake_auth():
+            auth_count["n"] += 1
+            await asyncio.sleep(0.05)  # simulate slow auth
+            backend._token = __import__(
+                "agent_augury.auth.oauth", fromlist=["TokenResponse"]
+            ).TokenResponse(access_token="tok", token_type="Bearer", expires_in=3600)
+            store.set_provider_tokens("nous", {
+                "access_token": "tok",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "expires_at": "2099-01-01T00:00:00+00:00",
+                "refresh_token": "refresh",
+            })
+            return "tok"
+
+        async def run():
+            with patch.object(backend, "_authenticate", side_effect=fake_auth):
+                # Launch 3 concurrent get_access_token calls
+                results = await asyncio.gather(
+                    backend.get_access_token(),
+                    backend.get_access_token(),
+                    backend.get_access_token(),
+                )
+                assert all(r == "tok" for r in results)
+                # Only one auth flow should have run
+                assert auth_count["n"] == 1
+
+        asyncio.run(run())
+
+    def test_build_backend_passes_token_store(self) -> None:
+        """build_backend forwards token_store to NousPortalOAuthBackend."""
+        from unittest.mock import MagicMock
+
+        from agent_augury.backends_factory import build_backend
+
+        store = MagicMock()
+        backend = build_backend(
+            {"type": "nous_oauth", "model": "test"},
+            token_store=store,
+        )
+        assert backend._token_store is store

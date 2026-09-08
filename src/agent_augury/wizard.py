@@ -429,7 +429,7 @@ def _build_agent(
 def _collect_model_settings(force_reconfigure: bool = False) -> tuple[int, list[dict[str, Any]]]:
     """Phase 1: collect max_steps and agent/backend settings."""
     print("\n--- Model Configuration ---")
-    max_steps = _input_int("Max steps", 20)
+    max_steps = _input_int("Max steps (0=unlimited)", 0)
 
     # Agents.
     agents: list[dict[str, Any]] = []
@@ -474,7 +474,7 @@ def run_wizard(
 
     if existing_model_config is not None:
         # Reuse saved model settings — skip directly to config generation.
-        max_steps = existing_model_config.get("max_steps", 20)
+        max_steps = existing_model_config.get("max_steps", 0)
         agents = existing_model_config["agents"]
         print(
             f"\nUsing saved model config: max_steps={max_steps}, "

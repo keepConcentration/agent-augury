@@ -93,5 +93,5 @@ def load_config(path: str | Path) -> dict[str, Any]:
 
     data["mode"] = "L3"
     data.setdefault("task", None)
-    data.setdefault("max_steps", 20)
+    data.setdefault("max_steps", 0)
     return data

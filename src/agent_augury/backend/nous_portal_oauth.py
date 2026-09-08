@@ -99,6 +99,8 @@ class NousPortalOAuthBackend(OAuthModelBackend):
 
     async def _authenticate(self) -> str:
         """Run full device code flow."""
+        import asyncio
+
         flow = DeviceCodeFlow(self._config, http_client_factory=self._make_sync_client)
         token = await asyncio.to_thread(
             lambda: flow.authenticate(on_user_code=self._on_user_code, open_browser=True)

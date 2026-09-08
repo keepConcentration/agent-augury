@@ -213,6 +213,14 @@ class Session:
         elif self.task:
             self.agents[0].conversation.append({"role": "user", "content": self.task})
 
+        # v0.3: detect user language from initial prompt → inject into all agents
+        from .agent.system_prompt import detect_language
+        user_text = initial_prompt or self.task or ""
+        detected_lang = detect_language(user_text)
+        if detected_lang:
+            for agent in self.agents:
+                agent.language = detected_lang
+
         # gate-aware: inject gate state into agents
         if self.gate:
             # Pre-create the gate thread and bind it

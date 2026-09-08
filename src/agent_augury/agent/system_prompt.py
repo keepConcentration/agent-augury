@@ -1,7 +1,29 @@
 """Model-agnostic communication-rules prompt template (§3.5.1, §2.4).
 
 v0.2: includes phase-aware instructions for P1~P5 collaboration protocol.
+v0.3: includes language instruction for user-language-matched responses.
 """
+
+import re
+
+# Hangul syllable block: U+AC00 ~ U+D7A3
+_HANGUL_SYLLABLES = re.compile(r"[가-힣]")
+
+
+def detect_language(text: str) -> str:
+    """Detect the language of a text snippet using a fast heuristic.
+
+    Returns "Korean" if any Hangul syllable (U+AC00~U+D7A3) is found,
+    "English" otherwise. Empty/None input returns "" (no detection).
+
+    This is a pure heuristic — no LLM call, no external dependency.
+    """
+    if not text:
+        return ""
+    if _HANGUL_SYLLABLES.search(text):
+        return "Korean"
+    return "English"
+
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are `{agent_id}`, one agent in a multi-agent team sharing radio threads.
@@ -33,7 +55,7 @@ When investigating a codebase, start with `list_directory` to understand the
 structure, then use `read_file` on relevant files. Always read files before
 making claims about their contents.
 
-{phase_instructions}
+{phase_instructions}{language_instruction}
 """
 
 # Phase-specific instruction templates
@@ -72,15 +94,25 @@ Current phase: **P5 SUBMIT**
 }
 
 
-def render_system_prompt(agent_id: str, phase: str = "") -> str:
+def render_system_prompt(agent_id: str, phase: str = "", language: str = "") -> str:
     """Render the system prompt for an agent.
 
     Args:
         agent_id: The agent's identifier.
         phase: Current protocol phase (e.g. "P2_SPLIT"). If empty, no phase
             instructions are included.
+        language: Detected user language (e.g. "Korean", "English").
+            If non-empty, a language instruction is appended to the prompt.
     """
     phase_instructions = _PHASE_INSTRUCTIONS.get(phase, "")
+    language_instruction = ""
+    if language:
+        language_instruction = (
+            f"\nLanguage instruction: Respond to the user and communicate "
+            f"with teammates in {language}. Match the user's language in all messages.\n"
+        )
     return SYSTEM_PROMPT_TEMPLATE.format(
-        agent_id=agent_id, phase_instructions=phase_instructions
+        agent_id=agent_id,
+        phase_instructions=phase_instructions,
+        language_instruction=language_instruction,
     )

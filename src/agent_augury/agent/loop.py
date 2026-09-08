@@ -86,6 +86,8 @@ class AgentLoop:
         self.gate_thread_id: str | None = None
         # v0.2: current protocol phase (injected by Session each step)
         self.current_phase: str = ""
+        # v0.3: user language (injected by Session at start, propagated to all agents)
+        self.language: str = ""
         # Real-time tool event callback (fires immediately on each tool execution)
         self.on_tool_call = on_tool_call
 
@@ -105,12 +107,12 @@ class AgentLoop:
         return specs
 
     def _update_phase_in_prompt(self) -> None:
-        """Update the system prompt to reflect the current phase."""
+        """Update the system prompt to reflect the current phase and language."""
         if self._custom_system_prompt:
             return  # user-supplied prompt — don't overwrite
         if self.conversation and self.conversation[0]["role"] == "system":
             self.conversation[0]["content"] = render_system_prompt(
-                self.agent_id, self.current_phase
+                self.agent_id, self.current_phase, self.language
             )
 
     async def step(self) -> StepResult:

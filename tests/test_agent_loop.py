@@ -350,3 +350,55 @@ async def test_toolbox_write_file_respects_allowed_roots(tmp_path):
     payload = json.loads(result)
     assert "error" in payload
     assert "outside allowed roots" in payload["error"]
+
+
+# ---------------------------------------------------------------------------
+# Language detection + system prompt injection (v0.3)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_language_korean():
+    from agent_augury.agent.system_prompt import detect_language
+    assert detect_language("안녕하세요") == "Korean"
+    assert detect_language("Hello 세계") == "Korean"  # mixed → Korean wins
+
+
+def test_detect_language_english():
+    from agent_augury.agent.system_prompt import detect_language
+    assert detect_language("Hello world") == "English"
+    assert detect_language("12345 !@#$%") == "English"  # no Hangul → English
+
+
+def test_detect_language_empty():
+    from agent_augury.agent.system_prompt import detect_language
+    assert detect_language("") == ""
+    assert detect_language(None) == ""
+
+
+def test_render_system_prompt_with_language_korean():
+    from agent_augury.agent.system_prompt import render_system_prompt
+    prompt = render_system_prompt("agent-1", language="Korean")
+    assert "Language instruction" in prompt
+    assert "Korean" in prompt
+    assert "Match the user's language" in prompt
+
+
+def test_render_system_prompt_with_language_english():
+    from agent_augury.agent.system_prompt import render_system_prompt
+    prompt = render_system_prompt("agent-1", language="English")
+    assert "Language instruction" in prompt
+    assert "English" in prompt
+
+
+def test_render_system_prompt_without_language():
+    from agent_augury.agent.system_prompt import render_system_prompt
+    prompt = render_system_prompt("agent-1")
+    assert "Language instruction" not in prompt
+
+
+def test_render_system_prompt_language_with_phase():
+    from agent_augury.agent.system_prompt import render_system_prompt
+    prompt = render_system_prompt("agent-1", phase="P1_EXPLORE", language="Korean")
+    assert "Language instruction" in prompt
+    assert "Korean" in prompt
+    assert "P1 EXPLORE" in prompt

@@ -1,5 +1,7 @@
 # agent-augury
 
+[![PyPI version](https://img.shields.io/pypi/v/agent-augury.svg)](https://pypi.org/project/agent-augury/)
+
 **Model-agnostic passive awareness multi-agent runtime.**
 
 Concept inherited from [AgentRadio](https://github.com/Coral-Protocol/AgentRadio)
@@ -25,7 +27,7 @@ awareness*.
 
 ## Status
 
-v0.3 — OAuth provider-level authentication, unlimited steps by default.
+v0.3.0 — OAuth provider-level authentication, unlimited steps by default.
 
 - 3+ agents (A/B/C) + internal message server (in-process asyncio, memory state)
 - Receive model: send → inbox push → `step()` auto-drain (single consumer)
@@ -55,42 +57,54 @@ Both run the identical gate protocol: propose → unanimous approve → gate OPE
 
 ## Install & run
 
+Install from PyPI (stable release):
+
 ```bash
+pip install agent-augury
+agent-augury         # launches the interactive wizard
+agent-augury --demo --config examples/p1_to_p5_protocol.yaml  # offline P1~P5 demo
+agent-augury --demo --config examples/demo.yaml               # offline fake-backend demo
+agent-augury --config examples/consensus_openai.yaml          # real LLM (needs OPENAI_API_KEY)
+```
+
+The pip install automatically pulls in all dependencies (aiosqlite, PyYAML,
+py-cord, python-dotenv, httpx) and registers the `agent-augury` console
+command on your PATH — no manual `.venv\Scripts` setup required.
+
+### Development install (source)
+
+```bash
+git clone https://github.com/keepConcentration/agent-augury.git
+cd agent-augury
 pip install -e ".[dev]"
 pytest tests/ -q                      # unit tests (offline; skips OpenAI integration)
 python examples/consensus_demo.py     # v0.1b consensus gate verification
 python examples/p1_to_p5_demo.py      # v0.2 P1~P5 full protocol verification
-agent-augury --demo --config examples/p1_to_p5_protocol.yaml  # same P1~P5 flow via YAML (offline)
-agent-augury --demo --config examples/demo.yaml   # E2E demo with a fake backend
-agent-augury --config examples/consensus_openai.yaml  # E2E with a real LLM (needs OPENAI_API_KEY)
-
-# Opt-in OpenAI API smoke (incurs cost):
-#   export AUGURY_RUN_OPENAI_TESTS=1 OPENAI_API_KEY=sk-...
-#   pytest tests/test_integration_openai.py -m openai -v
 ```
 
-## Running locally (Windows + .venv)
+### Opt-in OpenAI API smoke (incurs cost)
 
-The quickest way to run agent-augury on Windows is from a project-local
-`.venv`. The `agent-augury` console script is installed into
-`.venv\Scripts\` — use that instead of a global Python install, which
-lacks the project's dependencies (aiosqlite, PyYAML, etc.).
+```bash
+export AUGURY_RUN_OPENAI_TESTS=1 OPENAI_API_KEY=sk-...
+pytest tests/test_integration_openai.py -m openai -v
+```
+
+## Developing from source (Windows + .venv)
+
+When developing or testing against the source tree directly, use an isolated
+`.venv` so that live edits to the repo are picked up without affecting a
+system-wide install.
 
 ```powershell
 # PowerShell — from the project root
-.venv\Scripts\agent-augury
-
-# cmd
-.venv\Scripts\agent-augury.exe
+python -m venv .venv
+.venv\Scripts\activate        # or: . .venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+pytest tests/ -q
 ```
 
-> **Why `.venv`?** A globally installed `agent-augury` (e.g. via
-> `pip install` into a system Python) has no access to the project's
-> dependencies and will fail with `ModuleNotFoundError`. Always run
-> through the project's `.venv`.
-
-To run `agent-augury` from any directory, add `.venv\Scripts` to your
-user environment `PATH`:
+To run the `agent-augury` console script from any directory, add
+`.venv\Scripts` to your user environment `PATH`:
 
 ```powershell
 # PowerShell (persistent)
@@ -180,7 +194,7 @@ agent-augury --output my_session.yaml
 | `--demo` | Allow type:fake backends in config (offline demo/benchmark) |
 | `--reconfigure` | Discard saved model settings and re-run the wizard |
 | `--output <path>` | Wizard output path (only valid without `--config`) |
-| `--quiet` | Suppress broadcast events (currently unimplemented) |
+| `--quiet` | Suppress broadcast event output (only show final summary) |
 
 ## License
 

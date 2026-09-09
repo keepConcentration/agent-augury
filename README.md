@@ -1,201 +1,446 @@
 # agent-augury
 
-[![PyPI version](https://img.shields.io/pypi/v/agent-augury.svg)](https://pypi.org/project/agent-augury/)
+<p align="center">
+  <img src="docs/images/agent-augury.png" alt="agent-augury — many agents interpreting one signal" width="100%">
+</p>
 
-**Model-agnostic passive awareness multi-agent runtime.**
+<p align="center">
+  <strong>Many agents. One signal. Collective awareness.</strong>
+</p>
 
-Concept inherited from [AgentRadio](https://github.com/Coral-Protocol/AgentRadio)
-([arXiv:2607.28430](https://arxiv.org/abs/2607.28430)) and re-implemented as a
-standalone open-source project — not bound to any model, channel, or cloud runtime.
+<p align="center">
+  Model-agnostic passive awareness runtime for multi-agent systems.
+</p>
 
-> Design doc: see [`DESIGN.md`](DESIGN.md) (Korean).
+<p align="center">
+  <a href="https://pypi.org/project/agent-augury/"><img src="https://img.shields.io/pypi/v/agent-augury.svg" alt="PyPI"></a>
+  <a href="https://github.com/keepConcentration/agent-augury/actions"><img src="https://github.com/keepConcentration/agent-augury/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/keepConcentration/agent-augury/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
+</p>
 
-## Core idea
+---
 
-Agents listen **while they work**. Incoming teammate messages are pushed to an
-inbox by the in-process message server; each agent's next `step()` drains the
-inbox automatically. Communication never blocks the work — that is *passive
-awareness*.
+## What is Augury?
 
-## Three primitives (implemented by the internal message server)
+**Augury** is the practice of observing signs and interpreting what they might mean.
+
+An augur does not receive an answer directly.
+
+They observe.
+
+They interpret.
+
+They compare what they see with what others have seen.
+
+And from many incomplete signals, they form a conclusion.
+
+**agent-augury applies the same idea to multi-agent systems.**
+
+Agents work independently while remaining passively aware of what their teammates discover.
+
+A message from another agent does not interrupt the current work.
+
+It becomes a signal waiting to be absorbed at the next step.
+
+```text
+                    ┌──────────────┐
+                    │    SIGNAL    │
+                    └──────┬───────┘
+                           │
+             ┌─────────────┼─────────────┐
+             │             │             │
+             ▼             ▼             ▼
+          Agent A        Agent B       Agent C
+          observes       observes      observes
+             │             │             │
+             └─────────────┼─────────────┘
+                           │
+                           ▼
+                     interpretation
+                           │
+                           ▼
+                      consensus
+                           │
+                           ▼
+                         action
+```
+
+> **The signal is shared. The interpretation is independent.**
+
+---
+
+## The idea
+
+Most multi-agent systems treat communication as something agents explicitly wait for.
+
+That creates a choice:
+
+- stop working and listen
+- or keep working and miss what others discovered
+
+**Passive awareness removes that choice.**
+
+An agent keeps working.
+
+Meanwhile, messages from teammates are pushed into its inbox.
+
+When the agent reaches its next `step()`, those messages are automatically absorbed into its context.
+
+```text
+Agent A                         Agent B
+  │                                │
+  │────── working ────────────────►│
+  │                                │
+  │                         discovers something
+  │                                │
+  │◄──────── signal ────────────────│
+  │       (inbox push)              │
+  │                                │
+  │────── keeps working ───────────►│
+  │                                │
+  │       next step()               │
+  │       ↓                         │
+  │       absorbs signal            │
+  │       ↓                         │
+  │       adapts reasoning          │
+```
+
+Communication becomes **background awareness**, rather than a blocking operation.
+
+---
+
+## Why "Augury"?
+
+The name describes the role of the agents.
+
+An **oracle** gives you an answer.
+
+An **augur** interprets signs.
+
+agent-augury is designed around the latter.
+
+Each agent sees only part of the picture.
+
+Each agent may interpret the same signal differently.
+
+No single agent needs to know everything.
+
+The system becomes useful when those independent observations can be shared, challenged, reviewed, and eventually combined.
+
+---
+
+## Core primitives
+
+The runtime is built around three simple primitives:
 
 | Primitive | Behavior |
-|-----------|----------|
-| `create_thread(name, participants)` | Create a named thread, return its id |
-| `send_message(thread, content, mentions)` | Append + push to targets' inboxes; returns immediately (fire-and-forget) |
-| `read_resource()` | Explicit full state dump for recovery or aggregation |
+|---|---|
+| `create_thread(name, participants)` | Create a named conversation thread |
+| `send_message(thread, content, mentions)` | Send a message immediately; fire-and-forget |
+| `read_resource()` | Explicitly read the shared state for recovery or aggregation |
 
-## Status
+The important part is not the API itself.
 
-v0.3.0 — OAuth provider-level authentication, unlimited steps by default.
+It is what happens **between** `send_message()` and the next `step()`.
 
-- 3+ agents (A/B/C) + internal message server (in-process asyncio, memory state)
-- Receive model: send → inbox push → `step()` auto-drain (single consumer)
-- Consensus gate: propose → unanimous APPROVE → gate OPEN → work shares
-  (`examples/consensus_demo.py`) — order-based assertions on server sequence numbers.
-- **P1~P5 full protocol**: explore → split → execute → review → submit
-  (`examples/p1_to_p5_demo.py`) — all five phases advance in order with unanimous gates.
-- Real-backend E2E: `examples/consensus_openai.yaml` — a real OpenAI-compatible
-  LLM generates PROPOSE/APPROVE messages autonomously (secrets via `.env` only).
-- Discord observation mirror: read-only webhook flush; core never reads back.
-- Phase transition hooks: explicit `PhaseManager` for v0.2 P1~P5 expansion.
-- **OAuth provider-level auth**: multiple agents sharing `nous_oauth` authenticate
-  only once — the token is reused across all backends for the same provider.
-- **Unlimited steps by default**: `max_steps=0` means no cap; set a positive
-  integer to limit total steps across all agents.
+The sender does not wait.
 
-## Fake demo vs. real collaboration
+The receiver does not block.
 
-| Dimension | `consensus_demo.py` (Fake) | `consensus_openai.yaml` (Real) |
-|-----------|---------------------------|-------------------------------|
-| Model | `FakeModelBackend` — pre-scripted messages | OpenAI-compatible LLM (e.g. `gpt-4o-mini`) |
-| PROPOSE/APPROVE content | Fixed in code | Generated autonomously by the model |
-| Secrets | None | `OPENAI_API_KEY` from environment |
-| Purpose | Gate logic verification (deterministic) | E2E collaboration with real reasoning |
+The signal simply becomes part of the receiver's next working context.
 
-Both run the identical gate protocol: propose → unanimous approve → gate OPEN → work shares. The fake demo verifies the protocol is correct; the real config shows it works with an actual LLM.
+---
 
-## Install & run
+## Roles (assignable personas)
 
-Install from PyPI (stable release):
+Each agent can be given a **role** that shapes how it interprets and contributes.
+
+Roles are user-defined in the config, so you can compose your own team:
+
+```yaml
+roles:
+  orchestrator:
+    prompt: |
+      You are the orchestrator. Decompose work, coordinate, and integrate results.
+  architect:
+    prompt: |
+      You are the architect. Design structure, tech stack, and trade-offs.
+  backend-developer:
+    prompt: |
+      You are the backend developer. Design and implement APIs and data.
+  frontend-developer:
+    prompt: |
+      You are the frontend developer. Build client logic and interactions.
+
+agents:
+  - id: agent-1
+    role: orchestrator
+    backend: { ... }
+```
+
+- `role: <name>` references a preset above; `role_custom: "..."` defines one inline.
+- A role without a matching preset, or using both `role` and `role_custom`, is rejected at load time.
+- Agents without a role behave exactly as before (fully backward compatible).
+
+The orchestrator/architect/backend/frontend split above is just one example — roles are free-form and reusable across configs.
+
+---
+
+## Human-in-the-loop
+
+agent-augury models **you** as a first-class participant.
+
+Add a `human:` section to the config and agents gain an `ask_user` tool, so they can ask you questions or request confirmation mid-session — while continuing to work (fire-and-forget, matching the passive philosophy).
+
+```yaml
+human:
+  id: human
+  interface: cli     # cli (plain input) | tui (always-on prompt) | discord | file
+  tui:               # used when interface: tui
+    multiline: true
+    history_file: ~/.agent-augury/human_history.txt
+```
+
+- `ask_user(question, options)` — agent asks; your reply arrives as a `[radio]` block on its next `step()`.
+- `human_send()` — the runtime injects your message into the same inbox path as any agent message.
+- The reserved name `human` is case-insensitively blocked from agent ids, so a user message can never be mistaken for an agent message.
+
+### Always-on input (TUI)
+
+Set `interface: tui` and run with `--interactive` to get a **persistent input bar** (powered by prompt_toolkit):
+
+- an input line pinned to the bottom that never scrolls away — type anytime, even while agents work
+- `ask_user` questions and options pinned in a bottom toolbar, so they don't disappear into the log
+- answer options by number (`1`, `2`, …) or plain text
+- multi-line paste, history, and Korean IME support
+
+```bash
+agent-augury --config session.yaml --interactive
+```
+
+---
+
+## Collaboration protocol
+
+agent-augury also provides a five-phase collaboration protocol:
+
+```text
+P1  EXPLORE
+ │
+ ▼
+P2  SPLIT ──────► unanimous approval
+ │
+ ▼
+P3  EXECUTE
+ │
+ ▼
+P4  REVIEW ─────► unanimous approval
+ │
+ ▼
+P5  SUBMIT ─────► unanimous approval
+```
+
+Each phase is explicitly gated.
+
+Agents can independently explore and execute, while shared protocol state coordinates when the group should move forward.
+
+This makes passive awareness useful beyond simple message passing:
+
+**agents can remain independent without becoming isolated.**
+
+---
+
+## Architecture
+
+```text
+                         User
+                          │
+                    CLI / YAML config
+                          │
+                          ▼
+                    ┌───────────┐
+                    │  Session  │
+                    └─────┬─────┘
+                          │
+             ┌────────────┼────────────┐
+             │            │            │
+             ▼            ▼            ▼
+         Agent A       Agent B       Agent N
+         Model A       Model B       Model C
+             │            │            │
+             └────────────┼────────────┘
+                          │
+                          ▼
+                 ┌─────────────────┐
+                 │ Message Server  │
+                 │      SSOT       │
+                 └────────┬────────┘
+                          │
+                    read-only mirrors
+                          │
+                          ▼
+                    Discord / CLI
+```
+
+The internal message server is the **single source of truth**.
+
+External channels such as Discord and the human input bar are observation surfaces, not protocol state.
+
+This keeps the core runtime independent from any particular messaging platform.
+
+---
+
+## Model agnostic
+
+agent-augury does not require a specific model.
+
+Backends are isolated behind a common interface, allowing different agents to use different providers.
+
+Currently supported:
+
+- OpenAI-compatible APIs
+- Nous Portal (API key)
+- Nous Portal (OAuth device code)
+- Fake backends for deterministic testing
+
+The runtime cares about **how agents communicate**, not which model produces their reasoning.
+
+---
+
+## Quick start
+
+### Install
 
 ```bash
 pip install agent-augury
-agent-augury         # launches the interactive wizard
-agent-augury --demo --config examples/p1_to_p5_protocol.yaml  # offline P1~P5 demo
-agent-augury --demo --config examples/demo.yaml               # offline fake-backend demo
-agent-augury --config examples/consensus_openai.yaml          # real LLM (needs OPENAI_API_KEY)
 ```
 
-The pip install automatically pulls in all dependencies (aiosqlite, PyYAML,
-py-cord, python-dotenv, httpx) and registers the `agent-augury` console
-command on your PATH — no manual `.venv\Scripts` setup required.
-
-### Development install (source)
+### Start the interactive wizard
 
 ```bash
-git clone https://github.com/keepConcentration/agent-augury.git
-cd agent-augury
-pip install -e ".[dev]"
-pytest tests/ -q                      # unit tests (offline; skips OpenAI integration)
-python examples/consensus_demo.py     # v0.1b consensus gate verification
-python examples/p1_to_p5_demo.py      # v0.2 P1~P5 full protocol verification
-```
-
-### Opt-in OpenAI API smoke (incurs cost)
-
-```bash
-export AUGURY_RUN_OPENAI_TESTS=1 OPENAI_API_KEY=sk-...
-pytest tests/test_integration_openai.py -m openai -v
-```
-
-## Developing from source (Windows + .venv)
-
-When developing or testing against the source tree directly, use an isolated
-`.venv` so that live edits to the repo are picked up without affecting a
-system-wide install.
-
-```powershell
-# PowerShell — from the project root
-python -m venv .venv
-.venv\Scripts\activate        # or: . .venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-pytest tests/ -q
-```
-
-To run the `agent-augury` console script from any directory, add
-`.venv\Scripts` to your user environment `PATH`:
-
-```powershell
-# PowerShell (persistent)
-[Environment]::SetEnvironmentVariable(
-    "Path",
-    "$env:USERPROFILE\IdeaProjects\agent-augury\.venv\Scripts;" +
-    [Environment]::GetEnvironmentVariable("Path", "User"),
-    "User"
-)
-```
-
-After reopening your terminal, `agent-augury` works from anywhere.
-
-### Interactive wizard
-
-Running `agent-augury` without `--config` launches an interactive
-wizard that builds a YAML config through a conversation:
-
-```powershell
 agent-augury
 ```
 
-The wizard walks through:
+The wizard walks you through:
 
-1. **Max steps** — total step cap across all agents. `0` means
-   *unlimited* (the default). A positive integer caps the entire
-   session.
-2. **Backend / provider** — choose per agent:
-   - `openai` — OpenAI-compatible API
-   - `nous` — Nous Portal (API key)
-   - `nous_oauth` — Nous Portal (OAuth device code — no API key)
-3. **Add another agent?** — repeat step 2 for multi-agent setups.
+1. the maximum number of steps (`0` = unlimited)
+2. the backend/provider for each agent
+3. the number of agents
+4. the initial task (multi-line paste supported)
 
-The wizard then asks for an initial task and starts the session.
+### Run an offline demo
 
-> **No API keys on disk.** Only environment variable *names* are stored
-> (e.g. `OPENAI_API_KEY`). Actual values are read from your environment
-> or a `.env` file at runtime.
-
-### Saved model settings
-
-Model settings (max_steps, agent IDs, backend types, model names,
-base URLs, env-var names) are persisted to
-`~/.agent-augury/model_config.json`. On the next run, the wizard
-detects this file and skips straight to the task prompt — no need to
-re-enter backends or agent structure.
-
-Use `--reconfigure` to discard the saved settings and re-run the full
-wizard from scratch:
-
-```powershell
-agent-augury --reconfigure
+```bash
+agent-augury --demo --config examples/demo.yaml
 ```
 
-### OAuth (nous_oauth) — one-time authentication
+### Run the P1–P5 protocol demo
 
-When you pick `nous_oauth`, the wizard opens a browser for the OAuth
-device-code flow. The resulting token is stored at
-`~/.agent-augury/tokens.json` (mode `0o600`) and **shared across all
-agents using the same provider** — so even with 3+ agents on
-`nous_oauth`, the browser opens only once.
-
-- Token expiry → automatic refresh.
-- Refresh fails → one re-authentication, then the new token is saved.
-
-### Running from a YAML config
-
-Skip the wizard entirely by pointing at a pre-built YAML:
-
-```powershell
-agent-augury --demo --config examples\p1_to_p5_protocol.yaml
-agent-augury --config examples\consensus_openai.yaml
+```bash
+agent-augury --demo --config examples/p1_to_p5_protocol.yaml
 ```
 
-Use `--output` to control where the wizard writes the generated YAML
-(only valid without `--config`):
+### Run with a real OpenAI-compatible model
 
-```powershell
-agent-augury --output my_session.yaml
+```bash
+agent-augury --config examples/consensus_openai.yaml
 ```
 
-### Command-line options
+### Run with human-in-the-loop TUI
+
+```bash
+agent-augury --demo --config examples/human_tui_demo.yaml --interactive
+```
+
+---
+
+## Command-line options
 
 | Flag | Description |
 |------|-------------|
 | `--config <yaml>` | Run directly from a YAML file (skips wizard) |
-| `--demo` | Allow type:fake backends in config (offline demo/benchmark) |
+| `--demo` | Allow `type: fake` backends (offline demo/benchmark) |
 | `--reconfigure` | Discard saved model settings and re-run the wizard |
 | `--output <path>` | Wizard output path (only valid without `--config`) |
 | `--quiet` | Suppress broadcast event output (only show final summary) |
+| `--repl` | REPL mode — keep conversation context across multiple questions |
+| `--interactive` | Human-in-the-loop — inject stdin / TUI input mid-session |
+
+---
+
+## Fake demo vs. real collaboration
+
+The repository includes both deterministic protocol tests and real LLM collaboration.
+
+| | Fake backend | Real backend |
+|---|---|---|
+| Model | scripted | OpenAI-compatible LLM |
+| Messages | predetermined | generated by the model |
+| API key | not required | environment variable |
+| Purpose | protocol verification | end-to-end collaboration |
+
+Both execute the same collaboration protocol.
+
+The fake backend exists to make protocol behavior deterministic and testable.
+
+---
+
+## Design principles
+
+1. **Agents should not have to stop working to listen.** Communication should become awareness, not interruption.
+
+2. **No single agent should be the source of truth.** The system should allow independent observations and interpretations.
+
+3. **Protocol state belongs to the runtime.** Messaging platforms are views into the system, not the system itself.
+
+4. **Models should be replaceable.** The runtime should not depend on one model provider.
+
+5. **Collaboration should be observable.** A multi-agent system should make it possible to see how information moves through the group.
+
+6. **The human is a participant, not an afterthought.** You can be asked, answer, and step in mid-session — without breaking the passive model.
+
+---
+
+## Status
+
+Current implementation includes:
+
+- 3+ concurrent agents, each independently configurable
+- in-process asyncio message server (SSOT)
+- passive inbox awareness (send → push → `step()` auto-drain)
+- fire-and-forget messaging with thread and mention primitives
+- assignable **roles** (orchestrator, architect, backend, frontend, …)
+- **human-in-the-loop** — `ask_user`, `human_send`, human approval path
+- **always-on input TUI** — persistent prompt + pinned options (prompt_toolkit)
+- multi-line task input, wizard model-settings persistence
+- unanimous consensus gates
+- full P1–P5 collaboration protocol
+- OpenAI-compatible real-backend E2E example
+- Nous Portal authentication (API key + OAuth device code)
+- Discord observation mirror
+- unlimited steps by default (`max_steps: 0`)
+- deterministic fake backend demos
+
+---
+
+## Origin
+
+agent-augury is an independent open-source reimplementation of the **passive awareness** concept explored by [Coral-Protocol/AgentRadio](https://github.com/Coral-Protocol/AgentRadio).
+
+The project inherits the underlying idea, not the original runtime.
+
+AgentRadio explored multi-agent collaboration through a shared communication channel.
+
+agent-augury asks a different question:
+
+> **What if passive awareness were a model-agnostic runtime primitive?**
+
+The result is a standalone Python runtime designed to run locally, independently of a particular model, cloud runtime, or messaging platform.
+
+See [`DESIGN.md`](DESIGN.md) for the detailed design decisions and implementation history.
+
+---
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0

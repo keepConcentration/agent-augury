@@ -6,7 +6,7 @@ import asyncio
 import os
 from typing import Any
 
-from .auth.oauth import NOUS_PORTAL_CONFIG, DeviceCodeFlow
+from .auth.oauth import NOUS_PORTAL_CONFIG
 from .auth.token_store import TokenStore
 from .backend.base import Completion, ModelBackend, ToolCall
 from .backend.fake import FakeModelBackend
@@ -99,7 +99,7 @@ def _fetch_models_sync(base_url: str, api_key: str) -> list[str] | None:
             timeout=15.0,
         )
         resp.raise_for_status()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     try:
         data = resp.json()

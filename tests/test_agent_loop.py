@@ -229,8 +229,9 @@ async def test_tool_call_id_propagated_to_tool_result_messages():
 
 async def test_step_with_http_404_returns_error_text():
     """Backend returning HTTP 404 must surface error text, not raise."""
-    from agent_augury.backend.openai_compat import OpenAICompatBackend
     import httpx
+
+    from agent_augury.backend.openai_compat import OpenAICompatBackend
 
     def handler(request):
         return httpx.Response(404, json={"error": "Not Found"})

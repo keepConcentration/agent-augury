@@ -6,16 +6,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from agent_augury.model_config import (
-    DEFAULT_MODEL_CONFIG_PATH,
     clear_model_config,
     load_model_config,
     model_config_exists,
     save_model_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

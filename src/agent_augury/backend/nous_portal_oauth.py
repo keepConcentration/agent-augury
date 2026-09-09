@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 import httpx
 
-from ..model_listing import extract_model_ids
 from ..auth.oauth import (
     NOUS_PORTAL_CONFIG,
     DeviceCodeFlow,
@@ -17,7 +16,8 @@ from ..auth.oauth import (
     TokenResponse,
 )
 from ..auth.token_store import TokenStore, compute_expires_at, is_token_expiring
-from .base import Completion, Message, ModelBackend, OAuthModelBackend, ToolCall, ToolSpec
+from ..model_listing import extract_model_ids
+from .base import Completion, Message, OAuthModelBackend, ToolCall, ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +33,11 @@ class NousPortalOAuthBackend(OAuthModelBackend):
         self,
         model: str,
         base_url: str = "https://inference-api.nousresearch.com/v1",
-        config: Optional[OAuthProviderConfig] = None,
-        token_store: Optional[TokenStore] = None,
-        client: Optional[httpx.Client | httpx.AsyncClient] = None,
+        config: OAuthProviderConfig | None = None,
+        token_store: TokenStore | None = None,
+        client: httpx.Client | httpx.AsyncClient | None = None,
         timeout: float = 120.0,
-        on_user_code: Optional[Callable[[str, str], None]] = None,
+        on_user_code: Callable[[str, str], None] | None = None,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
@@ -47,7 +47,7 @@ class NousPortalOAuthBackend(OAuthModelBackend):
         self._owns_client = client is None
         self._timeout = timeout
         self._on_user_code = on_user_code
-        self._token: Optional[TokenResponse] = None
+        self._token: TokenResponse | None = None
 
     async def get_access_token(self) -> str:
         """Resolve a valid access token, refreshing or re-authing as needed.
@@ -83,7 +83,7 @@ class NousPortalOAuthBackend(OAuthModelBackend):
         if refresh_token:
             try:
                 return await self._refresh_token(refresh_token)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Token refresh failed, re-authenticating: %s", exc)
 
         return await self._authenticate()
@@ -132,7 +132,7 @@ class NousPortalOAuthBackend(OAuthModelBackend):
                 "expires_at": expires_at,
                 "refresh_token": token.refresh_token,
                 "scope": token.scope,
-                "obtained_at": datetime.now(timezone.utc).isoformat(),
+                "obtained_at": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -209,7 +209,7 @@ class NousPortalOAuthBackend(OAuthModelBackend):
                         },
                     )
                     response.raise_for_status()
-                except Exception as retry_exc:
+                except Exception as retry_exc:  # noqa: BLE001
                     return Completion(
                         text=f"[backend error] Token refresh failed: {retry_exc}. Please re-authenticate."
                     )

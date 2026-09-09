@@ -92,7 +92,7 @@ class DiscordBotAdapter:
                 await channel.send(content)  # type: ignore[union-attr]
             except discord.HTTPException as exc:
                 log.warning("bot %s send failed: %s", self.agent_id, exc)
-            except Exception:  # noqa: BLE001 — observation must not kill sessions
+            except Exception:
                 log.exception("bot %s unexpected error", self.agent_id)
 
 

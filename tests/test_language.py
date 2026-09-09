@@ -1,10 +1,8 @@
 """Session-level language detection integration tests (v0.3)."""
 
 import asyncio
-import pytest
 
 from agent_augury.agent.loop import AgentLoop
-from agent_augury.agent.system_prompt import detect_language, render_system_prompt
 from agent_augury.backend.base import Completion, ModelBackend
 from agent_augury.server import MessageServer
 from agent_augury.session import Session

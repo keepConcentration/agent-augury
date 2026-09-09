@@ -32,10 +32,8 @@ from rich.markdown import Markdown
 from .agent.loop import StepResult
 from .config import load_config
 from .model_config import (
-    clear_model_config,
     load_model_config,
     model_config_exists,
-    save_model_config,
 )
 from .session import Session
 from .wizard import WizardCancelled, check_tty, run_wizard

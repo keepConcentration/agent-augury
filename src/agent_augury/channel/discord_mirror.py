@@ -59,7 +59,7 @@ class DiscordWebhookMirror:
         return f"`[{message['thread_id']}]` **{message['author']}**: {message['content']}"
 
     @classmethod
-    def from_env(cls, url_env: str) -> "DiscordWebhookMirror | None":
+    def from_env(cls, url_env: str) -> DiscordWebhookMirror | None:
         url = os.environ.get(url_env)
         if not url:
             return None

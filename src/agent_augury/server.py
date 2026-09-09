@@ -16,7 +16,8 @@ import itertools
 import json
 import os
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import aiosqlite
 
@@ -322,7 +323,7 @@ class MessageServer:
         for subscriber in self._event_subscribers:
             try:
                 subscriber(event)
-            except Exception:  # noqa: BLE001 — subscriber must not break server
+            except Exception:  # noqa: BLE001, S110 — subscriber must not break server
                 pass
 
     # -- inbox consumption (single consumer: step()) ------------------------

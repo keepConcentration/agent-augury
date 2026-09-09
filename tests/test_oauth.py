@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import time
+from datetime import UTC
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pytest
@@ -13,10 +12,7 @@ import pytest
 from agent_augury.auth.oauth import (
     NOUS_PORTAL_CONFIG,
     DeviceCodeFlow,
-    DeviceCodeResponse,
     OAuthProviderConfig,
-    PKCEFlow,
-    TokenResponse,
     _generate_pkce_pair,
 )
 from agent_augury.auth.token_store import (
@@ -24,7 +20,6 @@ from agent_augury.auth.token_store import (
     compute_expires_at,
     is_token_expiring,
 )
-
 
 # ---------------------------------------------------------------------------
 # Token store tests
@@ -83,8 +78,8 @@ class TestTokenExpiry:
     def test_expiring_within_skew_returns_true(self) -> None:
         # Token expiring in 60s with default 120s skew => expiring
         near_future = time.time() + 60
-        from datetime import datetime, timezone
-        expires_at = datetime.fromtimestamp(near_future, tz=timezone.utc).isoformat()
+        from datetime import datetime
+        expires_at = datetime.fromtimestamp(near_future, tz=UTC).isoformat()
         assert is_token_expiring(expires_at, skew_seconds=120) is True
 
     def test_invalid_expires_at_returns_true(self) -> None:
@@ -331,7 +326,7 @@ agents:
         assert cfg["agents"][0]["backend"]["type"] == "nous_oauth"
 
     def test_invalid_backend_type_rejected(self, tmp_path: Path) -> None:
-        from agent_augury.config import load_config, ConfigError
+        from agent_augury.config import ConfigError, load_config
         cfg_path = tmp_path / "test.yaml"
         cfg_path.write_text("""
 mode: L3
@@ -356,7 +351,7 @@ class TestOAuthDuplicateAuthPrevention:
     def test_shared_token_store_prevents_duplicate_auth(self, tmp_path: Path) -> None:
         """Two backends with same provider + shared TokenStore → auth once."""
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import MagicMock
 
         from agent_augury.auth.token_store import TokenStore
         from agent_augury.backend.nous_portal_oauth import NousPortalOAuthBackend

@@ -14,7 +14,6 @@ import pytest
 
 from agent_augury.server import MessageServer
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -130,7 +129,7 @@ async def test_persistence_none_is_pure_memory():
     """db_path=None must keep pure-memory behavior (no DB, no persistence)."""
     s = MessageServer(db_path=None)
     t = await s.create_thread("mem", participants=["a1", "a2"])
-    m = await s.send_message(t, author="a1", content="in-memory", mentions=["a2"])
+    await s.send_message(t, author="a1", content="in-memory", mentions=["a2"])
 
     snap = s.snapshot()
     assert len(snap["threads"]) == 1

@@ -16,7 +16,7 @@ method. v0.2 adds phases; it does not change this API.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 Phase = str
 

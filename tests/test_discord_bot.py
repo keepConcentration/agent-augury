@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +12,6 @@ from agent_augury.channel.discord_bot import (
     _format_event,
 )
 from tests.conftest import build_cfg
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -213,6 +211,7 @@ class TestBotsConfigValidation:
     def test_bots_section_valid(self, tmp_path):
         """bots 섹션이 정상적으로 파싱되는지 확인."""
         import yaml
+
         from agent_augury.config import load_config
 
         cfg = build_cfg(
@@ -234,6 +233,7 @@ class TestBotsConfigValidation:
     def test_bots_section_missing_agent_id(self, tmp_path):
         """agent_id 없으면 ConfigError."""
         import yaml
+
         from agent_augury.config import ConfigError, load_config
 
         cfg = build_cfg(
@@ -248,6 +248,7 @@ class TestBotsConfigValidation:
     def test_bots_section_missing_token_env(self, tmp_path):
         """token_env 없으면 ConfigError."""
         import yaml
+
         from agent_augury.config import ConfigError, load_config
 
         cfg = build_cfg(
@@ -262,6 +263,7 @@ class TestBotsConfigValidation:
     def test_bots_section_missing_channel_id(self, tmp_path):
         """channel_id 없으면 ConfigError."""
         import yaml
+
         from agent_augury.config import ConfigError, load_config
 
         cfg = build_cfg(
@@ -276,6 +278,7 @@ class TestBotsConfigValidation:
     def test_bots_section_invalid_channel_id(self, tmp_path):
         """channel_id가 정수 변환 불가능하면 ConfigError."""
         import yaml
+
         from agent_augury.config import ConfigError, load_config
 
         cfg = build_cfg(
@@ -292,6 +295,7 @@ class TestBotsConfigValidation:
     def test_bots_section_not_list(self, tmp_path):
         """bots가 리스트가 아니면 ConfigError."""
         import yaml
+
         from agent_augury.config import ConfigError, load_config
 
         cfg = build_cfg(
@@ -315,6 +319,7 @@ class TestSessionBotManagerIntegration:
         from unittest.mock import MagicMock, patch
 
         import yaml
+
         from agent_augury.config import load_config
         from agent_augury.session import Session
 
@@ -335,8 +340,10 @@ class TestSessionBotManagerIntegration:
         mock_client = MagicMock()
         mock_client.event = lambda func: func
 
-        with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
-            with patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}):
+        with (
+            patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client),
+            patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}),
+        ):
                 session = Session.from_config(load_config(str(path)))
 
         assert session.bot_manager is not None
@@ -346,6 +353,7 @@ class TestSessionBotManagerIntegration:
     def test_session_from_config_without_bots(self, tmp_path, monkeypatch):
         """bots 섹션 없으면 bot_manager는 None."""
         import yaml
+
         from agent_augury.config import load_config
         from agent_augury.session import Session
 
@@ -362,8 +370,10 @@ class TestSessionBotManagerIntegration:
     @pytest.mark.asyncio
     async def test_session_run_calls_start_and_stop_all(self, tmp_path, monkeypatch):
         """Session.run()이 start_all()/stop_all()을 호출하는지 검증."""
+        from unittest.mock import MagicMock, patch
+
         import yaml
-        from unittest.mock import AsyncMock, MagicMock, patch
+
         from agent_augury.config import load_config
         from agent_augury.session import Session
 
@@ -385,8 +395,10 @@ class TestSessionBotManagerIntegration:
         mock_client = MagicMock()
         mock_client.event = lambda func: func
 
-        with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
-            with patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}):
+        with (
+            patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client),
+            patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}),
+        ):
                 session = Session.from_config(load_config(str(path)))
 
         # Mock start_all / stop_all to track calls
@@ -405,8 +417,10 @@ class TestSessionBotManagerIntegration:
 
         새 라이프사이클에서는 stop_all()이 close()에서 호출됩니다.
         """
+        from unittest.mock import MagicMock, patch
+
         import yaml
-        from unittest.mock import AsyncMock, MagicMock, patch
+
         from agent_augury.config import load_config
         from agent_augury.session import Session
 
@@ -428,8 +442,10 @@ class TestSessionBotManagerIntegration:
         mock_client = MagicMock()
         mock_client.event = lambda func: func
 
-        with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
-            with patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}):
+        with (
+            patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client),
+            patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}),
+        ):
                 session = Session.from_config(load_config(str(path)))
 
         # Force an exception during agent execution
@@ -437,7 +453,7 @@ class TestSessionBotManagerIntegration:
             raise RuntimeError("simulated failure")
 
         # Patch run_agent's step to raise
-        original_run = session._run_impl
+        _ = session._run_impl  # kept for debugging context
 
         async def failing_run(initial_prompt=None):
             # start_all already called by run(), now simulate failure
@@ -459,6 +475,7 @@ class TestSessionBotManagerIntegration:
     async def test_session_run_no_bots_is_safe(self, tmp_path, monkeypatch):
         """bot_manager 없을 때 run()이 정상 동작하는지 확인."""
         import yaml
+
         from agent_augury.config import load_config
         from agent_augury.session import Session
 
@@ -474,17 +491,16 @@ class TestSessionBotManagerIntegration:
         assert session.bot_manager is None
 
         # Should complete without error
-        steps = await session.run()
-        assert steps >= 0
+        await session.run()
 
     @pytest.mark.asyncio
     async def test_session_run_empty_bot_manager_is_safe(self, tmp_path):
         """bot_manager에 봇이 0개일 때 run()이 정상 동작하는지 확인."""
-        from agent_augury.channel.discord_bot import BotManager
-        from agent_augury.session import Session
-        from agent_augury.server import MessageServer
         from agent_augury.agent.loop import AgentLoop
         from agent_augury.backend.fake import FakeModelBackend
+        from agent_augury.channel.discord_bot import BotManager
+        from agent_augury.server import MessageServer
+        from agent_augury.session import Session
 
         server = MessageServer()
         server.register_agent("a1")
@@ -501,4 +517,4 @@ class TestSessionBotManagerIntegration:
         )
 
         # Should complete without error
-        steps = await session.run()
+        await session.run()

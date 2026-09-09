@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 import os
 import re
+from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -124,17 +123,15 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
                 raise ConfigError(
                     f"agents[{i}].role {role!r} is not defined in 'roles' section"
                 )
-        if role_custom is not None:
-            if not isinstance(role_custom, str) or not role_custom.strip():
-                raise ConfigError(
-                    f"agents[{i}].role_custom must be a non-empty string"
-                )
+        if role_custom is not None and (not isinstance(role_custom, str) or not role_custom.strip()):
+            raise ConfigError(
+                f"agents[{i}].role_custom must be a non-empty string"
+            )
 
     # mirror.url_env 검증
     mirror = data.get("mirror")
-    if mirror is not None and isinstance(mirror, dict):
-        if "url_env" not in mirror:
-            raise ConfigError("mirror requires 'url_env' key")
+    if mirror is not None and isinstance(mirror, dict) and "url_env" not in mirror:
+        raise ConfigError("mirror requires 'url_env' key")
 
 # bots 섹션 검증 (N개 봇 통합)
     bots = data.get("bots")

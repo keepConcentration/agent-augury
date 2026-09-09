@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from unittest.mock import patch
 
 import httpx
@@ -10,7 +11,6 @@ import pytest
 from agent_augury.backend.base import Completion, ModelBackend
 from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.backend.openai_compat import OpenAICompatBackend
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -421,12 +421,13 @@ def test_wizard_nous_oauth_no_base_url_prompt(tmp_path):
 
 def test_wizard_nous_oauth_reuses_valid_token(tmp_path):
     """OAuth with valid stored token skips authentication."""
-    from agent_augury.wizard import run_wizard
+    from datetime import datetime, timedelta
+
     from agent_augury.auth.token_store import TokenStore
-    from datetime import datetime, timezone, timedelta
+    from agent_augury.wizard import run_wizard
 
     # Store a valid token
-    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     store = TokenStore()
     store.set_provider_tokens("nous", {
         "access_token": "existing-token",
@@ -435,7 +436,7 @@ def test_wizard_nous_oauth_reuses_valid_token(tmp_path):
         "expires_at": future,
         "refresh_token": "refresh-token",
         "scope": "inference:invoke",
-        "obtained_at": datetime.now(timezone.utc).isoformat(),
+        "obtained_at": datetime.now(UTC).isoformat(),
     })
 
     with patch("agent_augury.backends_factory.list_models_nous_oauth") as mock_list:
@@ -462,12 +463,13 @@ def test_wizard_nous_oauth_reuses_valid_token(tmp_path):
 
 def test_wizard_nous_oauth_force_reconfigure(tmp_path):
     """force_reconfigure=True must run auth even with valid token."""
-    from agent_augury.wizard import run_wizard
+    from datetime import datetime, timedelta
+
     from agent_augury.auth.token_store import TokenStore
-    from datetime import datetime, timezone, timedelta
+    from agent_augury.wizard import run_wizard
 
     # Store a valid token
-    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     store = TokenStore()
     store.set_provider_tokens("nous", {
         "access_token": "existing-token",
@@ -476,7 +478,7 @@ def test_wizard_nous_oauth_force_reconfigure(tmp_path):
         "expires_at": future,
         "refresh_token": "refresh-token",
         "scope": "inference:invoke",
-        "obtained_at": datetime.now(timezone.utc).isoformat(),
+        "obtained_at": datetime.now(UTC).isoformat(),
     })
 
     with patch("agent_augury.backends_factory.list_models_nous_oauth") as mock_list:

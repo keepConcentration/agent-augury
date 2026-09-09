@@ -28,7 +28,8 @@ Conventions (DESIGN.md §2.4):
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ..server import MessageServer
 from .approval import ConsensusGate

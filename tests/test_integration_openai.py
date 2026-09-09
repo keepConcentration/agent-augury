@@ -19,7 +19,7 @@ import pytest
 from agent_augury.backends_factory import build_backend
 from agent_augury.config import load_config
 from agent_augury.session import Session
-from tests.conftest import requires_openai  # noqa: F401 — shared opt-in marker
+from tests.conftest import requires_openai
 
 ROOT = Path(__file__).resolve().parents[1]
 P1_P5_YAML = ROOT / "examples" / "p1_to_p5_protocol.yaml"
@@ -114,8 +114,9 @@ def test_cli_p1_to_p5_protocol_yaml(capsys, monkeypatch):
     must report `gate=n/a` in the summary, and now also reports the protocol
     phase (D11) via `phase={protocol.phase}`.
     """
-    from agent_augury.cli import main
     from unittest.mock import patch
+
+    from agent_augury.cli import main
 
     # Mock load_config to return fake backend config (bypassing validation)
     with patch("agent_augury.cli.load_config") as mock_load:

@@ -149,14 +149,13 @@ class ToolBox:
         # Security: resolve to absolute path and check it's within allowed roots
         abs_path = os.path.abspath(path)
         allowed_roots = self.allowed_roots
-        if allowed_roots:
-            if not any(abs_path.startswith(os.path.abspath(root)) for root in allowed_roots):
-                return _json({"error": f"path outside allowed roots: {path}"})
+        if allowed_roots and not any(abs_path.startswith(os.path.abspath(root)) for root in allowed_roots):
+            return _json({"error": f"path outside allowed roots: {path}"})
         try:
-            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:  # noqa: ASYNC230
                 content = f.read()
             return _json({"path": abs_path, "content": content, "size": len(content)})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return _json({"error": f"failed to read {path}: {exc}"})
 
     async def _list_directory(self, args: dict[str, Any]) -> str:
@@ -165,9 +164,8 @@ class ToolBox:
         path = args.get("path", ".")
         abs_path = os.path.abspath(path)
         allowed_roots = self.allowed_roots
-        if allowed_roots:
-            if not any(abs_path.startswith(os.path.abspath(root)) for root in allowed_roots):
-                return _json({"error": f"path outside allowed roots: {path}"})
+        if allowed_roots and not any(abs_path.startswith(os.path.abspath(root)) for root in allowed_roots):
+            return _json({"error": f"path outside allowed roots: {path}"})
         try:
             entries = []
             for entry in os.listdir(abs_path):
@@ -179,7 +177,7 @@ class ToolBox:
                     "size": stat.st_size,
                 })
             return _json({"path": abs_path, "entries": entries})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return _json({"error": f"failed to list {path}: {exc}"})
 
     async def _write_file(self, args: dict[str, Any]) -> str:
@@ -191,13 +189,12 @@ class ToolBox:
             return _json({"error": "path is required"})
         abs_path = os.path.abspath(path)
         allowed_roots = self.allowed_roots
-        if allowed_roots:
-            if not any(abs_path.startswith(os.path.abspath(root)) for root in allowed_roots):
-                return _json({"error": f"path outside allowed roots: {path}"})
+        if allowed_roots and not any(abs_path.startswith(os.path.abspath(root)) for root in allowed_roots):
+            return _json({"error": f"path outside allowed roots: {path}"})
         try:
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-            with open(abs_path, "w", encoding="utf-8") as f:
+            with open(abs_path, "w", encoding="utf-8") as f:  # noqa: ASYNC230
                 f.write(content)
             return _json({"path": abs_path, "size": len(content), "status": "written"})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return _json({"error": f"failed to write {path}: {exc}"})

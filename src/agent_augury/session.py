@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # .env 자동 로딩 — cwd → 프로젝트 루트 순서로 탐색
 try:
@@ -31,10 +32,10 @@ except ImportError:
     pass
 
 from .agent.loop import AgentLoop
+from .auth.token_store import TokenStore
 from .backends_factory import build_backend
 from .channel.discord_bot import BotManager, DiscordBotAdapter, _format_event
 from .channel.discord_mirror import mirror_from_config
-from .auth.token_store import TokenStore
 from .protocol.approval import ConsensusGate
 from .protocol.collaboration import CollaborationProtocol
 from .protocol.phases import (
@@ -44,7 +45,6 @@ from .protocol.phases import (
     P3_EXECUTE,
     P4_REVIEW,
     P5_SUBMIT,
-    REJECTED,
     Phase,
 )
 from .server import MessageServer
@@ -91,7 +91,7 @@ class Session:
         on_tool_event=None,
         allowed_roots: list[str] | None = None,
         token_store: TokenStore | None = None,
-    ) -> "Session":
+    ) -> Session:
         server = MessageServer()
         agents: list[AgentLoop] = []
         # Shared token store so all backends use the same OAuth tokens
@@ -212,7 +212,7 @@ class Session:
         # v0.2: start the collaboration protocol
         if self.protocol:
             # Pre-create threads for each gate and bind them explicitly.
-            for phase, gate in self.protocol._gates.items():
+            for gate in self.protocol._gates.values():
                 if gate is not None:
                     tid = await self.server.create_thread(
                         gate.thread_name, participants=self.protocol.participants
@@ -431,16 +431,9 @@ class Session:
                 self.on_tool_event(event)
             elif event_type == "step" and self.on_step:
                 self.on_step(event["agent_id"], event["result"])
-            elif event_type == "read_resource" and self.on_tool_event:
+            elif event_type == "read_resource" and self.on_tool_event or event_type == "create_thread" and self.on_tool_event or event_type == "send_message" and self.on_tool_event:
                 self.on_tool_event(event)
-            elif event_type == "create_thread" and self.on_tool_event:
-                self.on_tool_event(event)
-            elif event_type == "send_message" and self.on_tool_event:
-                self.on_tool_event(event)
-            elif event_type == "create_thread":
-                # Fallback if no on_tool_event
-                pass
-            elif event_type == "send_message":
+            elif event_type == "create_thread" or event_type == "send_message":
                 # Fallback if no on_tool_event
                 pass
 

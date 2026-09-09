@@ -7,15 +7,10 @@ Verifies:
   4. All agents finish normally when their scripts exhaust.
 """
 
-import asyncio
 
-import pytest
 
-from agent_augury.backend.base import Completion, ToolCall
-from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.session import Session
 from tests.conftest import build_cfg
-
 
 # ---------------------------------------------------------------------------
 # 1. Parallel execution: both agents make progress, not strictly alternating

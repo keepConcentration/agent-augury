@@ -11,10 +11,9 @@ import logging
 import os
 import stat
 import threading
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class TokenStore:
     File is created with 0o600 permissions (owner read/write only).
     """
 
-    def __init__(self, store_path: Optional[Path] = None) -> None:
+    def __init__(self, store_path: Path | None = None) -> None:
         self._store_path = store_path or self._default_path()
         self._lock = threading.Lock()
 
@@ -38,7 +37,7 @@ class TokenStore:
         """Return default token store path."""
         return Path.home() / ".agent-augury" / "tokens.json"
 
-    def load(self) -> Dict[str, Any]:
+    def load(self) -> dict[str, Any]:
         """Load tokens from disk. Returns empty dict if not found."""
         with self._lock:
             if not self._store_path.exists():
@@ -50,7 +49,7 @@ class TokenStore:
                 logger.warning("Failed to load token store: %s", exc)
                 return {}
 
-    def save(self, tokens: Dict[str, Any]) -> None:
+    def save(self, tokens: dict[str, Any]) -> None:
         """Atomically persist tokens to disk."""
         with self._lock:
             self._store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,18 +73,18 @@ class TokenStore:
             if self._store_path.exists():
                 self._store_path.unlink()
 
-    def get_provider_tokens(self, provider_id: str) -> Dict[str, Any]:
+    def get_provider_tokens(self, provider_id: str) -> dict[str, Any]:
         """Get tokens for a specific provider."""
         return self.load().get(provider_id, {})
 
-    def set_provider_tokens(self, provider_id: str, tokens: Dict[str, Any]) -> None:
+    def set_provider_tokens(self, provider_id: str, tokens: dict[str, Any]) -> None:
         """Set tokens for a specific provider."""
         all_tokens = self.load()
         all_tokens[provider_id] = tokens
         self.save(all_tokens)
 
 
-def is_token_expiring(expires_at: Optional[str], skew_seconds: int = ACCESS_TOKEN_REFRESH_SKEW_SECONDS) -> bool:
+def is_token_expiring(expires_at: str | None, skew_seconds: int = ACCESS_TOKEN_REFRESH_SKEW_SECONDS) -> bool:
     """Check if a token is expired or about to expire.
 
     Args:
@@ -101,14 +100,14 @@ def is_token_expiring(expires_at: Optional[str], skew_seconds: int = ACCESS_TOKE
     try:
         expiry = datetime.fromisoformat(expires_at)
         if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
+            expiry = expiry.replace(tzinfo=UTC)
+        now = datetime.now(UTC)
         return now.timestamp() + skew_seconds >= expiry.timestamp()
     except (ValueError, TypeError):
         return True  # Malformed date — treat as expired
 
 
-def compute_expires_at(expires_in: Optional[int]) -> Optional[str]:
+def compute_expires_at(expires_in: int | None) -> str | None:
     """Compute absolute expiry timestamp from relative seconds.
 
     Args:
@@ -119,7 +118,7 @@ def compute_expires_at(expires_in: Optional[int]) -> Optional[str]:
     """
     if not expires_in or expires_in <= 0:
         return None
-    expiry = datetime.now(timezone.utc).timestamp() + expires_in
-    return datetime.fromtimestamp(expiry, tz=timezone.utc).isoformat()
+    expiry = datetime.now(UTC).timestamp() + expires_in
+    return datetime.fromtimestamp(expiry, tz=UTC).isoformat()
 
 

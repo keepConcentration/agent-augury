@@ -3,12 +3,10 @@
 Spec refs: DESIGN.md §2.1, §3.4, §3.5.2, §3.5.3.
 """
 
-import asyncio
 
 import pytest
 
 from agent_augury.server import MessageServer
-
 
 # ---------------------------------------------------------------------------
 # create_thread

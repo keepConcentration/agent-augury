@@ -15,10 +15,10 @@ import logging
 import secrets
 import time
 import webbrowser
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class OAuthProviderConfig:
     scope: str = ""
     authorization_url: str = ""
     redirect_uri: str = "http://127.0.0.1:0/callback"
-    extra_params: Dict[str, str] = field(default_factory=dict)
+    extra_params: dict[str, str] = field(default_factory=dict)
 
 
 NOUS_PORTAL_CONFIG = OAuthProviderConfig(
@@ -64,16 +64,16 @@ class TokenResponse:
     """Response from token endpoint."""
     access_token: str
     token_type: str = "Bearer"
-    expires_in: Optional[int] = None
-    expires_at: Optional[str] = None
-    refresh_token: Optional[str] = None
-    scope: Optional[str] = None
+    expires_in: int | None = None
+    expires_at: str | None = None
+    refresh_token: str | None = None
+    scope: str | None = None
 
 
 class DeviceCodeFlow:
     """OAuth 2.0 Device Code Flow (RFC 8628)."""
 
-    def __init__(self, config: OAuthProviderConfig, http_client_factory: Optional[Callable] = None) -> None:
+    def __init__(self, config: OAuthProviderConfig, http_client_factory: Callable | None = None) -> None:
         self._config = config
         self._http_factory = http_client_factory
 
@@ -115,7 +115,6 @@ class DeviceCodeFlow:
 
     def poll_for_token(self, device_code: str, expires_in: int, poll_interval: int) -> TokenResponse:
         """Poll the token endpoint until user approves or code expires."""
-        import httpx
         deadline = time.monotonic() + max(1, expires_in)
         current_interval = max(1, min(poll_interval, 5))
         client = self._get_http_client()
@@ -142,7 +141,7 @@ class DeviceCodeFlow:
                     )
                 try:
                     error_payload = response.json()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     response.raise_for_status()
                     raise RuntimeError("Non-JSON error response from token endpoint")
                 error_code = error_payload.get("error", "")
@@ -162,7 +161,6 @@ class DeviceCodeFlow:
 
     def refresh_access_token(self, refresh_token: str) -> TokenResponse:
         """Refresh an access token using a refresh token."""
-        import httpx
         client = self._get_http_client()
         try:
             response = client.post(
@@ -186,7 +184,7 @@ class DeviceCodeFlow:
             if hasattr(client, "close"):
                 client.close()
 
-    def authenticate(self, on_user_code: Optional[Callable[[str, str], None]] = None, open_browser: bool = True) -> TokenResponse:
+    def authenticate(self, on_user_code: Callable[[str, str], None] | None = None, open_browser: bool = True) -> TokenResponse:
         """Run the full device code flow."""
         device = self.request_device_code()
         if on_user_code:
@@ -197,12 +195,12 @@ class DeviceCodeFlow:
         if open_browser:
             try:
                 webbrowser.open(device.verification_uri_complete)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — browser open is best-effort
                 pass
         return self.poll_for_token(device.device_code, device.expires_in, device.interval)
 
 
-def _generate_pkce_pair() -> Tuple[str, str]:
+def _generate_pkce_pair() -> tuple[str, str]:
     """Generate PKCE code_verifier and code_challenge."""
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode("ascii")
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
@@ -211,8 +209,8 @@ def _generate_pkce_pair() -> Tuple[str, str]:
 
 class _CallbackHandler(BaseHTTPRequestHandler):
     """HTTP handler for OAuth callback."""
-    auth_code: Optional[str] = None
-    error: Optional[str] = None
+    auth_code: str | None = None
+    error: str | None = None
 
     @classmethod
     def reset(cls) -> None:
@@ -252,12 +250,12 @@ class PKCEFlow:
     def __init__(self, config: OAuthProviderConfig) -> None:
         self._config = config
 
-    def _start_callback_server(self) -> Tuple[HTTPServer, int]:
+    def _start_callback_server(self) -> tuple[HTTPServer, int]:
         server = HTTPServer(("127.0.0.1", 0), _CallbackHandler)
         port = server.server_address[1]
         return server, port
 
-    def authenticate(self, on_auth_url: Optional[Callable[[str], None]] = None, open_browser: bool = True) -> TokenResponse:
+    def authenticate(self, on_auth_url: Callable[[str], None] | None = None, open_browser: bool = True) -> TokenResponse:
         """Run the full PKCE flow."""
         import httpx
         verifier, challenge = _generate_pkce_pair()
@@ -279,7 +277,7 @@ class PKCEFlow:
         if open_browser:
             try:
                 webbrowser.open(auth_url)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — browser open is best-effort
                 pass
         server.timeout = 300
         _CallbackHandler.reset()

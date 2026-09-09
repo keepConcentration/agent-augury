@@ -18,11 +18,10 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import UTC
 from typing import Any
 
 from .model_config import (
-    load_model_config,
-    model_config_exists,
     save_model_config,
 )
 
@@ -70,8 +69,8 @@ def _try_attach_parent_console() -> bool:
             return False
 
         # Reopen stdin/stdout to the console.
-        sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="replace")
-        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+        sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="replace")  # noqa: SIM115 — intentional: assign to sys.stdin
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")  # noqa: SIM115 — intentional: assign to sys.stdout
 
         return sys.stdin.isatty() and sys.stdout.isatty()
     except (OSError, AttributeError, ValueError, ImportError):
@@ -202,9 +201,10 @@ def _run_nous_oauth_device_code(force_reconfigure: bool = False) -> str | None:
     Returns None on failure or cancellation so the caller can fall back
     to manual model entry.
     """
+    from datetime import datetime
+
     from .auth.oauth import NOUS_PORTAL_CONFIG, DeviceCodeFlow
     from .auth.token_store import TokenStore, compute_expires_at, is_token_expiring
-    from datetime import datetime, timezone
 
     # Check for existing valid token first (unless force reconfigure).
     if not force_reconfigure:
@@ -237,7 +237,7 @@ def _run_nous_oauth_device_code(force_reconfigure: bool = False) -> str | None:
                 "expires_at": expires_at,
                 "refresh_token": token.refresh_token,
                 "scope": token.scope,
-                "obtained_at": datetime.now(timezone.utc).isoformat(),
+                "obtained_at": datetime.now(UTC).isoformat(),
             },
         )
         print("  Authentication successful!")
@@ -266,9 +266,10 @@ def _try_refresh_oauth_token() -> bool:
 
     Returns True if the token was refreshed or is still valid.
     """
+    from datetime import datetime
+
     from .auth.oauth import NOUS_PORTAL_CONFIG, DeviceCodeFlow
     from .auth.token_store import TokenStore, compute_expires_at
-    from datetime import datetime, timezone
 
     tokens = TokenStore().get_provider_tokens(NOUS_PORTAL_CONFIG.id)
     refresh_token = tokens.get("refresh_token")
@@ -288,11 +289,11 @@ def _try_refresh_oauth_token() -> bool:
                 "expires_at": expires_at,
                 "refresh_token": new_token.refresh_token or refresh_token,
                 "scope": new_token.scope,
-                "obtained_at": datetime.now(timezone.utc).isoformat(),
+                "obtained_at": datetime.now(UTC).isoformat(),
             },
         )
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 

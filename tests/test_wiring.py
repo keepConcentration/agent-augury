@@ -1,14 +1,11 @@
 """Wiring — YAML config loading, session assembly, run loop, CLI entry."""
 
-import json
 
 import pytest
 import yaml
 
-from agent_augury.backend.base import Completion, ToolCall
 from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.config import ConfigError, load_config
-from agent_augury.protocol.phases import P1_EXPLORE
 from agent_augury.session import Session
 from tests.conftest import build_cfg
 
@@ -218,8 +215,9 @@ async def test_session_mirror_disabled_without_env(tmp_path, monkeypatch):
 
 
 def test_cli_accepts_gate_config(tmp_path, capsys, monkeypatch):
-    from agent_augury.cli import main
     from unittest.mock import patch
+
+    from agent_augury.cli import main
 
     # Mock load_config to return a config with fake backends
     # (fake is no longer valid in production configs after removal from _VALID_BACKEND_TYPES)
@@ -319,8 +317,9 @@ async def test_gate_blocks_work_share_until_open(tmp_path):
 
 
 def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys, monkeypatch):
-    from agent_augury.cli import main
     from unittest.mock import patch
+
+    from agent_augury.cli import main
 
     # Mock load_config to return a config with fake backends
     with patch("agent_augury.cli.load_config") as mock_load:
@@ -685,6 +684,7 @@ def test_load_config_roles_unknown_key_raises(tmp_path):
 def test_session_role_preset_injected_into_system_prompt(tmp_path):
     """role 프리셋을 지정한 agent의 system prompt에 역할이 주입됨."""
     import os
+
     from agent_augury.session import Session
 
     p = write_cfg(tmp_path, {
@@ -714,6 +714,7 @@ def test_session_role_preset_injected_into_system_prompt(tmp_path):
 def test_session_role_custom_injected_into_system_prompt(tmp_path):
     """role_custom을 지정한 agent의 system prompt에 커스텀 역할이 주입됨."""
     import os
+
     from agent_augury.session import Session
 
     p = write_cfg(tmp_path, {
@@ -740,6 +741,7 @@ def test_session_role_custom_injected_into_system_prompt(tmp_path):
 def test_session_no_role_backward_compatible(tmp_path):
     """role이 없는 agent는 기존과 동일하게 동작 (하위호환)."""
     import os
+
     from agent_augury.session import Session
 
     p = write_cfg(tmp_path, {

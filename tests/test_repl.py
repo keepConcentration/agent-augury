@@ -12,7 +12,6 @@ import yaml
 from agent_augury.cli import _run_repl
 from agent_augury.session import Session
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -73,11 +72,13 @@ async def test_session_run_called_twice_conversation_accumulates(tmp_path):
             MockSession.from_config.return_value = session_instance
 
             # Simulate: first question, then "quit"
-            with patch("builtins.input", side_effect=["hello", ""]):
-                with patch("builtins.print"):
-                    rc = await asyncio.create_task(
-                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
-                    )
+            with (
+                patch("builtins.input", side_effect=["hello", ""]),
+                patch("builtins.print"),
+            ):
+                await asyncio.create_task(
+                    _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                )
 
             # run() should have been called twice: once with "start", once with "hello"
             assert session_instance.run.call_count == 2
@@ -111,11 +112,13 @@ async def test_repl_exit_on_quit(tmp_path):
             session_instance.close = AsyncMock()
             MockSession.from_config.return_value = session_instance
 
-            with patch("builtins.input", side_effect=["hello", "quit"]):
-                with patch("builtins.print"):
-                    rc = await asyncio.create_task(
-                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
-                    )
+            with (
+                patch("builtins.input", side_effect=["hello", "quit"]),
+                patch("builtins.print"),
+            ):
+                await asyncio.create_task(
+                    _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                )
 
             # run() called twice: "start" + "hello" (quit exits before 3rd run)
             assert session_instance.run.call_count == 2
@@ -146,11 +149,13 @@ async def test_repl_exit_on_exit(tmp_path):
             session_instance.close = AsyncMock()
             MockSession.from_config.return_value = session_instance
 
-            with patch("builtins.input", side_effect=["hello", "exit"]):
-                with patch("builtins.print"):
-                    rc = await asyncio.create_task(
-                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
-                    )
+            with (
+                patch("builtins.input", side_effect=["hello", "exit"]),
+                patch("builtins.print"),
+            ):
+                await asyncio.create_task(
+                    _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                )
 
             assert session_instance.run.call_count == 2
             session_instance.close.assert_called_once()
@@ -180,11 +185,13 @@ async def test_repl_exit_on_blank_input(tmp_path):
             session_instance.close = AsyncMock()
             MockSession.from_config.return_value = session_instance
 
-            with patch("builtins.input", side_effect=["hello", ""]):
-                with patch("builtins.print"):
-                    rc = await asyncio.create_task(
-                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
-                    )
+            with (
+                patch("builtins.input", side_effect=["hello", ""]),
+                patch("builtins.print"),
+            ):
+                await asyncio.create_task(
+                    _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                )
 
             assert session_instance.run.call_count == 2
             session_instance.close.assert_called_once()
@@ -214,11 +221,13 @@ async def test_repl_eof_exits(tmp_path):
             session_instance.close = AsyncMock()
             MockSession.from_config.return_value = session_instance
 
-            with patch("builtins.input", side_effect=["hello", EOFError]):
-                with patch("builtins.print"):
-                    rc = await asyncio.create_task(
-                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
-                    )
+            with (
+                patch("builtins.input", side_effect=["hello", EOFError]),
+                patch("builtins.print"),
+            ):
+                await asyncio.create_task(
+                    _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                )
 
             assert session_instance.run.call_count == 2
             session_instance.close.assert_called_once()
@@ -248,11 +257,13 @@ async def test_repl_keyboard_interrupt_exits(tmp_path):
             session_instance.close = AsyncMock()
             MockSession.from_config.return_value = session_instance
 
-            with patch("builtins.input", side_effect=["hello", KeyboardInterrupt]):
-                with patch("builtins.print"):
-                    rc = await asyncio.create_task(
-                        _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
-                    )
+            with (
+                patch("builtins.input", side_effect=["hello", KeyboardInterrupt]),
+                patch("builtins.print"),
+            ):
+                await asyncio.create_task(
+                    _run_repl(str(cfg_path), initial_prompt="start", quiet=True)
+                )
 
             assert session_instance.run.call_count == 2
             session_instance.close.assert_called_once()
@@ -282,11 +293,13 @@ async def test_session_setup_called_once():
         setup_called[0] += 1
         await original_setup()
 
-    with patch.object(session, "_setup", side_effect=counting_setup):
-        with patch.object(session, "_run_impl", side_effect=mock_run_impl):
-            await session.run(initial_prompt="first")
-            await session.run(initial_prompt="second")
-            await session.run(initial_prompt="third")
+    with (
+        patch.object(session, "_setup", side_effect=counting_setup),
+        patch.object(session, "_run_impl", side_effect=mock_run_impl),
+    ):
+        await session.run(initial_prompt="first")
+        await session.run(initial_prompt="second")
+        await session.run(initial_prompt="third")
 
     # _setup() is called 3 times (once per run()), but the real _setup()
     # has a guard that makes subsequent calls no-ops. We verify the guard

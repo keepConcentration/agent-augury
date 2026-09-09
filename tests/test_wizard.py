@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import io
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +18,6 @@ from agent_augury.wizard import (
     check_tty,
     run_wizard,
 )
-
 
 # ---------------------------------------------------------------------------
 # TTY detection
@@ -64,28 +60,27 @@ def test_input_returns_user_value():
 
 
 def test_input_raises_on_eof():
-    with patch("builtins.input", side_effect=EOFError):
-        with pytest.raises(WizardCancelled):
-            _input("prompt")
+    with patch("builtins.input", side_effect=EOFError), pytest.raises(WizardCancelled):
+        _input("prompt")
 
 
 def test_input_raises_on_keyboard_interrupt():
-    with patch("builtins.input", side_effect=KeyboardInterrupt):
-        with pytest.raises(WizardCancelled):
-            _input("prompt")
+    with patch("builtins.input", side_effect=KeyboardInterrupt), pytest.raises(WizardCancelled):
+        _input("prompt")
 
 
 def test_input_required_reprompts_until_nonempty():
     responses = iter(["", "  ", "finally"])
-    with patch("builtins.input", side_effect=lambda _: next(responses)):
-        with patch("builtins.print"):
-            assert _input_required("prompt") == "finally"
+    with (
+        patch("builtins.input", side_effect=lambda _: next(responses)),
+        patch("builtins.print"),
+    ):
+        assert _input_required("prompt") == "finally"
 
 
 def test_input_int_returns_default_on_invalid():
-    with patch("builtins.input", return_value="abc"):
-        with patch("builtins.print"):
-            assert _input_int("prompt", 42) == 42
+    with patch("builtins.input", return_value="abc"), patch("builtins.print"):
+        assert _input_int("prompt", 42) == 42
 
 
 def test_input_int_returns_parsed_value():
@@ -232,9 +227,8 @@ def test_wizard_cancels_on_eof():
             return "agent-1"
         raise EOFError()
 
-    with patch("builtins.input", side_effect=side_effect):
-        with pytest.raises(WizardCancelled):
-            run_wizard()
+    with patch("builtins.input", side_effect=side_effect), pytest.raises(WizardCancelled):
+        run_wizard()
 
 
 # ---------------------------------------------------------------------------
@@ -348,8 +342,9 @@ def test_cli_wizard_generates_valid_yaml(tmp_path, monkeypatch):
 def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch):
     """When model config exists, 'Save config to' prompt is skipped."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    from agent_augury.cli import main
     import os
+
+    from agent_augury.cli import main
 
     # Use tmp_path as working directory so the default output path lands there.
     old_cwd = os.getcwd()

@@ -1,7 +1,5 @@
 """Verify consensus_openai.yaml loads and validates correctly."""
 
-import pytest
-import yaml
 
 from agent_augury.config import load_config
 

@@ -2,17 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
-import sys
-from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from agent_augury.cli import _mask_sensitive
 from agent_augury.server import MessageServer
-
 
 # ---------------------------------------------------------------------------
 # _mask_sensitive
@@ -232,9 +226,9 @@ def test_log_tool_event_skips_server_event_tools():
     """send_message/create_thread/read_resource are already printed via
     server events, so _log_tool_event must skip them in the tool branch
     to avoid duplicate output."""
-    from agent_augury.cli import _log_tool_event
-    import io
     from contextlib import redirect_stdout
+
+    from agent_augury.cli import _log_tool_event
 
     event = {
         "type": "tool",
@@ -249,9 +243,9 @@ def test_log_tool_event_skips_server_event_tools():
 
 def test_log_tool_event_skips_create_tool_event():
     """create_message tool event is skipped (already covered by server event)."""
-    from agent_augury.cli import _log_tool_event
-    import io
     from contextlib import redirect_stdout
+
+    from agent_augury.cli import _log_tool_event
 
     event = {
         "type": "tool",
@@ -266,9 +260,9 @@ def test_log_tool_event_skips_create_tool_event():
 
 def test_log_tool_event_skips_read_resource_tool_event():
     """read_resource tool event is skipped (already covered by server event)."""
-    from agent_augury.cli import _log_tool_event
-    import io
     from contextlib import redirect_stdout
+
+    from agent_augury.cli import _log_tool_event
 
     event = {
         "type": "tool",
@@ -284,9 +278,9 @@ def test_log_tool_event_skips_read_resource_tool_event():
 def test_log_tool_event_file_tools_still_printed():
     """File tools (read_file, write_file, list_directory) are NOT server
     events, so they must still be printed by _log_tool_event."""
-    from agent_augury.cli import _log_tool_event
-    import io
     from contextlib import redirect_stdout
+
+    from agent_augury.cli import _log_tool_event
 
     event = {
         "type": "tool",

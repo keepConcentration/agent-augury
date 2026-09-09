@@ -97,11 +97,12 @@ def _resolve_output_path(raw: str | None, default: Path = _DEFAULT_OUTPUT_PATH) 
 
 
 def _prompt_multiline(prompt: str) -> str:
-    """Read a multi-line free-text input (for tasks/questions) using prompt_toolkit.
+    """Read a multi-line free-text input (for tasks/questions).
 
-    Uses ``PromptSession(multiline=True)`` so that pasted multi-line text
-    (including blank lines) is preserved.  Submission is via **Esc+Enter** —
-    plain Enter inserts a newline.
+    Uses prompt_toolkit so that pasted multi-line text (including blank lines)
+    is preserved.  Submission is via **Esc+Enter** — plain Enter inserts a
+    newline.  Renders inside ``patch_stdout`` so the prompt doesn't corrupt the
+    terminal alongside prior prints.
 
     In a non-TTY environment (pipe / redirect) it falls back to reading the
     entire stdin.
@@ -113,6 +114,7 @@ def _prompt_multiline(prompt: str) -> str:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.patch_stdout import patch_stdout
 
     kb = KeyBindings()
 
@@ -130,12 +132,12 @@ def _prompt_multiline(prompt: str) -> str:
         key_bindings=kb,
     )
 
-    # Append the key hint to the prompt text.
     hint = "  (Esc+Enter로 제출)"
     full_prompt = f"{prompt.rstrip()}{hint} "
 
     try:
-        text = session.prompt(full_prompt)
+        with patch_stdout():
+            text = session.prompt(full_prompt)
     except (EOFError, KeyboardInterrupt):
         text = ""
 
@@ -493,7 +495,6 @@ def _run_wizard_flow(
     print("\n--- Initial Task ---")
     task = _prompt_multiline(
         "What would you like to do? [Multi-agent collaboration] "
-        "(paste multi-line text, then press Enter on an empty line to finish):"
     )
     if not task:
         task = "Multi-agent collaboration"

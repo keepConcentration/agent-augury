@@ -344,7 +344,14 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     import os
 
+    from agent_augury import cli
     from agent_augury.cli import main
+
+    # _DEFAULT_OUTPUT_PATH is a module-level constant (evaluated at import time),
+    # so patch it directly rather than monkeypatching Path.home().
+    monkeypatch.setattr(
+        cli, "_DEFAULT_OUTPUT_PATH", tmp_path / ".agent-augury" / "agent-augury-session.yaml"
+    )
 
     # Use tmp_path as working directory so the default output path lands there.
     old_cwd = os.getcwd()
@@ -370,7 +377,7 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
             rc = main([])
 
         assert rc == 0
-        output = tmp_path / "agent-augury-session.yaml"
+        output = tmp_path / ".agent-augury" / "agent-augury-session.yaml"
         assert output.exists()
 
         loaded = load_config(output)

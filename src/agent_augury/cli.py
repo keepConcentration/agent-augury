@@ -38,7 +38,7 @@ from .model_config import (
 from .session import Session
 from .wizard import WizardCancelled, check_tty, run_wizard
 
-_DEFAULT_OUTPUT_PATH = Path("agent-augury-session.yaml")
+_DEFAULT_OUTPUT_PATH = Path.home() / ".agent-augury" / "agent-augury-session.yaml"
 # Windows-forbidden path chars plus invisible/format characters (e.g. U+3164).
 # Backslash is NOT included — it is a valid path separator on Windows.
 _INVALID_PATH_CHARS = set('<>\"|?*')

@@ -316,13 +316,14 @@ def test_cli_wizard_generates_valid_yaml(tmp_path, monkeypatch):
     inputs = iter([
         "a1", "1", "", "OPENAI_API_KEY", "gpt-4o-mini",  # agent-1 (openai)
         "n",                 # no more agents
-        "e2e task",          # initial task
+        "e2e task",          # initial task (multi-line: first line)
+        "",                  # empty line terminates the task block
     ])
     # Patch check_tty in the module that imported it (cli), not the origin.
     # Also ensure no existing model config is loaded.
     # Mock asyncio.run to prevent actual agent execution (would loop forever
     # with max_steps=0 and a fake API key).
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=lambda *args: next(inputs)), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.cli.model_config_exists", return_value=False), \
@@ -359,7 +360,8 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
     try:
         # Only task input needed — model settings reused, no save prompt.
         inputs = iter([
-            "e2e task",          # initial task
+            "e2e task",          # initial task (multi-line: first line)
+            "",                  # empty line terminates the task block
         ])
         existing = {
             "mode": "L3",
@@ -368,7 +370,7 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
                 {"id": "a1", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}},
             ],
         }
-        with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+        with patch("builtins.input", side_effect=lambda *args: next(inputs)), \
              patch("agent_augury.cli.check_tty", return_value=True), \
              patch("agent_augury.cli.model_config_exists", return_value=True), \
              patch("agent_augury.cli.load_model_config", return_value=existing), \

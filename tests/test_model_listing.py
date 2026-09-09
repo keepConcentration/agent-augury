@@ -299,9 +299,10 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
             "OPENAI_API_KEY",  # api_key_env
             "1",            # select model #1 from list (gpt-4o)
             "n",            # no more agents
-            "test task",    # task description
+            "test task",    # task description (multi-line: first line)
+            "",             # empty line terminates the task block
         ])
-        with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+        with patch("builtins.input", side_effect=lambda *args: next(inputs)), \
              patch("agent_augury.cli.check_tty", return_value=True), \
              patch("agent_augury.cli.model_config_exists", return_value=False), \
              patch("agent_augury.wizard.save_model_config"), \

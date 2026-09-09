@@ -96,6 +96,27 @@ def _resolve_output_path(raw: str | None, default: Path = _DEFAULT_OUTPUT_PATH) 
     return Path(raw)
 
 
+def _prompt_multiline(prompt: str) -> str:
+    """Read a multi-line free-text input (for tasks/questions).
+
+    Reads lines until an empty line (Enter on a blank line) terminates the
+    block — so pasted multi-line text isn't cut off at the first newline.
+    When stdin is exhausted (EOFError, e.g. piped input), returns what was
+    read so far. Returns the joined text, stripped.
+    """
+    print(prompt, flush=True)
+    lines: list[str] = []
+    while True:
+        try:
+            line = input()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if line == "":
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
 def _prompt_output_path(default: Path = _DEFAULT_OUTPUT_PATH) -> Path:
     """Prompt for a YAML output path; Enter uses *default*, invalid input warns."""
     while True:
@@ -424,7 +445,10 @@ def _run_wizard_flow(
 
     # Collect the initial task from the user, then start the session.
     print("\n--- Initial Task ---")
-    task = input("What would you like to do? [Multi-agent collaboration]: ").strip()
+    task = _prompt_multiline(
+        "What would you like to do? [Multi-agent collaboration] "
+        "(paste multi-line text, then press Enter on an empty line to finish):"
+    )
     if not task:
         task = "Multi-agent collaboration"
 

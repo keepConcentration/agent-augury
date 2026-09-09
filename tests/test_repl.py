@@ -398,9 +398,10 @@ def test_cli_wizard_default_is_repl(tmp_path, monkeypatch):
         "a1", "1", "", "OPENAI_API_KEY", "gpt-4o-mini",
         "n",
         "e2e task",
+        "",                 # empty line terminates the task block
     ])
 
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=lambda *args: next(inputs)), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.cli.model_config_exists", return_value=False), \

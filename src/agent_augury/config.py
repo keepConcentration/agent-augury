@@ -154,15 +154,37 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
                 f"human.id must be 'human' in v1.0 (reserved namespace), got {human_id!r}"
             )
         interface = human.get("interface", "cli")
-        if interface not in ("cli", "discord", "file"):
+        if interface not in ("cli", "discord", "file", "tui"):
             raise ConfigError(
-                f"human.interface must be one of 'cli', 'discord', 'file', got {interface!r}"
+                f"human.interface must be one of 'cli', 'discord', 'file', 'tui', got {interface!r}"
             )
-        # v1.0: cli만 지원 (discord/file는 후속 단계)
-        if interface != "cli":
+        # v1.0: cli/tui 지원 (discord/file는 후속 단계)
+        if interface not in ("cli", "tui"):
             raise ConfigError(
-                f"human.interface {interface!r} is not supported yet — only 'cli' in v1.0"
+                f"human.interface {interface!r} is not supported yet — only 'cli' and 'tui' in v1.0"
             )
+
+        # v1.0: human.tui 섹션 검증 (interface: tui일 때만 사용)
+        tui = human.get("tui")
+        if tui is not None:
+            if not isinstance(tui, dict):
+                raise ConfigError("'human.tui' must be a mapping")
+            allowed_tui_keys = {
+                "response_format", "history_file", "input_prompt",
+                "multiline", "full_screen", "choice_queue", "pin_options",
+            }
+            for key in tui:
+                if key not in allowed_tui_keys:
+                    raise ConfigError(
+                        f"human.tui contains unknown key {key!r} — "
+                        f"allowed: {sorted(allowed_tui_keys)}"
+                    )
+            # Validate response_format if present
+            rf = tui.get("response_format", "text")
+            if rf not in ("text", "number"):
+                raise ConfigError(
+                    f"human.tui.response_format must be 'text' or 'number', got {rf!r}"
+                )
 
 # bots 섹션 검증 (N개 봇 통합)
     bots = data.get("bots")

@@ -163,7 +163,7 @@ class AgentLoop:
                 result = json.dumps({"error": repr(exc)}, ensure_ascii=False)
             # Fire real-time tool event callback immediately
             if self.on_tool_call is not None:
-                self.on_tool_call(self.agent_id, call.name, call.arguments, result)
+                self.on_tool_call(self.agent_id, call.name, args, result)
             tool_results.append({
                 "role": "tool",
                 "tool_call_id": call.id,

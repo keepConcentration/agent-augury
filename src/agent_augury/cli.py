@@ -329,8 +329,43 @@ async def _human_input_loop(session: Session, initial_thread: str | None) -> Non
                     print(f"  [human] failed to deliver: {exc}", flush=True)
 
 
+async def _human_input_loop_tui(
+    session: Session,
+    human_cfg: dict[str, Any],
+) -> None:
+    """Run the prompt_toolkit-based TUI input loop (v1.0, D1).
+
+    Replaces ``_human_input_loop`` when ``human.interface: tui``.
+    asyncio-native — no ``run_in_executor`` / threading.
+    """
+    from .channel.human_tui import HumanTUIAdapter
+
+    tui_cfg = human_cfg.get("tui") or {}
+    adapter = HumanTUIAdapter(session, **tui_cfg)
+    try:
+        await adapter.run_input_loop()
+    finally:
+        adapter.cleanup()
+
+
+def session_has_human(cfg: dict[str, Any]) -> bool:
+    """Return True when the config has a ``human:`` section."""
+    return cfg.get("human") is not None
+
+
+def _make_tui_adapter(session: Any, human_cfg: dict[str, Any]) -> Any:
+    """Create a ``HumanTUIAdapter`` from config (lazy import)."""
+    from .channel.human_tui import HumanTUIAdapter
+    tui_cfg = human_cfg.get("tui") or {}
+    return HumanTUIAdapter(session, **tui_cfg)
+
+
 async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False, interactive: bool = False) -> int:
     cfg = load_config(cfg_path, allow_fake=allow_fake)
+
+    # Detect TUI mode: --interactive + human.interface=tui
+    human_cfg = cfg.get("human") or {}
+    tui_mode = interactive and session_has_human(cfg) and human_cfg.get("interface") == "tui"
 
     # D2: quiet 모드 시 step/도구 라이브 로그 억제
     def on_step(agent_id: str, result: StepResult) -> None:
@@ -338,9 +373,32 @@ async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool 
             return
         _log_step(agent_id, result)
 
+    # TUI adapter reference (set below if tui_mode)
+    tui_adapter = None
+
     def on_tool_event(event: dict[str, Any]) -> None:
         if quiet:
             return
+        nonlocal tui_adapter
+        event_type = event.get("type")
+
+        # D12: TUI 모드에서 [ask-user] prefix send_message 로그 스킵
+        if tui_mode and event_type == "send_message":
+            content = event.get("content", "")
+            if content.startswith("[ask-user]"):
+                return  # skip — question is shown in pinned panel
+
+        # D11: TUI 모드에서 ask_user tool 이벤트 → pinned 패널 표시 (로그 억제)
+        if tui_mode and event_type == "tool" and event.get("tool") == "ask_user":
+            if tui_adapter is not None:
+                tui_adapter.on_ask_user(
+                    event.get("agent_id", ""),
+                    event.get("tool", ""),
+                    event.get("args", {}),
+                    None,
+                )
+            return  # suppress 👤 asks: log — shown in toolbar instead
+
         _log_tool_event(event)
 
     session = Session.from_config(cfg, on_step=on_step, on_tool_event=on_tool_event)
@@ -349,8 +407,15 @@ async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool 
         # Interactive: spawn a human input task that runs alongside the session.
         human_task = None
         if interactive and session.has_human:
-            print("👤 interactive mode: type messages to inject them as 'human'.", flush=True)
-            human_task = asyncio.create_task(_human_input_loop(session, None))
+            if tui_mode:
+                print("👤 TUI mode: type messages to inject them as 'human'.", flush=True)
+                tui_adapter = _make_tui_adapter(session, human_cfg)
+                human_task = asyncio.create_task(
+                    _human_input_loop_tui(session, human_cfg)
+                )
+            else:
+                print("👤 interactive mode: type messages to inject them as 'human'.", flush=True)
+                human_task = asyncio.create_task(_human_input_loop(session, None))
         elif interactive and not session.has_human:
             print(
                 "warning: --interactive given but no 'human:' section in config; "

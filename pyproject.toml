@@ -21,6 +21,7 @@ dependencies = [
     "py-cord>=2.6",
     "python-dotenv>=1.0",
     "rich>=13.0",
+    "prompt-toolkit>=3.0.53",
 ]
 
 [project.urls]

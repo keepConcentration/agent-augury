@@ -360,7 +360,7 @@ def _make_tui_adapter(session: Any, human_cfg: dict[str, Any]) -> Any:
     return HumanTUIAdapter(session, **tui_cfg)
 
 
-async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False, interactive: bool = False) -> int:
+async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False, interactive: bool = True) -> int:
     cfg = load_config(cfg_path, allow_fake=allow_fake)
 
     # Detect TUI mode: --interactive + human.interface=tui
@@ -561,10 +561,11 @@ def main(argv: list[str] | None = None) -> int:
         help="start a REPL session that keeps conversation context across multiple questions",
     )
     parser.add_argument(
-        "--interactive",
-        action="store_true",
-        default=False,
-        help="enable human-in-the-loop: inject stdin lines as 'human' messages mid-session",
+        "--no-interactive",
+        action="store_false",
+        dest="interactive",
+        default=True,
+        help="disable human-in-the-loop input (on by default when a human: section is configured)",
     )
     args = parser.parse_args(argv)
 

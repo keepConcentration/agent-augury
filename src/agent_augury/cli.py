@@ -100,8 +100,8 @@ def _prompt_multiline(prompt: str) -> str:
     """Read a multi-line free-text input (for tasks/questions) using prompt_toolkit.
 
     Uses ``PromptSession(multiline=True)`` so that pasted multi-line text
-    (including blank lines) is preserved.  Submission is via **Ctrl+Enter**
-    or **Esc+Enter** — plain Enter inserts a newline.
+    (including blank lines) is preserved.  Submission is via **Esc+Enter** —
+    plain Enter inserts a newline.
 
     In a non-TTY environment (pipe / redirect) it falls back to reading the
     entire stdin.
@@ -118,13 +118,8 @@ def _prompt_multiline(prompt: str) -> str:
 
     kb = KeyBindings()
 
-    @kb.add("c-enter")
-    def _submit_ctrl_enter(event: object) -> None:
-        buff = event.current_buffer
-        buff.validate_and_handle()
-
     @kb.add("escape", "enter")
-    def _submit_esc_enter(event: object) -> None:
+    def _submit(event: object) -> None:
         buff = event.current_buffer
         buff.validate_and_handle()
 
@@ -138,7 +133,7 @@ def _prompt_multiline(prompt: str) -> str:
     )
 
     # Append the key hint to the prompt text.
-    hint = "  (Ctrl+Enter 또는 Esc+Enter로 제출)"
+    hint = "  (Esc+Enter로 제출)"
     full_prompt = f"{prompt.rstrip(chr(10))}{hint}\n"
 
     try:

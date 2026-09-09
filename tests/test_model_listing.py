@@ -284,7 +284,7 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
 
     calls = []
 
-    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False):
+    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False, **kwargs):
         calls.append({"cfg_path": cfg_path, "initial_prompt": initial_prompt, "quiet": quiet})
         return 0
 

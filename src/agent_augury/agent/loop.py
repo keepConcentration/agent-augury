@@ -68,6 +68,7 @@ class AgentLoop:
         on_tool_call: Callable[[str, str, dict[str, Any], Any], None] | None = None,
         allowed_roots: list[str] | None = None,
         role_prompt: str = "",
+        has_human: bool = False,
     ) -> None:
         self.agent_id = agent_id
         self.server = server
@@ -77,11 +78,14 @@ class AgentLoop:
         self.conversation: list[Message] = [
             {
                 "role": "system",
-                "content": system_prompt or render_system_prompt(agent_id, role_prompt=role_prompt),
+                "content": system_prompt or render_system_prompt(
+                    agent_id, role_prompt=role_prompt, has_human=has_human
+                ),
             }
         ]
         self._custom_system_prompt = system_prompt is not None
         self._role_prompt = role_prompt
+        self._has_human = has_human
         # thread ids this agent created, in creation order ($thread:N source)
         self.created_threads: list[str] = []
         # gate-aware execution state (injected by Session each step)
@@ -116,7 +120,7 @@ class AgentLoop:
         if self.conversation and self.conversation[0]["role"] == "system":
             self.conversation[0]["content"] = render_system_prompt(
                 self.agent_id, self.current_phase, self.language,
-                role_prompt=self._role_prompt
+                role_prompt=self._role_prompt, has_human=self._has_human
             )
 
     async def step(self) -> StepResult:

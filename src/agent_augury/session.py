@@ -62,11 +62,13 @@ class Session:
         task: str | None = None,
         max_steps: int = 0,
         bot_manager: BotManager | None = None,
+        has_human: bool = False,
     ) -> None:
         self.server = server
         self.agents = agents
         self.task = task
         self.max_steps = max_steps
+        self.has_human = has_human
         self.on_step: OnStep | None = None
         self.on_tool_event: OnToolEvent | None = None
         self.gate: ConsensusGate | None = None
@@ -96,6 +98,12 @@ class Session:
         agents: list[AgentLoop] = []
         # Shared token store so all backends use the same OAuth tokens
         shared_token_store = token_store or TokenStore()
+
+        # Human-in-the-loop: register the human participant if configured.
+        has_human = cfg.get("human") is not None
+        if has_human:
+            server.register_human()
+
         for spec in cfg["agents"]:
             server.register_agent(spec["id"])
             # role 처리: role → roles 프리셋의 prompt 사용, role_custom → 직접 사용
@@ -107,6 +115,7 @@ class Session:
                     backend=build_backend(spec["backend"], token_store=shared_token_store),
                     allowed_roots=allowed_roots,
                     role_prompt=role_prompt,
+                    has_human=has_human,
                     on_tool_call=lambda agent_id, tool, args, result, _server=server: (
                         _server._emit_event({
                             "type": "tool",
@@ -140,6 +149,7 @@ class Session:
             task=cfg.get("task"),
             max_steps=int(cfg.get("max_steps", 0)),
             bot_manager=bot_manager,
+            has_human=has_human,
         )
         session.on_step = on_step
         session.on_tool_event = on_tool_event
@@ -223,6 +233,26 @@ class Session:
             for agent in self.agents:
                 agent.current_phase = self.protocol.phase
                 _inject_protocol_gate_state(agent, self.protocol)
+
+    async def human_send(
+        self,
+        thread_id: str,
+        content: str,
+        *,
+        mentions: list[str] | None = None,
+    ) -> str:
+        """Inject a message from the human participant into the session.
+
+        Convenience passthrough to ``server.human_send`` with ``author="human"``.
+        Raises if no human is configured (``has_human`` is False). The reply is
+        pushed to agent inboxes and absorbed as a ``[radio]`` block on their
+        next ``step()``.
+        """
+        if not self.has_human:
+            raise RuntimeError("human-in-the-loop is not enabled (no 'human:' section in config)")
+        return await self.server.human_send(
+            thread_id, author="human", content=content, mentions=mentions
+        )
 
     async def run(self, initial_prompt: str | None = None) -> int:
         """Parallel steps until every agent finishes or max_steps is hit.

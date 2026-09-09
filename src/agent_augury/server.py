@@ -21,6 +21,15 @@ from typing import Any
 
 import aiosqlite
 
+# Names reserved for the human participant. Matched case-insensitively so
+# an agent id like "Human" or "HUMAN" cannot collide with the user.
+# (USER_INTERVENTION_DESIGN.md §3.2).
+RESERVED_NAMES = frozenset({"human"})
+
+
+class ReservedNameError(ValueError):
+    """Raised when a reserved name (e.g. 'human') is used as an id."""
+
 
 async def _create_schema(db: aiosqlite.Connection) -> None:
     """Create the schema tables/indexes one by one."""
@@ -53,6 +62,7 @@ class MessageServer:
 
     def __init__(self, db_path: str | None = None) -> None:
         self._agents: set[str] = set()
+        self._humans: set[str] = set()
         self._threads: dict[str, dict[str, Any]] = {}
         # messages in global send order; each carries an int `seq` for ordering
         self._messages: list[dict[str, Any]] = []
@@ -187,10 +197,30 @@ class MessageServer:
 
     def register_agent(self, agent_id: str) -> None:
         """Idempotent, synchronous state setup (no IO involved)."""
+        if agent_id.lower() in RESERVED_NAMES:
+            raise ReservedNameError(
+                f"'{agent_id}' is a reserved name for the human participant; "
+                f"choose another agent id."
+            )
+        if agent_id in self._humans:
+            raise ValueError(f"agent id '{agent_id}' collides with a registered human id")
         if agent_id in self._agents:
             return
         self._agents.add(agent_id)
         self._inboxes[agent_id] = asyncio.Queue()
+
+    def register_human(self, human_id: str = "human") -> None:
+        """Register a human participant (separate registry from agents).
+
+        v1.0 supports only the reserved id ``"human"`` (case-insensitive).
+        The human gets its own inbox so ``ask_user`` replies and injected
+        user messages flow through the same primitives as agent messages.
+        """
+        if human_id.lower() != "human":
+            raise ValueError("human id must be 'human' in v1.0 (reserved namespace)")
+        self._humans.add(human_id)
+        if human_id not in self._inboxes:
+            self._inboxes[human_id] = asyncio.Queue()
 
     # -- primitives ---------------------------------------------------------
 
@@ -261,14 +291,84 @@ class MessageServer:
         thread = self._threads.get(thread_id)
         if thread is None:
             raise KeyError(f"no such thread: {thread_id}")
+        if author not in self._agents:
+            raise ValueError(f"author '{author}' is not a registered agent")
         if author not in thread["participants"]:
             raise ValueError(f"author {author!r} is not a participant of {thread_id}")
 
         participants = thread["participants"]
         if mentions:
             targets = [a for a in participants if a in mentions]
+            # humans are not necessarily thread participants; route mentions
+            # that target a registered human to its inbox too (§4.2 ask_user).
+            for m in mentions:
+                if m in self._humans and m not in targets:
+                    targets.append(m)
         else:
             targets = [a for a in participants if a != author]
+
+        message = {
+            "message_id": f"msg-{next(self._message_ids)}",
+            "thread_id": thread_id,
+            "author": author,
+            "content": content,
+            "mentions": list(mentions or []),
+            "delivered_to": targets,
+            "created_at": int(time.time()),
+            "seq": len(self._messages),
+        }
+        self._messages.append(message)
+        self._message_index[message["message_id"]] = message
+
+        if self._db is not None:
+            await self._persist_message(message)
+
+        for target in targets:
+            self._inboxes[target].put_nowait(message["message_id"])
+
+        for subscriber in self._subscribers:
+            subscriber(message)
+
+        self._emit_event({
+            "type": "send_message",
+            "message_id": message["message_id"],
+            "thread_id": thread_id,
+            "author": author,
+            "content": content,
+            "mentions": list(mentions or []),
+            "delivered_to": targets,
+            "timestamp": int(time.time()),
+        })
+        return message["message_id"]
+
+    async def human_send(
+        self,
+        thread_id: str,
+        *,
+        author: str,
+        content: str,
+        mentions: list[str] | None = None,
+    ) -> str:
+        """Inject a message from a human participant into the server.
+
+        The human is NOT necessarily a thread participant; its message fans
+        out to the thread's agent participants following the same §3.5.3 rule
+        as ``send_message`` (empty mentions → all participants; non-empty →
+        participants ∩ mentions). Only a registered human id may author here,
+        so a user message can never be mistaken for an agent message (§3.2).
+        """
+        await self._ensure_db()
+        thread = self._threads.get(thread_id)
+        if thread is None:
+            raise KeyError(f"no such thread: {thread_id}")
+        if author not in self._humans:
+            raise ValueError(f"author '{author}' is not a registered human")
+
+        participants = thread["participants"]
+        if mentions:
+            targets = [a for a in participants if a in mentions]
+        else:
+            targets = list(participants)
 
         message = {
             "message_id": f"msg-{next(self._message_ids)}",
@@ -329,12 +429,12 @@ class MessageServer:
     # -- inbox consumption (single consumer: step()) ------------------------
 
     def inbox_size(self, agent_id: str) -> int:
-        self._require_agent(agent_id)
+        self._require_participant(agent_id)
         return self._inboxes[agent_id].qsize()
 
     async def drain_inbox(self, agent_id: str) -> list[dict[str, Any]]:
         """Drain the caller's inbox FIFO. The only inbox consumer is step()."""
-        self._require_agent(agent_id)
+        self._require_participant(agent_id)
         q = self._inboxes[agent_id]
         out: list[dict[str, Any]] = []
         while not q.empty():
@@ -365,3 +465,8 @@ class MessageServer:
     def _require_agent(self, agent_id: str) -> None:
         if agent_id not in self._agents:
             raise KeyError(f"unknown agent: {agent_id}")
+
+    def _require_participant(self, participant_id: str) -> None:
+        """Require an inbox owner — either a registered agent or a human."""
+        if participant_id not in self._agents and participant_id not in self._humans:
+            raise KeyError(f"unknown participant: {participant_id}")

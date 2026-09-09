@@ -168,6 +168,15 @@ def _log_tool_event(event: dict[str, Any]) -> None:
             return
         args = event.get("args", {})
 
+        # ask_user: surface the question to the human prominently.
+        if tool == "ask_user":
+            question = args.get("question", "")
+            options = args.get("options")
+            _console.print(f"👤 {agent_id} asks: {question}", style="bold")
+            if options:
+                _console.print("   (options: " + " / ".join(options) + ")")
+            return
+
         # Tool icons
         icons = {
             "read_file": "📖",
@@ -254,7 +263,52 @@ async def _run_repl(cfg_path: str, initial_prompt: str | None = None, *, quiet: 
         await session.close()
 
 
-async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False) -> int:
+async def _human_input_loop(session: Session, initial_thread: str | None) -> None:
+    """Read human stdin lines and inject them as human messages (non-blocking).
+
+    Runs ``input()`` in a thread executor so a blocking read never stalls the
+    event loop. Only active when the session has ``has_human`` enabled. Each
+    non-empty line is injected via ``session.human_send``. Lines starting with
+    ``>`` are treated as instructions; empty lines are ignored.
+    """
+    loop = asyncio.get_running_loop()
+    import threading
+    stop = threading.Event()
+
+    def _read() -> str:
+        try:
+            line = input()
+        except (EOFError, KeyboardInterrupt):
+            stop.set()
+            return ""
+        return line
+
+    # Determine a thread to deliver to: prefer the first created thread.
+    # The human_send fans out to all participants when mentions is empty, so a
+    # concrete thread is only needed for threading; use initial_thread if given.
+    while not stop.is_set():
+        line = await loop.run_in_executor(None, _read)
+        line = line.strip()
+        if not line:
+            continue
+        # Deliver to the initial thread if known, else skip (no thread yet).
+        if initial_thread is not None:
+            try:
+                await session.human_send(initial_thread, content=line)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  [human] failed to deliver: {exc}", flush=True)
+        else:
+            # No thread yet — re-broadcast to the first available thread.
+            snap = session.server.snapshot()
+            if snap["threads"]:
+                tid = snap["threads"][0]["thread_id"]
+                try:
+                    await session.human_send(tid, content=line)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  [human] failed to deliver: {exc}", flush=True)
+
+
+async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False, interactive: bool = False) -> int:
     cfg = load_config(cfg_path, allow_fake=allow_fake)
 
     # D2: quiet 모드 시 step/도구 라이브 로그 억제
@@ -271,7 +325,26 @@ async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool 
     session = Session.from_config(cfg, on_step=on_step, on_tool_event=on_tool_event)
 
     try:
+        # Interactive: spawn a human input task that runs alongside the session.
+        human_task = None
+        if interactive and session.has_human:
+            print("👤 interactive mode: type messages to inject them as 'human'.", flush=True)
+            human_task = asyncio.create_task(_human_input_loop(session, None))
+        elif interactive and not session.has_human:
+            print(
+                "warning: --interactive given but no 'human:' section in config; "
+                "interactive input is disabled.",
+                flush=True,
+            )
+
         steps = await session.run(initial_prompt=initial_prompt)
+
+        if human_task is not None:
+            human_task.cancel()
+            try:
+                await human_task
+            except asyncio.CancelledError:
+                pass
 
         if session.mirror is not None:
             await session.mirror.flush()
@@ -398,6 +471,12 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="start a REPL session that keeps conversation context across multiple questions",
     )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        default=False,
+        help="enable human-in-the-loop: inject stdin lines as 'human' messages mid-session",
+    )
     args = parser.parse_args(argv)
 
     # Validate flag combinations before anything else.
@@ -416,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.repl:
                 return asyncio.run(_run_repl(args.config, quiet=args.quiet, allow_fake=args.demo))
-            return asyncio.run(_run(args.config, quiet=args.quiet, allow_fake=args.demo))
+            return asyncio.run(_run(args.config, quiet=args.quiet, allow_fake=args.demo, interactive=args.interactive))
         except Exception as exc:  # noqa: BLE001 — CLI boundary
             print(f"error: {exc}", file=sys.stderr)
             return 1

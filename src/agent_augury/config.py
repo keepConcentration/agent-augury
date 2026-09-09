@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from .server import RESERVED_NAMES
+
 _VALID_BACKEND_TYPES = {"openai", "nous", "nous_oauth"}
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -62,6 +64,14 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     for i, agent in enumerate(agents):
         if not isinstance(agent, dict) or "id" not in agent:
             raise ConfigError(f"agents[{i}] must be a mapping with an 'id'")
+        agent_id = agent["id"]
+        if not isinstance(agent_id, str):
+            raise ConfigError(f"agents[{i}].id must be a string")
+        if agent_id.lower() in RESERVED_NAMES:
+            raise ConfigError(
+                f"agents[{i}].id {agent_id!r} is reserved for the human participant; "
+                f"rename the agent (e.g. 'human-relay')"
+            )
         if not isinstance(agent.get("backend"), dict):
             raise ConfigError(f"agents[{i}].backend must be a mapping")
         backend = agent["backend"]
@@ -132,6 +142,27 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     mirror = data.get("mirror")
     if mirror is not None and isinstance(mirror, dict) and "url_env" not in mirror:
         raise ConfigError("mirror requires 'url_env' key")
+
+# human 섹션 검증 (Human-in-the-loop, USER_INTERVENTION_DESIGN.md §5)
+    human = data.get("human")
+    if human is not None:
+        if not isinstance(human, dict):
+            raise ConfigError("'human' must be a mapping")
+        human_id = human.get("id", "human")
+        if human_id.lower() != "human":
+            raise ConfigError(
+                f"human.id must be 'human' in v1.0 (reserved namespace), got {human_id!r}"
+            )
+        interface = human.get("interface", "cli")
+        if interface not in ("cli", "discord", "file"):
+            raise ConfigError(
+                f"human.interface must be one of 'cli', 'discord', 'file', got {interface!r}"
+            )
+        # v1.0: cli만 지원 (discord/file는 후속 단계)
+        if interface != "cli":
+            raise ConfigError(
+                f"human.interface {interface!r} is not supported yet — only 'cli' in v1.0"
+            )
 
 # bots 섹션 검증 (N개 봇 통합)
     bots = data.get("bots")

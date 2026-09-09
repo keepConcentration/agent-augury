@@ -171,12 +171,13 @@ async def test_read_resource_returns_snapshot_json():
 # ---------------------------------------------------------------------------
 
 
-def test_l3_exposes_six_tools():
+def test_l3_exposes_seven_tools():
     server = MessageServer()
     agent = make_agent(server, "agent-1", [])
     names = {t["name"] for t in agent.tool_specs}
     assert names == {
         "create_thread", "send_message", "read_resource",
+        "ask_user",
         "read_file", "list_directory", "write_file",
     }
 

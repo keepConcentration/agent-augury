@@ -55,7 +55,18 @@ When investigating a codebase, start with `list_directory` to understand the
 structure, then use `read_file` on relevant files. Always read files before
 making claims about their contents.
 
-{role_instructions}{phase_instructions}{language_instruction}
+{role_instructions}{human_instructions}{phase_instructions}{language_instruction}
+"""
+
+_HUMAN_INSTRUCTIONS = """\
+Human-in-the-loop rules:
+- `human` (the user) is a member of this team.
+- Use `ask_user` to ask questions or request confirmation. It is
+  fire-and-forget — keep working; the reply arrives later as [radio].
+- If the task is ambiguous or an important decision (submission, file
+  write, direction change) is coming, ask the user FIRST.
+- User replies appear as `from human: ...` in [radio] blocks.
+- Match the user's language when asking.
 """
 
 # Phase-specific instruction templates
@@ -94,7 +105,7 @@ Current phase: **P5 SUBMIT**
 }
 
 
-def render_system_prompt(agent_id: str, phase: str = "", language: str = "", role_prompt: str = "") -> str:
+def render_system_prompt(agent_id: str, phase: str = "", language: str = "", role_prompt: str = "", has_human: bool = False) -> str:
     """Render the system prompt for an agent.
 
     Args:
@@ -105,10 +116,13 @@ def render_system_prompt(agent_id: str, phase: str = "", language: str = "", rol
             If non-empty, a language instruction is appended to the prompt.
         role_prompt: The agent's role definition text. If non-empty, a role
             block is prepended to the prompt.
+        has_human: When True, human-in-the-loop rules are included so the
+            agent knows how to ask the user via ``ask_user``.
     """
     role_instructions = ""
     if role_prompt:
         role_instructions = f"\nYour role:\n{role_prompt}\n"
+    human_instructions = _HUMAN_INSTRUCTIONS if has_human else ""
     phase_instructions = _PHASE_INSTRUCTIONS.get(phase, "")
     language_instruction = ""
     if language:
@@ -119,6 +133,7 @@ def render_system_prompt(agent_id: str, phase: str = "", language: str = "", rol
     return SYSTEM_PROMPT_TEMPLATE.format(
         agent_id=agent_id,
         role_instructions=role_instructions,
+        human_instructions=human_instructions,
         phase_instructions=phase_instructions,
         language_instruction=language_instruction,
     )

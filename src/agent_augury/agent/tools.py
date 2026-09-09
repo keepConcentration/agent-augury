@@ -70,6 +70,29 @@ class ToolBox:
                 "schema": {"type": "object", "properties": {}},
             },
             {
+                "name": "ask_user",
+                "description": (
+                    "Ask the human user a question or request confirmation. "
+                    "Fire-and-forget: returns immediately; the user's reply arrives "
+                    "later as a [radio] message from 'human'. Use options to give "
+                    "clear choices. Prefix important requests with REQUEST_APPROVAL: "
+                    "when a human gate is configured."
+                ),
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "thread": {"type": "string", "description": "thread id"},
+                        "question": {"type": "string"},
+                        "options": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "optional answer choices",
+                        },
+                    },
+                    "required": ["thread", "question"],
+                },
+            },
+            {
                 "name": "read_file",
                 "description": "Read a file's content from the filesystem. Returns the file content as text.",
                 "schema": {
@@ -130,6 +153,18 @@ class ToolBox:
                 "timestamp": int(__import__("time").time()),
             })
             return _json(snap)
+        if name == "ask_user":
+            content = f"[ask-user] {args['question']}"
+            options = args.get("options")
+            if options:
+                content += "  (옵션: " + " / ".join(options) + ")"
+            mid = await self.server.send_message(
+                args["thread"],
+                author=agent_id,
+                content=content,
+                mentions=["human"],
+            )
+            return _json({"message_id": mid, "status": "question_delivered"})
         if name == "read_file":
             return await self._read_file(args)
         if name == "list_directory":

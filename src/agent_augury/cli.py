@@ -97,24 +97,56 @@ def _resolve_output_path(raw: str | None, default: Path = _DEFAULT_OUTPUT_PATH) 
 
 
 def _prompt_multiline(prompt: str) -> str:
-    """Read a multi-line free-text input (for tasks/questions).
+    """Read a multi-line free-text input (for tasks/questions) using prompt_toolkit.
 
-    Reads lines until an empty line (Enter on a blank line) terminates the
-    block — so pasted multi-line text isn't cut off at the first newline.
-    When stdin is exhausted (EOFError, e.g. piped input), returns what was
-    read so far. Returns the joined text, stripped.
+    Uses ``PromptSession(multiline=True)`` so that pasted multi-line text
+    (including blank lines) is preserved.  Submission is via **Ctrl+Enter**
+    or **Esc+Enter** — plain Enter inserts a newline.
+
+    In a non-TTY environment (pipe / redirect) it falls back to reading the
+    entire stdin.
     """
     print(prompt, flush=True)
-    lines: list[str] = []
-    while True:
-        try:
-            line = input()
-        except (EOFError, KeyboardInterrupt):
-            break
-        if line == "":
-            break
-        lines.append(line)
-    return "\n".join(lines).strip()
+
+    # Non-TTY fallback: read everything from stdin.
+    if not sys.stdin.isatty():
+        return sys.stdin.read().strip()
+
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.key_binding import KeyBindings
+
+    kb = KeyBindings()
+
+    @kb.add("c-enter")
+    def _submit_ctrl_enter(event: object) -> None:
+        buff = event.current_buffer
+        buff.validate_and_handle()
+
+    @kb.add("escape", "enter")
+    def _submit_esc_enter(event: object) -> None:
+        buff = event.current_buffer
+        buff.validate_and_handle()
+
+    history_path = Path.home() / ".agent-augury" / "human_history.txt"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+
+    session = PromptSession(
+        history=FileHistory(str(history_path)),
+        multiline=True,
+        key_bindings=kb,
+    )
+
+    # Append the key hint to the prompt text.
+    hint = "  (Ctrl+Enter 또는 Esc+Enter로 제출)"
+    full_prompt = f"{prompt.rstrip(chr(10))}{hint}\n"
+
+    try:
+        text = session.prompt(full_prompt)
+    except (EOFError, KeyboardInterrupt):
+        text = ""
+
+    return text.strip()
 
 
 def _prompt_output_path(default: Path = _DEFAULT_OUTPUT_PATH) -> Path:

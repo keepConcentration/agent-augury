@@ -306,7 +306,8 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
              patch("agent_augury.cli.check_tty", return_value=True), \
              patch("agent_augury.cli.model_config_exists", return_value=False), \
              patch("agent_augury.wizard.save_model_config"), \
-             patch("agent_augury.cli._run", fake_run):
+             patch("agent_augury.cli._run", fake_run), \
+             patch("agent_augury.cli._prompt_multiline", return_value="test task"):
             rc = main(["--output", str(output_path)])
 
     assert rc == 0

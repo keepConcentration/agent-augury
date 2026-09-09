@@ -189,7 +189,7 @@ def test_wizard_flow_quiet_flag_passed(tmp_path):
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
          patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
-         patch("builtins.input", side_effect=["test task", ""]):
+         patch("agent_augury.cli._prompt_multiline", return_value="test task"):
         result = _run_wizard_flow(output_path=out_path, quiet=True)
 
     assert result == 0
@@ -209,7 +209,7 @@ def test_wizard_flow_quiet_false_by_default(tmp_path):
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
          patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
-         patch("builtins.input", side_effect=["test task", ""]):
+         patch("agent_augury.cli._prompt_multiline", return_value="test task"):
         result = _run_wizard_flow(output_path=out_path)
 
     assert result == 0

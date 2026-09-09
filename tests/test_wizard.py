@@ -332,7 +332,8 @@ def test_cli_wizard_generates_valid_yaml(tmp_path, monkeypatch):
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.cli.model_config_exists", return_value=False), \
-         patch("agent_augury.cli.asyncio.run", return_value=0):
+         patch("agent_augury.cli.asyncio.run", return_value=0), \
+         patch("agent_augury.cli._prompt_multiline", return_value="e2e task"):
         rc = main(["--output", str(output)])
 
     assert rc == 0
@@ -363,10 +364,6 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
     os.chdir(tmp_path)
     try:
         # Only task input needed — model settings reused, no save prompt.
-        inputs = iter([
-            "e2e task",          # initial task (multi-line: first line)
-            "",                  # empty line terminates the task block
-        ])
         existing = {
             "mode": "L3",
             "max_steps": 10,
@@ -374,7 +371,7 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
                 {"id": "a1", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}},
             ],
         }
-        with patch("builtins.input", side_effect=lambda *args: next(inputs)), \
+        with patch("agent_augury.cli._prompt_multiline", return_value="e2e task"), \
              patch("agent_augury.cli.check_tty", return_value=True), \
              patch("agent_augury.cli.model_config_exists", return_value=True), \
              patch("agent_augury.cli.load_model_config", return_value=existing), \

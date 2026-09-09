@@ -404,7 +404,8 @@ def test_cli_wizard_default_is_repl(tmp_path, monkeypatch):
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.cli.model_config_exists", return_value=False), \
-         patch("agent_augury.cli.asyncio.run", return_value=0) as mock_run:
+         patch("agent_augury.cli.asyncio.run", return_value=0) as mock_run, \
+         patch("agent_augury.cli._prompt_multiline", return_value="e2e task"):
         rc = main(["--output", str(output)])
 
     assert rc == 0

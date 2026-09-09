@@ -279,14 +279,15 @@ class Session:
 
     async def _run_impl(self, initial_prompt: str | None = None) -> int:
         """Core run logic (separated so start/stop wraps it cleanly)."""
-        if initial_prompt:
-            self.agents[0].conversation.append({"role": "user", "content": initial_prompt})
-        elif self.task:
-            self.agents[0].conversation.append({"role": "user", "content": self.task})
+        # Broadcast the initial task to ALL agents (not just agents[0]), so
+        # every worker gets the same user prompt and acts on it per its role.
+        user_text = initial_prompt or self.task or ""
+        if user_text:
+            for agent in self.agents:
+                agent.conversation.append({"role": "user", "content": user_text})
 
         # v0.3: detect user language from initial prompt → inject into all agents
         from .agent.system_prompt import detect_language
-        user_text = initial_prompt or self.task or ""
         detected_lang = detect_language(user_text)
         if detected_lang:
             for agent in self.agents:

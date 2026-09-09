@@ -106,8 +106,6 @@ def _prompt_multiline(prompt: str) -> str:
     In a non-TTY environment (pipe / redirect) it falls back to reading the
     entire stdin.
     """
-    print(prompt, flush=True)
-
     # Non-TTY fallback: read everything from stdin.
     if not sys.stdin.isatty():
         return sys.stdin.read().strip()
@@ -134,7 +132,7 @@ def _prompt_multiline(prompt: str) -> str:
 
     # Append the key hint to the prompt text.
     hint = "  (Esc+Enter로 제출)"
-    full_prompt = f"{prompt.rstrip(chr(10))}{hint}\n"
+    full_prompt = f"{prompt.rstrip()}{hint} "
 
     try:
         text = session.prompt(full_prompt)

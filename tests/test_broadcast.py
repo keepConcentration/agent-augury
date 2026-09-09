@@ -103,8 +103,8 @@ def _make_run_recorder():
     """
     calls = []
 
-    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False, allow_fake=False, interactive=False):
-        calls.append({"cfg_path": cfg_path, "initial_prompt": initial_prompt, "quiet": quiet, "allow_fake": allow_fake, "interactive": interactive})
+    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False, allow_fake=False):
+        calls.append({"cfg_path": cfg_path, "initial_prompt": initial_prompt, "quiet": quiet, "allow_fake": allow_fake})
         return 0
 
     return calls, fake_run

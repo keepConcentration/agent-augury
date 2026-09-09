@@ -1,4 +1,4 @@
-"""Fake ModelBackend — deterministic completions for tests & L2/L3 verification."""
+"""Fake ModelBackend — deterministic completions for tests."""
 
 from __future__ import annotations
 

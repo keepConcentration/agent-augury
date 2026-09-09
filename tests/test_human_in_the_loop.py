@@ -17,7 +17,7 @@ def _hitl_cfg() -> dict:
     return build_cfg(
         max_steps=20,
         task="DB 선택을 확인해줘",
-        human={"id": "human", "interface": "cli"},
+        human={"id": "human"},
         agents=[
             {
                 "id": "agent-1",
@@ -87,19 +87,7 @@ async def test_human_in_the_loop_ask_user_absorb_reply():
     await session.close()
 
 
-@pytest.mark.asyncio
-async def test_human_send_requires_human_enabled():
-    """human 섹션 없으면 Session.human_send가 RuntimeError."""
-    cfg = build_cfg(
-        agents=[
-            {"id": "agent-1", "backend": {"type": "fake", "script": ["ok"]}},
-        ],
-    )
-    session = Session.from_config(cfg)
-    assert session.has_human is False
-    with pytest.raises(RuntimeError):
-        await session.human_send("thread-1", content="hi")
-    await session.close()
+
 
 
 @pytest.mark.asyncio
@@ -113,12 +101,8 @@ async def test_ask_user_tool_spec_exposed_with_human():
 
 
 @pytest.mark.asyncio
-async def test_ask_user_tool_spec_absent_without_human():
-    """human 섹션이 없으면 ask_user 도구는 여전히 specs에 있지만 HITL 프롬프트는 없다.
-
-    (ask_user 도구 자체는 항상 노출되지만, human이 없으면 동작 시 실패한다.
-    여기서는 도구 존재와 프롬프트 부재만 확인.)
-    """
+async def test_ask_user_tool_spec_always_present():
+    """ask_user 도구는 항상 노출 (human이 코드에 내장되어 항상 켜짐)."""
     cfg = build_cfg(
         agents=[{"id": "agent-1", "backend": {"type": "fake", "script": ["ok"]}}],
     )
@@ -127,9 +111,9 @@ async def test_ask_user_tool_spec_absent_without_human():
     # ask_user 도구 spec은 항상 존재 (툴박스에 고정)
     names = [t["name"] for t in agent.tool_specs]
     assert "ask_user" in names
-    # has_human이 False면 system prompt에 HITL 블록이 없다
+    # has_human이 항상 True이므로 system prompt에 HITL 블록이 포함됨
     sys_content = agent.conversation[0]["content"]
-    assert "Human-in-the-loop rules" not in sys_content
+    assert "Human-in-the-loop rules" in sys_content
     await session.close()
 
 

@@ -110,7 +110,6 @@ def test_wizard_openai_backend_produces_valid_config(tmp_path):
          patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
 
-    assert cfg["mode"] == "L3"
     assert cfg["max_steps"] == 0
     assert len(cfg["agents"]) == 1
     assert cfg["agents"][0]["id"] == "agent-1"
@@ -127,7 +126,7 @@ def test_wizard_openai_backend_produces_valid_config(tmp_path):
     cfg_path = tmp_path / "check.yaml"
     cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     loaded = load_config(cfg_path)
-    assert loaded["mode"] == "L3"
+    assert loaded["max_steps"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +238,6 @@ def test_wizard_cancels_on_eof():
 def test_wizard_reuses_existing_model_config_skips_model_settings(tmp_path):
     """When existing_model_config is provided, model settings are reused."""
     existing = {
-        "mode": "L3",
         "max_steps": 50,
         "agents": [
             {"id": "a1", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}},
@@ -251,7 +249,6 @@ def test_wizard_reuses_existing_model_config_skips_model_settings(tmp_path):
         cfg = run_wizard(existing_model_config=existing)
 
     # Model settings come from existing config.
-    assert cfg["mode"] == "L3"
     assert cfg["max_steps"] == 50
     assert len(cfg["agents"]) == 1
     assert cfg["agents"][0]["id"] == "a1"
@@ -278,10 +275,11 @@ def test_cli_without_config_non_tty_returns_error(capsys):
 def test_cli_with_config_still_works(tmp_path, capsys, monkeypatch):
     """Existing --config mode must be unaffected by wizard changes."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    from unittest.mock import patch
+
     from agent_augury.cli import main
 
     cfg = {
-        "mode": "L3",
         "max_steps": 5,
         "task": "smoke test",
         "agents": [
@@ -291,9 +289,16 @@ def test_cli_with_config_still_works(tmp_path, capsys, monkeypatch):
     cfg_path = tmp_path / "test.yaml"
     cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-    rc = main(["--config", str(cfg_path)])
-    assert rc == 0
+    # Mock the backend to avoid real API calls
+    # Mock the TUI adapter to avoid TTY issues
+    with patch("agent_augury.backends_factory.build_backend") as mock_build, \
+         patch("agent_augury.cli._make_tui_adapter") as mock_tui:
+        from agent_augury.backend.fake import FakeModelBackend
+        mock_build.return_value = FakeModelBackend(script=["hello"])
+        mock_tui.return_value = None  # TUI adapter is mocked
+        rc = main(["--config", str(cfg_path)])
     out = capsys.readouterr().out
+    assert rc == 0
     assert "💭 a1:" in out
 
 
@@ -335,7 +340,6 @@ def test_cli_wizard_generates_valid_yaml(tmp_path, monkeypatch):
 
     # Verify the generated YAML is valid.
     loaded = load_config(output)
-    assert loaded["mode"] == "L3"
     assert loaded["agents"][0]["backend"]["type"] == "openai"
     assert loaded["agents"][0]["backend"]["model"] == "gpt-4o-mini"
 
@@ -383,7 +387,6 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
         assert output.exists()
 
         loaded = load_config(output)
-        assert loaded["mode"] == "L3"
         assert loaded["agents"][0]["backend"]["type"] == "openai"
         assert loaded["agents"][0]["backend"]["model"] == "gpt-4o-mini"
     finally:

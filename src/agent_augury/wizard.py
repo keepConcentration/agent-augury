@@ -488,7 +488,7 @@ def run_wizard(
         save_model_config(max_steps, agents)
 
     return {
-        "mode": "L3",
         "max_steps": max_steps,
+        "human": {"id": "human"},
         "agents": agents,
     }

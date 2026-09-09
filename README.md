@@ -190,16 +190,7 @@ The orchestrator/architect/backend/frontend split above is just one example — 
 
 agent-augury models **you** as a first-class participant.
 
-Add a `human:` section to the config and agents gain an `ask_user` tool, so they can ask you questions or request confirmation mid-session — while continuing to work (fire-and-forget, matching the passive philosophy).
-
-```yaml
-human:
-  id: human
-  interface: cli     # cli (plain input) | tui (always-on prompt) | discord | file
-  tui:               # used when interface: tui
-    multiline: true
-    history_file: ~/.agent-augury/human_history.txt
-```
+Agents gain an `ask_user` tool, so they can ask you questions or request confirmation mid-session — while continuing to work (fire-and-forget, matching the passive philosophy).
 
 - `ask_user(question, options)` — agent asks; your reply arrives as a `[radio]` block on its next `step()`.
 - `human_send()` — the runtime injects your message into the same inbox path as any agent message.
@@ -207,7 +198,7 @@ human:
 
 ### Always-on input (TUI)
 
-Set `interface: tui` to get a **persistent input bar** (powered by prompt_toolkit). It is enabled automatically whenever a `human:` section is present — no extra flag needed.
+TUI (powered by prompt_toolkit) is **always enabled** — no extra flag or config section needed.
 
 - an input line pinned to the bottom that never scrolls away — type anytime, even while agents work
 - `ask_user` questions and options pinned in a bottom toolbar, so they don't disappear into the log
@@ -364,7 +355,6 @@ agent-augury --demo --config examples/human_tui_demo.yaml
 | `--output <path>` | Wizard output path (only valid without `--config`) |
 | `--quiet` | Suppress broadcast event output (only show final summary) |
 | `--repl` | REPL mode — keep conversation context across multiple questions |
-| `--no-interactive` | Disable human-in-the-loop input (on by default when a `human:` section is configured) |
 
 ---
 

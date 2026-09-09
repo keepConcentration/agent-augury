@@ -99,10 +99,10 @@ class Session:
         # Shared token store so all backends use the same OAuth tokens
         shared_token_store = token_store or TokenStore()
 
-        # Human-in-the-loop: register the human participant if configured.
-        has_human = cfg.get("human") is not None
-        if has_human:
-            server.register_human()
+        # Human-in-the-loop: 항상 내장 (v1.0)
+        # config에 human 섹션이 있든 없든, 항상 켜져 있음
+        has_human = True
+        server.register_human()
 
         for spec in cfg["agents"]:
             server.register_agent(spec["id"])

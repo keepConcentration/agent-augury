@@ -11,18 +11,8 @@
 # In TUI mode (human.interface: tui), the ask_user question is pinned to the
 # bottom toolbar and the user can respond by typing the option number.
 
-mode: L3
 max_steps: 20
 task: "DB 선택을 확인해줘"
-
-human:
-  id: human
-  interface: tui
-  tui:
-    response_format: text
-    input_prompt: "👤 > "
-    multiline: true
-    pin_options: true
 
 agents:
   - id: agent-1

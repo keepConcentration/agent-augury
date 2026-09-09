@@ -19,7 +19,6 @@ from agent_augury.session import Session
 
 def _make_cfg(tmp_path: Path, task: str = "test") -> Path:
     cfg = {
-        "mode": "L3",
         "max_steps": 5,
         "task": task,
         "agents": [

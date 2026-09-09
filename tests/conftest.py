@@ -25,7 +25,6 @@ def build_cfg(**overrides):
     production configs after the fake-backend removal from _VALID_BACKEND_TYPES).
     """
     cfg: dict = {
-        "mode": "L3",
         "max_steps": 20,
         "task": "test",
         "agents": [],

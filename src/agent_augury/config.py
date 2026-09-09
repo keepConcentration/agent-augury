@@ -47,16 +47,8 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     # Expand ${ENV_VAR} references from os.environ
     data = _expand_env_refs(data)
 
-    # mode key is accepted for backward compatibility but ignored.
-    # agent-augury is L3-only as of v0.3.
-    mode = data.get("mode", "L3")
-    if mode not in ("L2", "L3"):
-        raise ConfigError(f"mode must be 'L3' (or omitted), got {mode!r}")
-    if mode == "L2":
-        raise ConfigError(
-            "L2 contrast mode removed — agent-augury is L3-only as of v0.3. "
-            "Use 'mode: L3' or omit the key."
-        )
+    # mode 키는 v1.0부터 코드에 내장 (항상 L3, config에서 무시)
+    data.pop("mode", None)
 
     agents = data.get("agents")
     if not isinstance(agents, list) or not agents:
@@ -143,48 +135,12 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     if mirror is not None and isinstance(mirror, dict) and "url_env" not in mirror:
         raise ConfigError("mirror requires 'url_env' key")
 
-# human 섹션 검증 (Human-in-the-loop, USER_INTERVENTION_DESIGN.md §5)
+    # human 섹션은 v1.0부터 코드에 내장 (config에서 무시)
+    # human 참여 + TUI는 항상 켜져 있음
     human = data.get("human")
-    if human is not None:
-        if not isinstance(human, dict):
-            raise ConfigError("'human' must be a mapping")
-        human_id = human.get("id", "human")
-        if human_id.lower() != "human":
-            raise ConfigError(
-                f"human.id must be 'human' in v1.0 (reserved namespace), got {human_id!r}"
-            )
-        interface = human.get("interface", "cli")
-        if interface not in ("cli", "discord", "file", "tui"):
-            raise ConfigError(
-                f"human.interface must be one of 'cli', 'discord', 'file', 'tui', got {interface!r}"
-            )
-        # v1.0: cli/tui 지원 (discord/file는 후속 단계)
-        if interface not in ("cli", "tui"):
-            raise ConfigError(
-                f"human.interface {interface!r} is not supported yet — only 'cli' and 'tui' in v1.0"
-            )
-
-        # v1.0: human.tui 섹션 검증 (interface: tui일 때만 사용)
-        tui = human.get("tui")
-        if tui is not None:
-            if not isinstance(tui, dict):
-                raise ConfigError("'human.tui' must be a mapping")
-            allowed_tui_keys = {
-                "response_format", "history_file", "input_prompt",
-                "multiline", "full_screen", "choice_queue", "pin_options",
-            }
-            for key in tui:
-                if key not in allowed_tui_keys:
-                    raise ConfigError(
-                        f"human.tui contains unknown key {key!r} — "
-                        f"allowed: {sorted(allowed_tui_keys)}"
-                    )
-            # Validate response_format if present
-            rf = tui.get("response_format", "text")
-            if rf not in ("text", "number"):
-                raise ConfigError(
-                    f"human.tui.response_format must be 'text' or 'number', got {rf!r}"
-                )
+    if human is not None and isinstance(human, dict):
+        # human 섹션이 있으면 무시 (경고 없음) — 코드에 내장됨
+        pass
 
 # bots 섹션 검증 (N개 봇 통합)
     bots = data.get("bots")
@@ -208,7 +164,6 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
                     f"bots[{i}].channel_id must be an integer, got {bot['channel_id']!r}"
                 ) from exc
 
-    data["mode"] = "L3"
     data.setdefault("task", None)
     data.setdefault("max_steps", 0)
     return data

@@ -12,6 +12,9 @@ from tests.conftest import build_cfg
 
 def write_cfg(tmp_path, body: dict):
     p = tmp_path / "session.yaml"
+    # human 섹션이 없으면 기본값 추가 (v1.0부터 human은 필수)
+    if "human" not in body and "mode" in body:
+        body["human"] = {"id": "human"}
     p.write_text(yaml.safe_dump(body), encoding="utf-8")
     return p
 
@@ -43,9 +46,8 @@ FAKE_CFG = build_cfg(
 # ---------------------------------------------------------------------------
 
 
-def test_load_config_parses_mode_agents_task(tmp_path):
+def test_load_config_parses_agents_task(tmp_path):
     cfg = load_config(write_cfg(tmp_path, {
-        "mode": "L3",
         "max_steps": 12,
         "task": "find the answer",
         "agents": [
@@ -53,7 +55,6 @@ def test_load_config_parses_mode_agents_task(tmp_path):
             {"id": "agent-2", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}},
         ],
     }))
-    assert cfg["mode"] == "L3"
     assert [a["id"] for a in cfg["agents"]] == ["agent-1", "agent-2"]
     assert cfg["task"] == "find the answer"
     assert cfg["max_steps"] == 12
@@ -65,15 +66,16 @@ def test_load_config_rejects_missing_agents(tmp_path):
         load_config(p)
 
 
-def test_load_config_rejects_bad_mode(tmp_path):
-    bad = {
+def test_load_config_ignores_mode_key(tmp_path):
+    """mode 키는 무시됨 (v1.0부터 코드에 내장, 항상 L3)."""
+    cfg = load_config(write_cfg(tmp_path, {
         "mode": "L9",
         "agents": [
             {"id": "agent-1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}},
         ],
-    }
-    with pytest.raises(ConfigError):
-        load_config(write_cfg(tmp_path, bad))
+    }))
+    # mode 키는 무시되므로 정상 로드됨
+    assert "mode" not in cfg
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +225,14 @@ def test_cli_accepts_gate_config(tmp_path, capsys, monkeypatch):
     # (fake is no longer valid in production configs after removal from _VALID_BACKEND_TYPES)
     with patch("agent_augury.cli.load_config") as mock_load:
         mock_load.return_value = GATE_CFG
-        rc = main(["--config", str(write_cfg(tmp_path, {}))])
+        # Mock the backend to avoid real API calls
+        # Mock the TUI adapter to avoid TTY issues
+        with patch("agent_augury.backends_factory.build_backend") as mock_build, \
+             patch("agent_augury.cli._make_tui_adapter") as mock_tui:
+            from agent_augury.backend.fake import FakeModelBackend
+            mock_build.return_value = FakeModelBackend(script=["hello"])
+            mock_tui.return_value = None  # TUI adapter is mocked
+            rc = main(["--config", str(write_cfg(tmp_path, {}))])
     out = capsys.readouterr().out
     assert rc == 0
     assert "gate=OPEN" in out
@@ -324,7 +333,14 @@ def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys, monkeypatch):
     # Mock load_config to return a config with fake backends
     with patch("agent_augury.cli.load_config") as mock_load:
         mock_load.return_value = FAKE_CFG
-        rc = main(["--config", str(write_cfg(tmp_path, {}))])
+        # Mock the backend to avoid real API calls
+        # Mock the TUI adapter to avoid TTY issues
+        with patch("agent_augury.backends_factory.build_backend") as mock_build, \
+             patch("agent_augury.cli._make_tui_adapter") as mock_tui:
+            from agent_augury.backend.fake import FakeModelBackend
+            mock_build.return_value = FakeModelBackend(script=["hello"])
+            mock_tui.return_value = None  # TUI adapter is mocked
+            rc = main(["--config", str(write_cfg(tmp_path, {}))])
     out = capsys.readouterr().out
     assert rc == 0
     assert "💭 agent-1:" in out and "💭 agent-2:" in out

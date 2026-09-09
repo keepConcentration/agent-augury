@@ -6,7 +6,6 @@
 #
 # Mirrors examples/p1_to_p5_demo.py for YAML-driven E2E verification.
 
-mode: L3
 max_steps: 50
 protocol:
   participants:

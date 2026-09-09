@@ -15,7 +15,6 @@
 # 참고: 봇 토큰은 환경변수에서 읽으므로 YAML에는 env 이름만 기록합니다.
 #       실제 토큰은 .env 파일(또는 셸 환경)에 두고, 절대 git에 커밋하지 마세요.
 
-mode: L3
 max_steps: 10
 task: "Multi-agent collaboration with Discord bot mirroring"
 

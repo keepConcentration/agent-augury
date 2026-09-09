@@ -7,7 +7,6 @@ from agent_augury.config import load_config
 def test_consensus_openai_yaml_loads():
     """The real-backend example config must pass validation."""
     cfg = load_config("examples/consensus_openai.yaml")
-    assert cfg["mode"] == "L3"
     assert cfg["max_steps"] == 30
     assert cfg["gate"]["thread_name"] == "plan"
     assert len(cfg["agents"]) == 2

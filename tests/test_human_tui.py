@@ -349,7 +349,7 @@ async def test_tui_pipeinput_e2e_ask_user_flow(tmp_path):
     cfg = build_cfg(
         max_steps=20,
         task="DB 선택을 확인해줘",
-        human={"id": "human", "interface": "cli"},  # cli for test compat
+        human={"id": "human"},
         agents=[
             {
                 "id": "agent-1",
@@ -429,19 +429,17 @@ async def test_tui_pipeinput_e2e_ask_user_flow(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_config_accepts_tui_interface(tmp_path):
-    """config.py accepts human.interface: tui."""
+def test_config_human_optional(tmp_path):
+    """config.py는 human 섹션이 없어도 정상 동작 (코드에 내장)."""
     import yaml
 
     from agent_augury.config import load_config
 
-    cfg_path = tmp_path / "tui.yaml"
+    cfg_path = tmp_path / "no_human.yaml"
     cfg_path.write_text(
         yaml.safe_dump({
-            "mode": "L3",
             "max_steps": 10,
             "task": "test",
-            "human": {"id": "human", "interface": "tui"},
             "agents": [
                 {
                     "id": "agent-1",
@@ -455,25 +453,53 @@ def test_config_accepts_tui_interface(tmp_path):
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
-    assert cfg["human"]["interface"] == "tui"
+    # human 섹션이 없어도 정상 동작
+    assert "human" not in cfg or cfg.get("human") is None
 
 
-def test_config_rejects_unknown_tui_key(tmp_path):
-    """config.py rejects unknown keys in human.tui."""
+def test_config_human_interface_ignored(tmp_path):
+    """config.py는 human.interface 키를 무시한다 (항상 TUI 고정)."""
     import yaml
 
-    from agent_augury.config import ConfigError, load_config
+    from agent_augury.config import load_config
+
+    cfg_path = tmp_path / "tui.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "max_steps": 10,
+            "task": "test",
+            "human": {"id": "human", "interface": "cli"},
+            "agents": [
+                {
+                    "id": "agent-1",
+                    "backend": {
+                        "type": "nous_oauth",
+                        "model": "test-model",
+                    },
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    # interface 키는 무시됨 (검증 안 함)
+    assert cfg.get("human", {}).get("id") == "human"
+
+
+def test_config_human_tui_keys_ignored(tmp_path):
+    """config.py는 human.tui 키를 검증하지 않고 무시한다 (코드에 내장)."""
+    import yaml
+
+    from agent_augury.config import load_config
 
     cfg_path = tmp_path / "bad_tui.yaml"
     cfg_path.write_text(
         yaml.safe_dump({
-            "mode": "L3",
             "max_steps": 10,
             "task": "test",
             "human": {
                 "id": "human",
-                "interface": "tui",
-                "tui": {"unknown_key": True},
+                "tui": {"unknown_key": True, "response_format": "invalid"},
             },
             "agents": [
                 {
@@ -487,38 +513,6 @@ def test_config_rejects_unknown_tui_key(tmp_path):
         }),
         encoding="utf-8",
     )
-    with pytest.raises(ConfigError, match="unknown key"):
-        load_config(cfg_path)
-
-
-def test_config_rejects_bad_response_format(tmp_path):
-    """config.py rejects invalid response_format."""
-    import yaml
-
-    from agent_augury.config import ConfigError, load_config
-
-    cfg_path = tmp_path / "bad_rf.yaml"
-    cfg_path.write_text(
-        yaml.safe_dump({
-            "mode": "L3",
-            "max_steps": 10,
-            "task": "test",
-            "human": {
-                "id": "human",
-                "interface": "tui",
-                "tui": {"response_format": "invalid"},
-            },
-            "agents": [
-                {
-                    "id": "agent-1",
-                    "backend": {
-                        "type": "nous_oauth",
-                        "model": "test-model",
-                    },
-                },
-            ],
-        }),
-        encoding="utf-8",
-    )
-    with pytest.raises(ConfigError, match="response_format"):
-        load_config(cfg_path)
+    # human.tui 검증을 하지 않으므로 정상 로드됨
+    cfg = load_config(cfg_path)
+    assert cfg["human"]["tui"]["unknown_key"] is True

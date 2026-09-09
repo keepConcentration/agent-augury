@@ -316,6 +316,8 @@ class TestConfigValidation:
 mode: L3
 max_steps: 10
 task: test
+human:
+  id: human
 agents:
   - id: agent-1
     backend:

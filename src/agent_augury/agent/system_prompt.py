@@ -55,7 +55,7 @@ When investigating a codebase, start with `list_directory` to understand the
 structure, then use `read_file` on relevant files. Always read files before
 making claims about their contents.
 
-{phase_instructions}{language_instruction}
+{role_instructions}{phase_instructions}{language_instruction}
 """
 
 # Phase-specific instruction templates
@@ -94,7 +94,7 @@ Current phase: **P5 SUBMIT**
 }
 
 
-def render_system_prompt(agent_id: str, phase: str = "", language: str = "") -> str:
+def render_system_prompt(agent_id: str, phase: str = "", language: str = "", role_prompt: str = "") -> str:
     """Render the system prompt for an agent.
 
     Args:
@@ -103,7 +103,12 @@ def render_system_prompt(agent_id: str, phase: str = "", language: str = "") -> 
             instructions are included.
         language: Detected user language (e.g. "Korean", "English").
             If non-empty, a language instruction is appended to the prompt.
+        role_prompt: The agent's role definition text. If non-empty, a role
+            block is prepended to the prompt.
     """
+    role_instructions = ""
+    if role_prompt:
+        role_instructions = f"\nYour role:\n{role_prompt}\n"
     phase_instructions = _PHASE_INSTRUCTIONS.get(phase, "")
     language_instruction = ""
     if language:
@@ -113,6 +118,7 @@ def render_system_prompt(agent_id: str, phase: str = "", language: str = "") -> 
         )
     return SYSTEM_PROMPT_TEMPLATE.format(
         agent_id=agent_id,
+        role_instructions=role_instructions,
         phase_instructions=phase_instructions,
         language_instruction=language_instruction,
     )

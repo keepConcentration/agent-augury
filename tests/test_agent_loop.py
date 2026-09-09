@@ -402,3 +402,29 @@ def test_render_system_prompt_language_with_phase():
     assert "Language instruction" in prompt
     assert "Korean" in prompt
     assert "P1 EXPLORE" in prompt
+
+
+def test_render_system_prompt_with_role_prompt():
+    """role_prompt가 지정되면 시스템 프롬프트에 역할 블록이 포함됨."""
+    from agent_augury.agent.system_prompt import render_system_prompt
+    prompt = render_system_prompt("agent-1", role_prompt="너는 오케스트레이터다.")
+    assert "Your role:" in prompt
+    assert "너는 오케스트레이터다." in prompt
+
+
+def test_render_system_prompt_with_role_and_phase():
+    """role_prompt와 phase가 모두 지정되면 둘 다 포함됨."""
+    from agent_augury.agent.system_prompt import render_system_prompt
+    prompt = render_system_prompt(
+        "agent-1", phase="P1_EXPLORE", role_prompt="너는 오케스트레이터다."
+    )
+    assert "Your role:" in prompt
+    assert "너는 오케스트레이터다." in prompt
+    assert "P1 EXPLORE" in prompt
+
+
+def test_render_system_prompt_without_role_prompt():
+    """role_prompt가 없으면 역할 블록이 포함되지 않음 (하위호환)."""
+    from agent_augury.agent.system_prompt import render_system_prompt
+    prompt = render_system_prompt("agent-1")
+    assert "Your role:" not in prompt

@@ -94,6 +94,42 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
             if "model" not in backend:
                 raise ConfigError(f"agents[{i}] nous_oauth backend requires 'model' key")
 
+    # agents 섹션 내 role/role_custom 검증
+    roles = data.get("roles")
+    if roles is not None:
+        if not isinstance(roles, dict):
+            raise ConfigError("'roles' must be a mapping")
+        for role_name, role_def in roles.items():
+            if not isinstance(role_def, dict):
+                raise ConfigError(f"roles[{role_name!r}] must be a mapping")
+            # 허용된 키만 검증 (description, prompt)
+            for key in role_def:
+                if key not in ("description", "prompt"):
+                    raise ConfigError(
+                        f"roles[{role_name!r}] contains unknown key {key!r} — "
+                        f"only 'description' and 'prompt' are allowed"
+                    )
+    for i, agent in enumerate(agents):
+        role = agent.get("role")
+        role_custom = agent.get("role_custom")
+        if role is not None and role_custom is not None:
+            raise ConfigError(
+                f"agents[{i}] cannot specify both 'role' and 'role_custom' — "
+                f"choose one"
+            )
+        if role is not None:
+            if not isinstance(role, str):
+                raise ConfigError(f"agents[{i}].role must be a string")
+            if roles is None or role not in roles:
+                raise ConfigError(
+                    f"agents[{i}].role {role!r} is not defined in 'roles' section"
+                )
+        if role_custom is not None:
+            if not isinstance(role_custom, str) or not role_custom.strip():
+                raise ConfigError(
+                    f"agents[{i}].role_custom must be a non-empty string"
+                )
+
     # mirror.url_env 검증
     mirror = data.get("mirror")
     if mirror is not None and isinstance(mirror, dict):

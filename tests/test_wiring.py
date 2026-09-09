@@ -555,3 +555,208 @@ def test_load_config_allow_fake_default_rejects_fake(tmp_path):
     })
     with pytest.raises(ConfigError):
         load_config(p)
+
+
+# ---------------------------------------------------------------------------
+# roles / role / role_custom
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_roles_section_valid(tmp_path):
+    """roles 섹션이 정상적으로 파싱됨."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"}}],
+        "roles": {
+            "orchestrator": {
+                "description": "작업을 분할·조율한다",
+                "prompt": "너는 오케스트레이터다.",
+            },
+        },
+    })
+    cfg = load_config(p)
+    assert "roles" in cfg
+    assert cfg["roles"]["orchestrator"]["prompt"] == "너는 오케스트레이터다."
+
+
+def test_load_config_role_preset_reference(tmp_path):
+    """role 키가 roles 프리셋을 참조하면 정상 처리."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "role": "orchestrator", "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"}}],
+        "roles": {"orchestrator": {"prompt": "너는 오케스트레이터다."}},
+    })
+    cfg = load_config(p)
+    assert cfg["agents"][0]["role"] == "orchestrator"
+
+
+def test_load_config_role_not_in_roles_raises(tmp_path):
+    """role 값이 roles 섹션에 없으면 ConfigError."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "role": "not_exist", "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"}}],
+        "roles": {"orchestrator": {"prompt": "..."}},
+    })
+    with pytest.raises(ConfigError, match="not defined in 'roles'"):
+        load_config(p)
+
+
+def test_load_config_role_without_roles_section_raises(tmp_path):
+    """roles 섹션 없이 role 키를 쓰면 ConfigError."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "role": "orchestrator", "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"}}],
+    })
+    with pytest.raises(ConfigError, match="not defined in 'roles'"):
+        load_config(p)
+
+
+def test_load_config_role_and_role_custom_both_raises(tmp_path):
+    """role과 role_custom을 동시에 지정하면 ConfigError."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{
+            "id": "a1",
+            "role": "orchestrator",
+            "role_custom": "너는 QA다.",
+            "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"},
+        }],
+        "roles": {"orchestrator": {"prompt": "..."}},
+    })
+    with pytest.raises(ConfigError, match="cannot specify both"):
+        load_config(p)
+
+
+def test_load_config_role_custom_valid(tmp_path):
+    """role_custom은 roles 섹션 없이도 사용 가능."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{
+            "id": "a1",
+            "role_custom": "너는 QA 리뷰어다.",
+            "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"},
+        }],
+    })
+    cfg = load_config(p)
+    assert cfg["agents"][0]["role_custom"] == "너는 QA 리뷰어다."
+
+
+def test_load_config_role_custom_empty_raises(tmp_path):
+    """role_custom이 빈 문자열이면 ConfigError."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{
+            "id": "a1",
+            "role_custom": "   ",
+            "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"},
+        }],
+    })
+    with pytest.raises(ConfigError, match="non-empty string"):
+        load_config(p)
+
+
+def test_load_config_roles_not_mapping_raises(tmp_path):
+    """roles가 맵이 아니면 ConfigError."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"}}],
+        "roles": ["orchestrator"],
+    })
+    with pytest.raises(ConfigError, match="must be a mapping"):
+        load_config(p)
+
+
+def test_load_config_roles_unknown_key_raises(tmp_path):
+    """roles 항목에 알 수 없는 키가 있으면 ConfigError."""
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X", "model": "m"}}],
+        "roles": {"orchestrator": {"unknown_key": "value"}},
+    })
+    with pytest.raises(ConfigError, match="unknown key"):
+        load_config(p)
+
+
+# ---------------------------------------------------------------------------
+# Session role integration
+# ---------------------------------------------------------------------------
+
+
+def test_session_role_preset_injected_into_system_prompt(tmp_path):
+    """role 프리셋을 지정한 agent의 system prompt에 역할이 주입됨."""
+    import os
+    from agent_augury.session import Session
+
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "max_steps": 1,
+        "task": "test",
+        "agents": [{
+            "id": "a1",
+            "role": "orchestrator",
+            "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X_KEY", "model": "m"},
+        }],
+        "roles": {"orchestrator": {"prompt": "너는 오케스트레이터다."}},
+    })
+    cfg = load_config(p)
+    os.environ["X_KEY"] = "sk-test"
+    try:
+        session = Session.from_config(cfg)
+        # system prompt에 role이 주입되었는지 확인
+        sys_msg = session.agents[0].conversation[0]
+        assert sys_msg["role"] == "system"
+        assert "Your role:" in sys_msg["content"]
+        assert "너는 오케스트레이터다." in sys_msg["content"]
+    finally:
+        del os.environ["X_KEY"]
+
+
+def test_session_role_custom_injected_into_system_prompt(tmp_path):
+    """role_custom을 지정한 agent의 system prompt에 커스텀 역할이 주입됨."""
+    import os
+    from agent_augury.session import Session
+
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "max_steps": 1,
+        "task": "test",
+        "agents": [{
+            "id": "a1",
+            "role_custom": "너는 QA 리뷰어다.",
+            "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X_KEY", "model": "m"},
+        }],
+    })
+    cfg = load_config(p)
+    os.environ["X_KEY"] = "sk-test"
+    try:
+        session = Session.from_config(cfg)
+        sys_msg = session.agents[0].conversation[0]
+        assert "Your role:" in sys_msg["content"]
+        assert "너는 QA 리뷰어다." in sys_msg["content"]
+    finally:
+        del os.environ["X_KEY"]
+
+
+def test_session_no_role_backward_compatible(tmp_path):
+    """role이 없는 agent는 기존과 동일하게 동작 (하위호환)."""
+    import os
+    from agent_augury.session import Session
+
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "max_steps": 1,
+        "task": "test",
+        "agents": [{
+            "id": "a1",
+            "backend": {"type": "openai", "base_url": "http://x", "api_key_env": "X_KEY", "model": "m"},
+        }],
+    })
+    cfg = load_config(p)
+    os.environ["X_KEY"] = "sk-test"
+    try:
+        session = Session.from_config(cfg)
+        sys_msg = session.agents[0].conversation[0]
+        assert sys_msg["role"] == "system"
+        assert "Your role:" not in sys_msg["content"]
+    finally:
+        del os.environ["X_KEY"]

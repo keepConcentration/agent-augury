@@ -98,12 +98,15 @@ class Session:
         shared_token_store = token_store or TokenStore()
         for spec in cfg["agents"]:
             server.register_agent(spec["id"])
+            # role 처리: role → roles 프리셋의 prompt 사용, role_custom → 직접 사용
+            role_prompt = _resolve_role_prompt(spec, cfg.get("roles"))
             agents.append(
                 AgentLoop(
                     agent_id=spec["id"],
                     server=server,
                     backend=build_backend(spec["backend"], token_store=shared_token_store),
                     allowed_roots=allowed_roots,
+                    role_prompt=role_prompt,
                     on_tool_call=lambda agent_id, tool, args, result, _server=server: (
                         _server._emit_event({
                             "type": "tool",
@@ -440,6 +443,23 @@ class Session:
             elif event_type == "send_message":
                 # Fallback if no on_tool_event
                 pass
+
+
+def _resolve_role_prompt(spec: dict[str, Any], roles: dict[str, Any] | None) -> str:
+    """Resolve the role prompt for an agent spec.
+
+    - ``role``: looks up the preset in ``roles`` and returns its ``prompt``.
+    - ``role_custom``: returns the inline string directly.
+    - neither: returns "" (no role injected).
+    """
+    role = spec.get("role")
+    role_custom = spec.get("role_custom")
+    if role_custom is not None:
+        return role_custom
+    if role is not None and roles is not None:
+        preset = roles.get(role, {})
+        return preset.get("prompt", "")
+    return ""
 
 
 def _phase_from_string(name: str) -> Phase:

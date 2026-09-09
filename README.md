@@ -207,7 +207,7 @@ human:
 
 ### Always-on input (TUI)
 
-Set `interface: tui` and run with `--interactive` to get a **persistent input bar** (powered by prompt_toolkit):
+Set `interface: tui` to get a **persistent input bar** (powered by prompt_toolkit). It is enabled automatically whenever a `human:` section is present — no extra flag needed.
 
 - an input line pinned to the bottom that never scrolls away — type anytime, even while agents work
 - `ask_user` questions and options pinned in a bottom toolbar, so they don't disappear into the log
@@ -215,7 +215,7 @@ Set `interface: tui` and run with `--interactive` to get a **persistent input ba
 - multi-line paste, history, and Korean IME support
 
 ```bash
-agent-augury --config session.yaml --interactive
+agent-augury --config session.yaml
 ```
 
 ---
@@ -349,7 +349,7 @@ agent-augury --config examples/consensus_openai.yaml
 ### Run with human-in-the-loop TUI
 
 ```bash
-agent-augury --demo --config examples/human_tui_demo.yaml --interactive
+agent-augury --demo --config examples/human_tui_demo.yaml
 ```
 
 ---
@@ -364,7 +364,7 @@ agent-augury --demo --config examples/human_tui_demo.yaml --interactive
 | `--output <path>` | Wizard output path (only valid without `--config`) |
 | `--quiet` | Suppress broadcast event output (only show final summary) |
 | `--repl` | REPL mode — keep conversation context across multiple questions |
-| `--interactive` | Human-in-the-loop — inject stdin / TUI input mid-session |
+| `--no-interactive` | Disable human-in-the-loop input (on by default when a `human:` section is configured) |
 
 ---
 

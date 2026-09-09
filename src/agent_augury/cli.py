@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from rich.console import Console
+from rich.markdown import Markdown
 
 from .agent.loop import StepResult
 from .config import load_config
@@ -51,6 +53,9 @@ _SENSITIVE_PATTERNS = [
     (re.compile(r'(api[_-]?key["\s:=]+)[^\s"]+', re.IGNORECASE), r'\1***'),
     (re.compile(r'(token["\s:=]+)[^\s"]+', re.IGNORECASE), r'\1***'),
 ]
+
+# rich Console — auto-detects TTY (plain text fallback when piped/redirected)
+_console = Console()
 
 
 def _mask_sensitive(text: str) -> str:
@@ -106,15 +111,16 @@ def _prompt_output_path(default: Path = _DEFAULT_OUTPUT_PATH) -> Path:
 
 
 def _log_step(agent_id: str, result: StepResult) -> None:
-    """Print a step summary line (no ANSI codes).
+    """Print a step summary line with rich Markdown rendering.
 
-    Only prints when the step produced text; steps with no text are silent.
-    Format: ``💭 agent_id: text`` (newlines flattened to a single space).
+    Only prints when the step produced text.
+    Format: ``💭 agent_id:`` header, then the text body rendered as Markdown.
     """
     if not result.text:
         return
-    text = result.text.replace("\n", " ")
-    print(f"💭 {agent_id}: {text}", flush=True)
+    md = Markdown(result.text)
+    _console.print(f"💭 {agent_id}:", end=" ")
+    _console.print(md)
 
 
 async def _close_session(session: Session) -> None:
@@ -128,7 +134,7 @@ async def _close_session(session: Session) -> None:
 
 
 def _log_tool_event(event: dict[str, Any]) -> None:
-    """Print a tool/broadcast event in real-time (Hermes-style, no ANSI codes).
+    """Print a tool/broadcast event in real-time (Hermes-style, rich rendering).
 
     Handles: tool, read_resource, create_thread, send_message.
     """
@@ -138,7 +144,7 @@ def _log_tool_event(event: dict[str, Any]) -> None:
         tid = event["thread_id"]
         name = event["name"]
         participants = ", ".join(event["participants"])
-        print(f"🧵 [{tid}] create_thread {name} ({participants})", flush=True)
+        _console.print(f"🧵 [{tid}] create_thread {name} ({participants})")
 
     elif event_type == "send_message":
         author = event["author"]
@@ -146,13 +152,15 @@ def _log_tool_event(event: dict[str, Any]) -> None:
         content = _mask_sensitive(event["content"])
         delivered = event.get("delivered_to", [])
         targets = ", ".join(delivered) if delivered else "broadcast"
-        print(f"💬 [{author} → {targets}][{tid}] {content}", flush=True)
+        # send_message content may contain Markdown — render it
+        _console.print(f"💬 [{author} → {targets}][{tid}]", end=" ")
+        _console.print(Markdown(content))
 
     elif event_type == "read_resource":
         agent_id = event["agent_id"]
         threads = event.get("threads", 0)
         messages = event.get("messages", 0)
-        print(f"📊 {agent_id}: read_resource (threads={threads}, messages={messages})", flush=True)
+        _console.print(f"📊 {agent_id}: read_resource (threads={threads}, messages={messages})")
 
     elif event_type == "tool":
         agent_id = event["agent_id"]
@@ -179,9 +187,9 @@ def _log_tool_event(event: dict[str, Any]) -> None:
             # Normalize backslashes so os.path.basename shortens Windows
             # paths on any platform (D4: Windows `C:\...` was not shortened).
             short_path = os.path.basename(path.replace("\\", "/"))
-            print(f"{icon} {agent_id}: {tool} {short_path}", flush=True)
+            _console.print(f"{icon} {agent_id}: {tool} {short_path}")
         else:
-            print(f"{icon} {agent_id}: {tool}", flush=True)
+            _console.print(f"{icon} {agent_id}: {tool}")
 
 
 async def _run_repl(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False) -> int:

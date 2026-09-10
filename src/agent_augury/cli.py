@@ -77,7 +77,7 @@ def _resolve_output_path(raw: str | None, default: Path = _DEFAULT_OUTPUT_PATH) 
 
 
 def _prompt_multiline(prompt: str) -> str:
-    """Read multi-line free-text (Esc+Enter submits). Non-TTY → stdin.read()."""
+    """Read multi-line free-text (Enter submits). Non-TTY -> stdin.read()."""
     if not sys.stdin.isatty():
         return sys.stdin.read().strip()
 
@@ -88,10 +88,17 @@ def _prompt_multiline(prompt: str) -> str:
 
     kb = KeyBindings()
 
-    @kb.add("escape", "enter")
+    @kb.add("enter", eager=True)
+    @kb.add("c-j", eager=True)
     def _submit(event: object) -> None:
         buff = event.current_buffer  # type: ignore[attr-defined]
         buff.validate_and_handle()
+
+    @kb.add("escape", "enter")
+    @kb.add("escape", "c-j")
+    def _newline(event: object) -> None:
+        buff = event.current_buffer  # type: ignore[attr-defined]
+        buff.insert_text("\n")
 
     history_path = Path.home() / ".agent-augury" / "human_history.txt"
     history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +109,7 @@ def _prompt_multiline(prompt: str) -> str:
         key_bindings=kb,
     )
 
-    hint = "  (Esc+Enter로 제출)"
+    hint = "  (Enter to submit, Shift+Enter for newline)"
     full_prompt = f"{prompt.rstrip()}{hint} "
 
     try:
@@ -112,7 +119,6 @@ def _prompt_multiline(prompt: str) -> str:
         text = ""
 
     return text.strip()
-
 
 def _prompt_output_path(default: Path = _DEFAULT_OUTPUT_PATH) -> Path:
     """Prompt for a YAML output path; Enter uses *default*, invalid input warns."""

@@ -10,6 +10,8 @@ def test_dispatch_help():
     out = dispatch("help", "", {})
     assert "/quit" in out
     assert "Enter" in out
+    assert "Ctrl+Enter" in out
+    assert "Blank Enter is ignored" in out
 
 
 def test_dispatch_unknown():

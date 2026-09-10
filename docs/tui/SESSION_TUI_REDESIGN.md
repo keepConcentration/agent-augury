@@ -382,6 +382,11 @@ class SessionTUIApplication:
 > → **`accept_handler`로 Enter 제출을 명시** (multiline과 무관하게 Enter=제출 보장).
 >
 > **v2.5 — 사용자 확정:** "나는 Enter 제출" — 아래 `accept_handler` 방식이 그대로 **최종 확정**이다.
+>
+> **구현 정정 (Enter submit fix):** `multiline=True`만으로는 Enter가 기본 newline에 가로채인다.
+> 실제 코드는 `enter`/`c-j` eager → `validate_and_handle()`, `_accept`는 reset 없이 `return False`,
+> 개행은 `(escape, enter)` + `(escape, c-j)`(win32 Ctrl+Enter). 위저드도 동일 키맵.
+> 상세 SSOT: `TUI_ENTER_SUBMIT_FIX_DESIGN.md`.
 
 ```python
 # tui/input_bar.py — 구현 확정 (agent-2 2안 중 안 ① 채택, 사용자 Enter 제출 확정)
@@ -679,9 +684,10 @@ _run_repl(cfg_path, initial_prompt=None, *, quiet=False, allow_fake=False)  # �
 
 | 키 | 동작 | 구현 |
 |----|------|------|
-| `Enter` | **제출** (ask_user 활성 시 번호 선택도 여기서) — hermes 표준, IME 안전, **사용자 확정** | `TextArea.accept_handler` (multiline=True 유지) |
-| `Shift+Enter` / `Esc+Enter` | 개행 | kb → `buff.insert_text("\n")` (key_aliases로 시퀀스 정규화) |
-| `Ctrl+D` | 입력 루프 종료 (세션은 계속) — v2.5: REPL 단일 모드이므로 **프로그램 종료**로 이어짐 | kb → `app.exit()` |
+| `Enter` / `C-j` | **제출** (ask_user 활성 시 번호 선택도 여기서) — hermes 표준, IME 안전, **사용자 확정** | 컨트롤 kb `eager` → `validate_and_handle()` → `accept_handler` (return False; history 순서 보존). 상세: `TUI_ENTER_SUBMIT_FIX_DESIGN.md` |
+| `Shift+Enter` / `Esc+Enter` | 개행 | kb `(escape, enter)` → `insert_text("\n")` (`key_aliases`가 Shift+Enter 정규화; `shift` 단독 키 바인딩 불가) |
+| `Ctrl+Enter` (Windows) | 개행 | kb `(escape, c-j)` — win32는 Ctrl+Enter를 `[Escape, ControlJ]`로 전달 |
+| `Ctrl+D` | 입력 루프 종료 (세션은 계속) — v2.5: REPL 단일 모드이므로 **프로그램 종료**로 이어짐 | kb → `on_quit()` + `app.exit()` |
 | `Ctrl+C` | 드래프트 클리어 (세션 계속) — v1.0 포함 | kb → `buff.reset()` |
 | `↑` / `↓` | 히스토리 탐색 | `FileHistory` 기본 (TextArea에 history 연결) |
 | `Ctrl+R` | 히스토리 역방향 검색 | prompt_toolkit 기본 |

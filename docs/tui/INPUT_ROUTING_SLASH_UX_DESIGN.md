@@ -441,9 +441,10 @@ Shift/Esc+Enter=개행**
 
 | 키 | 동작 | 구현 |
 |----|------|------|
-| Enter | 제출 | `TextArea.accept_handler` (multiline=True 유지) |
-| Shift+Enter / Esc+Enter | 개행 | kb → `buff.insert_text("\n")` (기존 Esc+Enter 호환) |
-| Ctrl+D | **REPL 루프 종료 (세션 정리 + 프로그램 종료)** | kb → `app.exit()` |
+| Enter / C-j | 제출 | 컨트롤 kb `eager` → `validate_and_handle()` → `accept_handler` (multiline=True 유지) |
+| Shift+Enter / Esc+Enter | 개행 | kb → `buff.insert_text("\n")` (`key_aliases`가 Shift+Enter→Esc+Enter) |
+| Ctrl+Enter (Windows) | 개행 | kb `(escape, c-j)` — win32는 Ctrl+Enter를 `[Escape, ControlJ]`로 보냄 |
+| Ctrl+D | **REPL 루프 종료 (세션 정리 + 프로그램 종료)** | kb → `on_quit()` + `app.exit()` |
 | Ctrl+C | 입력 드래프트 클리어 (세션은 계속) | kb → `buff.reset()` — v1.0 포함 (hermes 3단계 중 2단계) |
 | ↑/↓ | 입력 히스토리 | FileHistory 기본 (TextArea에 history 연결) |
 | Tab | (v2.0) 슬래시 명령 자동완성 | Completer |

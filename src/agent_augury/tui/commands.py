@@ -44,12 +44,14 @@ def _help_text(_ctx: dict[str, Any] | None = None, _args: str = "") -> str:
         "  /quit /exit - exit REPL (close session)",
         "",
         "Keys:",
-        "  Enter            - submit",
-        "  Shift/Esc+Enter  - newline",
-        "  Ctrl+C           - clear draft",
-        "  Ctrl+D           - quit",
+        "  Enter               - submit",
+        "  Shift+Enter / Esc+Enter - newline",
+        "  Ctrl+Enter          - newline (Windows)",
+        "  Ctrl+C              - clear draft",
+        "  Ctrl+D              - quit",
         "",
-        "Exit via /quit (or Ctrl+D). Plain quit/exit is sent to agents.",
+        "Blank Enter is ignored. Exit via /quit or Ctrl+D.",
+        "Plain quit/exit is sent to agents (not exit).",
     ]
     return "\n".join(lines)
 

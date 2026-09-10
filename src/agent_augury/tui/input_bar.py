@@ -17,7 +17,7 @@ QuitHandler = Callable[[], None]
 
 
 class InputBar:
-    """Bottom input line: Enter submits, Shift/Esc+Enter inserts newline."""
+    """Bottom input line: Enter submits; Shift/Esc+Enter and Ctrl+Enter insert newline."""
 
     def __init__(
         self,
@@ -43,10 +43,10 @@ class InputBar:
             hist = history
 
         def _accept(buff: Buffer) -> bool:
+            # Do NOT reset here - validate_and_handle appends history then resets.
             text = buff.text
-            buff.reset()
             self._dispatch(text)
-            return True
+            return False
 
         self.widget = TextArea(
             multiline=True,
@@ -82,11 +82,21 @@ class InputBar:
     def _build_bindings(self) -> KeyBindings:
         kb = KeyBindings()
 
+        # Enter / C-j = submit (override multiline default newline).
+        @kb.add("enter", eager=True)
+        @kb.add("c-j", eager=True)
+        def _submit(event: Any) -> None:
+            event.current_buffer.validate_and_handle()
+
+        # Newline: Esc+Enter (Shift+Enter via key_aliases -> Escape,ControlM).
         @kb.add("escape", "enter")
         def _nl1(event: Any) -> None:
             event.current_buffer.insert_text("\n")
 
-        # Shift+Enter normalized via key_aliases; do not bind s-enter.
+        # Newline: win32 Ctrl+Enter arrives as (Escape, ControlJ).
+        @kb.add("escape", "c-j")
+        def _nl2(event: Any) -> None:
+            event.current_buffer.insert_text("\n")
 
         @kb.add("c-d")
         def _quit(event: Any) -> None:

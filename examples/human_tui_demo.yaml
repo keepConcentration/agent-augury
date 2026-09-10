@@ -1,15 +1,16 @@
 # TUI demo config — fake backend with ask_user
 #
 # Run with:
-#   agent-augury --config examples/human_tui_demo.yaml --interactive --demo
+#   agent-augury --config examples/human_tui_demo.yaml --demo
 #
 # The fake backend scripts an agent that:
 #   1. Creates a thread
 #   2. Calls ask_user (question + options)
 #   3. Receives the human reply via [radio] and produces a final answer
 #
-# In TUI mode (human.interface: tui), the ask_user question is pinned to the
-# bottom toolbar and the user can respond by typing the option number.
+# Human + TUI are always on (no human.interface config). On a TTY the ask_user
+# question is pinned in the choice panel; type the option number to reply.
+# Exit with /quit (or Ctrl+D).
 
 max_steps: 20
 task: "DB 선택을 확인해줘"

@@ -94,10 +94,10 @@ async def test_server_subscribe_events_isolates_from_subscribers():
 
 
 def _make_run_recorder():
-    """Build an async stand-in for cli._run that records its arguments.
+    """Build an async stand-in for cli._run_repl that records its arguments.
 
-    ``main()`` / ``_run_wizard_flow()`` call ``asyncio.run(_run(...))``;
-    substituting ``_run`` with this coroutine function lets us assert that
+    ``main()`` / ``_run_wizard_flow()`` call ``asyncio.run(_run_repl(...))``;
+    substituting ``_run_repl`` with this coroutine function lets us assert that
     ``quiet`` (and the config path / initial task) actually reach the run
     layer instead of only checking that ``asyncio.run`` was invoked.
     """
@@ -111,11 +111,11 @@ def _make_run_recorder():
 
 
 def test_cli_quiet_flag_parsing():
-    """--quiet must reach _run(quiet=True) when --config is used (T1)."""
+    """--quiet must reach _run_repl(quiet=True) when --config is used (T1)."""
     from agent_augury.cli import main
 
     calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run", fake_run):
+    with patch("agent_augury.cli._run_repl", fake_run):
         result = main(["--config", "fake.yaml", "--quiet"])
 
     assert result == 0
@@ -126,11 +126,11 @@ def test_cli_quiet_flag_parsing():
 
 
 def test_cli_quiet_flag_default_false():
-    """Without --quiet, _run must receive quiet=False (T1 default)."""
+    """Without --quiet, _run_repl must receive quiet=False (T1 default)."""
     from agent_augury.cli import main
 
     calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run", fake_run):
+    with patch("agent_augury.cli._run_repl", fake_run):
         result = main(["--config", "fake.yaml"])
 
     assert result == 0
@@ -139,11 +139,11 @@ def test_cli_quiet_flag_default_false():
 
 
 def test_cli_demo_flag_passed():
-    """--demo must reach _run(allow_fake=True) when --config is used."""
+    """--demo must reach _run_repl(allow_fake=True) when --config is used."""
     from agent_augury.cli import main
 
     calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run", fake_run):
+    with patch("agent_augury.cli._run_repl", fake_run):
         result = main(["--config", "fake.yaml", "--demo"])
 
     assert result == 0
@@ -153,11 +153,11 @@ def test_cli_demo_flag_passed():
 
 
 def test_cli_demo_flag_default_false():
-    """Without --demo, _run must receive allow_fake=False (default)."""
+    """Without --demo, _run_repl must receive allow_fake=False (default)."""
     from agent_augury.cli import main
 
     calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run", fake_run):
+    with patch("agent_augury.cli._run_repl", fake_run):
         result = main(["--config", "fake.yaml"])
 
     assert result == 0

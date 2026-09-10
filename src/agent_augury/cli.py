@@ -1,18 +1,16 @@
-"""CLI entrypoint: run a session from YAML and mirror a plain log (§4.2, D3).
+"""CLI entrypoint: run a session from YAML (REPL is the only run mode).
 
-Two modes:
-  - ``agent-augury --config PATH`` — run a session from an existing YAML file.
-  - ``agent-augury`` (no args) — launch the interactive setup wizard,
-    which collects model settings (persisted across runs), generates a
-    YAML file, asks for an initial task, and starts the session.
+Modes:
+  - ``agent-augury --config PATH`` — REPL session from YAML (session reuse).
+  - ``agent-augury`` (no args) — interactive wizard, then REPL.
 
-Additional flags:
-  - ``agent-augury --reconfigure`` — discard saved model settings and run
-    the full wizard from scratch, then save new settings.
-  - ``agent-augury --quiet`` — suppress broadcast event output (only show
-    final summary).
-  - ``agent-augury --repl`` — start a REPL session that keeps the conversation
-    context across multiple questions (session reuse).
+Flags:
+  - ``--reconfigure`` — discard saved model settings and re-run the wizard.
+  - ``--quiet`` — suppress live event output (summary only).
+  - ``--demo`` — allow ``type: fake`` backends.
+
+Design: ``docs/tui/SESSION_TUI_REDESIGN.md`` (v2.5) — full-screen TUI on TTY,
+plain ``input()`` fallback otherwise. ``--repl`` / one-shot ``_run`` removed.
 """
 
 from __future__ import annotations
@@ -20,14 +18,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
-from rich.console import Console
-from rich.markdown import Markdown
 
 from .agent.loop import StepResult
 from .config import load_config
@@ -36,31 +31,17 @@ from .model_config import (
     model_config_exists,
 )
 from .session import Session
+from .tui.renderer import mask_sensitive, render_event
 from .wizard import WizardCancelled, check_tty, run_wizard
 
 _DEFAULT_OUTPUT_PATH = Path.home() / ".agent-augury" / "agent-augury-session.yaml"
-# Windows-forbidden path chars plus invisible/format characters (e.g. U+3164).
-# Backslash is NOT included — it is a valid path separator on Windows.
-_INVALID_PATH_CHARS = set('<>\"|?*')
+_INVALID_PATH_CHARS = set('<>"|?*')
 _INVISIBLE_CODEPOINTS = frozenset({0x3164, 0x200B, 0x200C, 0x200D, 0xFEFF, 0x00A0})
-
-# Sensitive patterns to mask in broadcast output
-_SENSITIVE_PATTERNS = [
-    (re.compile(r'(Authorization:\s+Bearer\s+)[^\s]+', re.IGNORECASE), r'\1***'),
-    (re.compile(r'(Bearer\s+)[^\s]+', re.IGNORECASE), r'\1***'),
-    (re.compile(r'(api[_-]?key["\s:=]+)[^\s"]+', re.IGNORECASE), r'\1***'),
-    (re.compile(r'(token["\s:=]+)[^\s"]+', re.IGNORECASE), r'\1***'),
-]
-
-# rich Console — auto-detects TTY (plain text fallback when piped/redirected)
-_console = Console()
 
 
 def _mask_sensitive(text: str) -> str:
-    """Mask sensitive information (tokens, API keys) in output."""
-    for pattern, replacement in _SENSITIVE_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
+    """Backward-compat alias used by tests / older call sites."""
+    return mask_sensitive(text)
 
 
 def _output_path_problem(raw: str) -> str | None:
@@ -73,8 +54,7 @@ def _output_path_problem(raw: str) -> str | None:
         code = ord(char)
         if code in _INVISIBLE_CODEPOINTS:
             return f"invisible character U+{code:04X}"
-        if char == ':':
-            # Allow colon only as drive letter separator (e.g. "C:\\")
+        if char == ":":
             if i != 1:
                 return f"invalid path character {char!r}"
             continue
@@ -97,17 +77,7 @@ def _resolve_output_path(raw: str | None, default: Path = _DEFAULT_OUTPUT_PATH) 
 
 
 def _prompt_multiline(prompt: str) -> str:
-    """Read a multi-line free-text input (for tasks/questions).
-
-    Uses prompt_toolkit so that pasted multi-line text (including blank lines)
-    is preserved.  Submission is via **Esc+Enter** — plain Enter inserts a
-    newline.  Renders inside ``patch_stdout`` so the prompt doesn't corrupt the
-    terminal alongside prior prints.
-
-    In a non-TTY environment (pipe / redirect) it falls back to reading the
-    entire stdin.
-    """
-    # Non-TTY fallback: read everything from stdin.
+    """Read multi-line free-text (Esc+Enter submits). Non-TTY → stdin.read()."""
     if not sys.stdin.isatty():
         return sys.stdin.read().strip()
 
@@ -120,7 +90,7 @@ def _prompt_multiline(prompt: str) -> str:
 
     @kb.add("escape", "enter")
     def _submit(event: object) -> None:
-        buff = event.current_buffer
+        buff = event.current_buffer  # type: ignore[attr-defined]
         buff.validate_and_handle()
 
     history_path = Path.home() / ".agent-augury" / "human_history.txt"
@@ -153,20 +123,17 @@ def _prompt_output_path(default: Path = _DEFAULT_OUTPUT_PATH) -> Path:
         problem = _output_path_problem(raw)
         if problem is None:
             return Path(raw)
-        print(f"  Warning: invalid save path ({problem}). Press Enter for default or type a valid path.")
+        print(
+            f"  Warning: invalid save path ({problem}). "
+            "Press Enter for default or type a valid path."
+        )
 
 
 def _log_step(agent_id: str, result: StepResult) -> None:
-    """Print a step summary line with rich Markdown rendering.
-
-    Only prints when the step produced text.
-    Format: ``💭 agent_id:`` header, then the text body rendered as Markdown.
-    """
-    if not result.text:
-        return
-    md = Markdown(result.text)
-    _console.print(f"💭 {agent_id}:", end=" ")
-    _console.print(md)
+    """Print a step summary (compat wrapper around render_event)."""
+    ansi = render_event({"type": "step", "agent_id": agent_id, "result": result})
+    if ansi:
+        print(ansi)
 
 
 async def _close_session(session: Session) -> None:
@@ -180,82 +147,186 @@ async def _close_session(session: Session) -> None:
 
 
 def _log_tool_event(event: dict[str, Any]) -> None:
-    """Print a tool/broadcast event in real-time (Hermes-style, rich rendering).
+    """Print a tool/broadcast event (compat wrapper around render_event)."""
+    ansi = render_event(event)
+    if ansi:
+        print(ansi)
 
-    Handles: tool, read_resource, create_thread, send_message.
+
+def _want_fullscreen_tui() -> bool:
+    """Full-screen Application only on a real interactive TTY (not under pytest).
+
+    Uses ``wizard.check_tty()`` so Windows console_scripts wrappers that need
+    ``AttachConsole`` are treated as interactive (design §7).
     """
-    event_type = event.get("type")
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    if os.environ.get("AUGURY_PLAIN_REPL") == "1":
+        return False
+    from .wizard import check_tty
 
-    if event_type == "create_thread":
-        tid = event["thread_id"]
-        name = event["name"]
-        participants = ", ".join(event["participants"])
-        _console.print(f"🧵 [{tid}] create_thread {name} ({participants})")
-
-    elif event_type == "send_message":
-        author = event["author"]
-        tid = event["thread_id"]
-        content = _mask_sensitive(event["content"])
-        delivered = event.get("delivered_to", [])
-        targets = ", ".join(delivered) if delivered else "broadcast"
-        # send_message content may contain Markdown — render it
-        _console.print(f"💬 [{author} → {targets}][{tid}]", end=" ")
-        _console.print(Markdown(content))
-
-    elif event_type == "read_resource":
-        agent_id = event["agent_id"]
-        threads = event.get("threads", 0)
-        messages = event.get("messages", 0)
-        _console.print(f"📊 {agent_id}: read_resource (threads={threads}, messages={messages})")
-
-    elif event_type == "tool":
-        agent_id = event["agent_id"]
-        tool = event["tool"]
-        # D2-dedup: 서버 이벤트로 이미 출력되는 3종은 tool 이벤트에서 스킵
-        if tool in ("send_message", "create_thread", "read_resource"):
-            return
-        args = event.get("args", {})
-
-        # ask_user: surface the question to the human prominently.
-        if tool == "ask_user":
-            question = args.get("question", "")
-            options = args.get("options")
-            _console.print(f"👤 {agent_id} asks: {question}", style="bold")
-            if options:
-                _console.print("   (options: " + " / ".join(options) + ")")
-            return
-
-        # Tool icons
-        icons = {
-            "read_file": "📖",
-            "write_file": "📝",
-            "list_directory": "📁",
-            "send_message": "💬",
-            "create_thread": "🧵",
-            "read_resource": "📊",
-        }
-        icon = icons.get(tool, "🔧")
-
-        # Extract path for file tools (display only — shorten to basename).
-        path = args.get("path", "")
-        if path:
-            # Normalize backslashes so os.path.basename shortens Windows
-            # paths on any platform (D4: Windows `C:\...` was not shortened).
-            short_path = os.path.basename(path.replace("\\", "/"))
-            _console.print(f"{icon} {agent_id}: {tool} {short_path}")
-        else:
-            _console.print(f"{icon} {agent_id}: {tool}")
+    return check_tty()
 
 
-async def _run_repl(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False) -> int:
-    """Run a REPL session: keep the conversation context across multiple questions.
+def _session_summary_line(session: Session, steps: int) -> str:
+    gate_state = (
+        "OPEN"
+        if (session.gate and session.gate.is_open)
+        else ("CLOSED" if session.gate else "n/a")
+    )
+    snap = session.server.snapshot()
+    phase_state = session.protocol.phase if session.protocol is not None else "n/a"
+    return (
+        f"--- session finished: steps={steps} threads={len(snap['threads'])} "
+        f"messages={len(snap['messages'])} gate={gate_state} phase={phase_state}"
+    )
 
-    The session is created once, then ``session.run()`` is called repeatedly
-    in a loop. The user's previous conversation is preserved, so they can
-    continue where they left off. quit/exit/blank input exits the loop.
+
+def _is_slash_quit(text: str) -> bool:
+    """Exit tokens shared by TUI router and plain REPL (v0.5.1).
+
+    Plain ``quit``/``exit`` are *not* quit — they are sent as the next prompt.
     """
+    t = text.strip().lower()
+    return t in ("/quit", "/exit")
+
+
+async def _run_repl_plain(
+    session: Session,
+    *,
+    initial_prompt: str | None,
+    quiet: bool,
+    on_step: Any,
+    on_tool_event: Any,
+) -> int:
+    """Plain REPL: input() loop. Blank = ignored; /quit or EOF exits."""
+    steps = await session.run(initial_prompt=initial_prompt)
+    if session.mirror is not None:
+        await session.mirror.flush()
+    if not quiet:
+        print(_session_summary_line(session, steps))
+
+    while True:
+        if not quiet:
+            print("\n--- Next question? (/quit to exit) ---")
+        try:
+            question = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not question:
+            continue  # blank = ignored
+        if _is_slash_quit(question):
+            break
+        # Plain quit/exit are normal prompts (v0.5.1) — not exit tokens.
+        steps = await session.run(initial_prompt=question)
+        if session.mirror is not None:
+            await session.mirror.flush()
+        if not quiet:
+            print(_session_summary_line(session, steps))
+    return 0
+
+
+async def _run_repl_tui(
+    session: Session,
+    *,
+    initial_prompt: str | None,
+    quiet: bool,
+) -> int:
+    """Full-screen Application + session reuse loop."""
+    from .tui.app import SessionTUIApplication
+
+    next_turn: asyncio.Queue[str | None] = asyncio.Queue()
+    quit_flag = asyncio.Event()
+
+    def on_quit() -> None:
+        quit_flag.set()
+        next_turn.put_nowait(None)
+
+    def on_next_turn(text: str) -> None:
+        next_turn.put_nowait(text)
+
+    tui = SessionTUIApplication(
+        session,
+        on_quit=on_quit,
+        on_next_turn=on_next_turn,
+        preserve_log_on_exit=True,
+    )
+
+    def on_step(agent_id: str, result: StepResult) -> None:
+        if quiet:
+            return
+        tui.append_event({"type": "step", "agent_id": agent_id, "result": result})
+
+    def on_tool_event(event: dict[str, Any]) -> None:
+        if quiet:
+            return
+        if event.get("type") == "tool" and event.get("tool") == "ask_user":
+            tui.on_ask_user(
+                event.get("agent_id", ""),
+                event.get("tool", ""),
+                event.get("args", {}),
+                None,
+            )
+            return
+        tui.append_event(event)
+
+    session.on_step = on_step
+    session.on_tool_event = on_tool_event
+
+    async def session_loop() -> int:
+        tui.set_running(True)
+        try:
+            steps = await session.run(initial_prompt=initial_prompt)
+        finally:
+            tui.set_running(False)
+        if session.mirror is not None:
+            await session.mirror.flush()
+        if not quiet:
+            tui.append_text(_session_summary_line(session, steps))
+
+        while not quit_flag.is_set():
+            question = await next_turn.get()
+            if question is None:
+                break
+            tui.set_running(True)
+            try:
+                steps = await session.run(initial_prompt=question)
+            finally:
+                tui.set_running(False)
+            if session.mirror is not None:
+                await session.mirror.flush()
+            if not quiet:
+                tui.append_text(_session_summary_line(session, steps))
+        tui.shutdown()
+        return 0
+
+    tui_task = asyncio.create_task(tui.run())
+    try:
+        rc = await session_loop()
+    finally:
+        tui.shutdown()
+        if not tui_task.done():
+            tui_task.cancel()
+            try:
+                await tui_task
+            except asyncio.CancelledError:
+                pass
+    return rc
+
+
+async def _run_repl(
+    cfg_path: str,
+    initial_prompt: str | None = None,
+    *,
+    quiet: bool = False,
+    allow_fake: bool = False,
+) -> int:
+    """Unique session entrypoint — REPL with session reuse (v2.5)."""
     cfg = load_config(cfg_path, allow_fake=allow_fake)
 
+    use_tui = _want_fullscreen_tui()
+
+    # Placeholder callbacks — TUI path rebinds on session before run().
     def on_step(agent_id: str, result: StepResult) -> None:
         if quiet:
             return
@@ -267,168 +338,24 @@ async def _run_repl(cfg_path: str, initial_prompt: str | None = None, *, quiet: 
         _log_tool_event(event)
 
     session = Session.from_config(cfg, on_step=on_step, on_tool_event=on_tool_event)
-
     try:
-        # First run with the initial prompt
-        steps = await session.run(initial_prompt=initial_prompt)
-
-        if session.mirror is not None:
-            await session.mirror.flush()
-
-        gate_state = "OPEN" if (session.gate and session.gate.is_open) else ("CLOSED" if session.gate else "n/a")
-        snap = session.server.snapshot()
-        phase_state = session.protocol.phase if session.protocol is not None else "n/a"
-        print(
-            f"--- session finished: steps={steps} threads={len(snap['threads'])} "
-            f"messages={len(snap['messages'])} gate={gate_state} phase={phase_state}"
-        )
-
-        # REPL loop
-        while True:
-            print("\n--- Next question? (enter=quit) ---")
-            try:
-                question = input("> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                break
-            if not question or question.lower() in ("quit", "exit"):
-                break
-
-            steps = await session.run(initial_prompt=question)
-
-            if session.mirror is not None:
-                await session.mirror.flush()
-
-            gate_state = "OPEN" if (session.gate and session.gate.is_open) else ("CLOSED" if session.gate else "n/a")
-            snap = session.server.snapshot()
-            phase_state = session.protocol.phase if session.protocol is not None else "n/a"
-            print(
-                f"--- session finished: steps={steps} threads={len(snap['threads'])} "
-                f"messages={len(snap['messages'])} gate={gate_state} phase={phase_state}"
+        if use_tui:
+            return await _run_repl_tui(
+                session, initial_prompt=initial_prompt, quiet=quiet
             )
-
-        return 0
+        return await _run_repl_plain(
+            session,
+            initial_prompt=initial_prompt,
+            quiet=quiet,
+            on_step=on_step,
+            on_tool_event=on_tool_event,
+        )
     finally:
         await session.close()
 
 
-
-
-
-async def _human_input_loop_tui(
-    session: Session,
-    human_cfg: dict[str, Any],
-) -> None:
-    """Run the prompt_toolkit-based TUI input loop (v1.0, D1).
-
-    Replaces ``_human_input_loop`` when ``human.interface: tui``.
-    asyncio-native — no ``run_in_executor`` / threading.
-    """
-    from .channel.human_tui import HumanTUIAdapter
-
-    tui_cfg = human_cfg.get("tui") or {}
-    adapter = HumanTUIAdapter(session, **tui_cfg)
-    try:
-        await adapter.run_input_loop()
-    finally:
-        adapter.cleanup()
-
-
-
-
-
-def _make_tui_adapter(session: Any, human_cfg: dict[str, Any]) -> Any:
-    """Create a ``HumanTUIAdapter`` from config (lazy import)."""
-    from .channel.human_tui import HumanTUIAdapter
-    tui_cfg = human_cfg.get("tui") or {}
-    return HumanTUIAdapter(session, **tui_cfg)
-
-
-async def _run(cfg_path: str, initial_prompt: str | None = None, *, quiet: bool = False, allow_fake: bool = False) -> int:
-    cfg = load_config(cfg_path, allow_fake=allow_fake)
-
-    # v1.0: 항상 TUI 모드 (human 필수, interface 고정)
-    # TUI 설정은 코드에 내장 (config에서 읽지 않음)
-    human_cfg = {
-        "id": "human",
-        "tui": {
-            "response_format": "text",
-            "input_prompt": "👤 > ",
-            "multiline": True,
-            "pin_options": True,
-            "choice_queue": False,
-        },
-    }
-    tui_mode = True
-
-    # D2: quiet 모드 시 step/도구 라이브 로그 억제
-    def on_step(agent_id: str, result: StepResult) -> None:
-        if quiet:
-            return
-        _log_step(agent_id, result)
-
-    # TUI adapter reference (set below if tui_mode)
-    tui_adapter = None
-
-    def on_tool_event(event: dict[str, Any]) -> None:
-        if quiet:
-            return
-        nonlocal tui_adapter
-        event_type = event.get("type")
-
-        # D12: TUI 모드에서 [ask-user] prefix send_message 로그 스킵
-        if tui_mode and event_type == "send_message":
-            content = event.get("content", "")
-            if content.startswith("[ask-user]"):
-                return  # skip — question is shown in pinned panel
-
-        # D11: TUI 모드에서 ask_user tool 이벤트 → pinned 패널 표시 (로그 억제)
-        if tui_mode and event_type == "tool" and event.get("tool") == "ask_user":
-            if tui_adapter is not None:
-                tui_adapter.on_ask_user(
-                    event.get("agent_id", ""),
-                    event.get("tool", ""),
-                    event.get("args", {}),
-                    None,
-                )
-            return  # suppress 👤 asks: log — shown in toolbar instead
-
-        _log_tool_event(event)
-
-    session = Session.from_config(cfg, on_step=on_step, on_tool_event=on_tool_event)
-
-    try:
-        # v1.0: 항상 TUI 입력 루프 (human 필수)
-        human_task = None
-        if session.has_human:
-            print("👤 TUI mode: type messages to inject them as 'human'.", flush=True)
-            tui_adapter = _make_tui_adapter(session, human_cfg)
-            if tui_adapter is not None:
-                human_task = asyncio.create_task(
-                    _human_input_loop_tui(session, human_cfg)
-                )
-
-        steps = await session.run(initial_prompt=initial_prompt)
-
-        if human_task is not None:
-            human_task.cancel()
-            try:
-                await human_task
-            except asyncio.CancelledError:
-                pass
-
-        if session.mirror is not None:
-            await session.mirror.flush()
-
-        gate_state = "OPEN" if (session.gate and session.gate.is_open) else ("CLOSED" if session.gate else "n/a")
-        snap = session.server.snapshot()
-        phase_state = session.protocol.phase if session.protocol is not None else "n/a"
-        print(
-            f"--- session finished: steps={steps} threads={len(snap['threads'])} "
-            f"messages={len(snap['messages'])} gate={gate_state} phase={phase_state}"
-        )
-        return 0
-    finally:
-        await _close_session(session)
+# Backward-compat alias — older tests patched ``_run``.
+_run = _run_repl
 
 
 def _save_config(cfg: dict[str, Any], output_path: Path) -> None:
@@ -441,9 +368,8 @@ def _run_wizard_flow(
     output_path: Path | None = None,
     force_reconfigure: bool = False,
     quiet: bool = False,
-    repl: bool = True,
 ) -> int:
-    """Run the interactive wizard, save the YAML, then start a session."""
+    """Run the interactive wizard, save the YAML, then start a REPL session."""
     if not check_tty():
         print(
             "error: interactive wizard requires a TTY. "
@@ -454,23 +380,17 @@ def _run_wizard_flow(
         return 1
 
     try:
-        # Check for existing model config (unless force reconfigure).
         existing = None
         if not force_reconfigure and model_config_exists():
             existing = load_model_config()
             if existing is None:
-                # Invalid or corrupted — ignore and re-collect.
                 existing = None
 
-        # If we have a valid existing config, skip the wizard entirely.
-        # The user just wants to run the session, not reconfigure.
         if existing is not None and not force_reconfigure:
-            # Build config from saved model settings
             cfg = {
                 "max_steps": existing.get("max_steps", 0),
                 "agents": existing["agents"],
             }
-            # Use default output path
             if output_path is None:
                 output_path = _DEFAULT_OUTPUT_PATH
             else:
@@ -478,9 +398,9 @@ def _run_wizard_flow(
             _save_config(cfg, output_path)
             print(f"\nUsing saved model config. Config saved to: {output_path}")
         else:
-            # Run full wizard for new setup or reconfigure
-            cfg = run_wizard(existing_model_config=existing, force_reconfigure=force_reconfigure)
-            # Determine output path.
+            cfg = run_wizard(
+                existing_model_config=existing, force_reconfigure=force_reconfigure
+            )
             if output_path is None:
                 output_path = _DEFAULT_OUTPUT_PATH
             else:
@@ -489,9 +409,8 @@ def _run_wizard_flow(
             print(f"\nConfig saved to: {output_path}")
     except WizardCancelled:
         print("\nWizard cancelled.")
-        return 130  # standard Ctrl+C exit code
+        return 130
 
-    # Collect the initial task from the user, then start the session.
     print("\n--- Initial Task ---")
     task = _prompt_multiline(
         "What would you like to do? [Multi-agent collaboration] "
@@ -499,10 +418,7 @@ def _run_wizard_flow(
     if not task:
         task = "Multi-agent collaboration"
 
-    if repl:
-        return asyncio.run(_run_repl(str(output_path), initial_prompt=task, quiet=quiet))
-    else:
-        return asyncio.run(_run(str(output_path), initial_prompt=task, quiet=quiet))
+    return asyncio.run(_run_repl(str(output_path), initial_prompt=task, quiet=quiet))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -536,20 +452,19 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="allow type:fake backends in config (offline demo/benchmark)",
     )
+    # Accepted but ignored — REPL is always on (v2.5). Kept so old scripts don't fail.
     parser.add_argument(
         "--repl",
         action="store_true",
         default=False,
-        help="start a REPL session that keeps conversation context across multiple questions",
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args(argv)
 
-    # Validate flag combinations before anything else.
     if args.output is not None and args.config is not None:
         print("error: --output is only valid without --config", file=sys.stderr)
         return 1
 
-    # Mode 1: run from existing config.
     if args.config is not None:
         if args.reconfigure:
             print(
@@ -558,17 +473,22 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         try:
-            if args.repl:
-                return asyncio.run(_run_repl(args.config, quiet=args.quiet, allow_fake=args.demo))
-            return asyncio.run(_run(args.config, quiet=args.quiet, allow_fake=args.demo))
+            return asyncio.run(
+                _run_repl(
+                    args.config,
+                    quiet=args.quiet,
+                    allow_fake=args.demo,
+                )
+            )
         except Exception as exc:  # noqa: BLE001 — CLI boundary
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-    # Mode 2: interactive wizard.
     output_path = Path(args.output) if args.output else None
     try:
-        return _run_wizard_flow(output_path, force_reconfigure=args.reconfigure, quiet=args.quiet, repl=args.repl)
+        return _run_wizard_flow(
+            output_path, force_reconfigure=args.reconfigure, quiet=args.quiet
+        )
     except Exception as exc:  # noqa: BLE001 — CLI boundary
         print(f"error: {exc}", file=sys.stderr)
         return 1

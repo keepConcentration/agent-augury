@@ -123,10 +123,9 @@ def test_cli_p1_to_p5_protocol_yaml(capsys, monkeypatch):
         # Mock the backend to avoid real API calls
         # Mock the TUI adapter to avoid TTY issues
         with patch("agent_augury.backends_factory.build_backend") as mock_build, \
-             patch("agent_augury.cli._make_tui_adapter") as mock_tui:
+             patch("builtins.input", side_effect=EOFError):
             from agent_augury.backend.fake import FakeModelBackend
             mock_build.return_value = FakeModelBackend(script=["hello"])
-            mock_tui.return_value = None  # TUI adapter is mocked
             rc = main(["--config", str(P1_P5_YAML)])
     out = capsys.readouterr().out
     assert rc == 0

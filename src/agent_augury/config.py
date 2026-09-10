@@ -135,12 +135,12 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     if mirror is not None and isinstance(mirror, dict) and "url_env" not in mirror:
         raise ConfigError("mirror requires 'url_env' key")
 
-    # human 섹션은 v1.0부터 코드에 내장 (config에서 무시)
-    # human 참여 + TUI는 항상 켜져 있음
+    # human 섹션은 v1.0+ 코드에 내장 — config 키는 무시 (옵트인 폐기).
+    # REPL/TUI always-on: human 참가 + 상시 입력은 Session.from_config에서 항상 활성.
+    # (SESSION_TUI_REDESIGN v2.5 이후 human.tui / human.interface 키 검증 없음)
     human = data.get("human")
     if human is not None and isinstance(human, dict):
-        # human 섹션이 있으면 무시 (경고 없음) — 코드에 내장됨
-        pass
+        pass  # accepted but ignored — no warning
 
 # bots 섹션 검증 (N개 봇 통합)
     bots = data.get("bots")

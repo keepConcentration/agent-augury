@@ -458,15 +458,12 @@ class Session:
             if event is None:
                 break
             event_type = event.get("type")
-            if event_type == "tool" and self.on_tool_event:
-                self.on_tool_event(event)
-            elif event_type == "step" and self.on_step:
-                self.on_step(event["agent_id"], event["result"])
-            elif event_type == "read_resource" and self.on_tool_event or event_type == "create_thread" and self.on_tool_event or event_type == "send_message" and self.on_tool_event:
-                self.on_tool_event(event)
-            elif event_type == "create_thread" or event_type == "send_message":
-                # Fallback if no on_tool_event
-                pass
+            if event_type == "step":
+                if self.on_step is not None:
+                    self.on_step(event["agent_id"], event["result"])
+            elif event_type in ("tool", "read_resource", "create_thread", "send_message"):
+                if self.on_tool_event is not None:
+                    self.on_tool_event(event)
 
 
 def _resolve_role_prompt(spec: dict[str, Any], roles: dict[str, Any] | None) -> str:

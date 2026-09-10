@@ -353,8 +353,8 @@ agent-augury --demo --config examples/human_tui_demo.yaml
 | `--demo` | Allow `type: fake` backends (offline demo/benchmark) |
 | `--reconfigure` | Discard saved model settings and re-run the wizard |
 | `--output <path>` | Wizard output path (only valid without `--config`) |
-| `--quiet` | Suppress broadcast event output (only show final summary) |
-| `--repl` | REPL mode — keep conversation context across multiple questions |
+| `--quiet` | Suppress live event output and session summaries |
+| `--repl` | *(deprecated, no-op)* REPL is always on; kept for older scripts |
 
 ---
 

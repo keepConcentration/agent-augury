@@ -13,6 +13,13 @@ Design: ``docs/tui/SESSION_TUI_REDESIGN.md`` (v2.5) — full-screen TUI on TTY,
 plain ``input()`` fallback otherwise. ``--repl`` / one-shot ``_run`` removed.
 v1.0 (INITIAL_TASK_TUI_INTEGRATION_RESULT.md): Initial Task는 TTY에서 full-screen
 TUI 첫 입력으로 통합 (결정 ② 2-A). 비-TTY는 기존 ``_prompt_multiline`` 유지.
+
+v1.1 (TUI_UX_FIX_DESIGN.md ①): OAuth device-code 안내를 full-screen TUI 위에
+직접 print하지 않고 TUI 로그 버퍼로 라우팅한다 (``_AuthNoticeRelay``).
+
+v0.7 (AGENT_TOOLS_EXPANSION_DESIGN.md v4.1, P9): ``allowed_roots`` 배선 복구 —
+프로젝트 루트를 세션에 전달해 파일/shell 도구가 경로 제한을 실제 적용한다
+(기존: 미전달 → None = 무제한 접근 허점).
 """
 
 from __future__ import annotations
@@ -42,6 +49,38 @@ _INVISIBLE_CODEPOINTS = frozenset({0x3164, 0x200B, 0x200C, 0x200D, 0xFEFF, 0x00A
 
 _INITIAL_TASK_PROMPT = "What would you like to do? [Multi-agent collaboration] "
 _INITIAL_TASK_DEFAULT = "Multi-agent collaboration"
+
+# P9: 프로젝트 루트 — cli.py → 프로젝트 루트 (agent_augury/ 하위의 cli.py 기준 parents[2])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+class _AuthNoticeRelay:
+    """Routes OAuth device-code notices to the active display surface.
+
+    TUI path: lines are appended to the TUI log buffer (no direct print over
+    the alternate screen). Plain REPL / non-TTY: falls back to print().
+    """
+
+    def __init__(self) -> None:
+        self._tui: Any = None
+
+    def bind_tui(self, tui: Any) -> None:
+        self._tui = tui
+
+    def __call__(self, user_code: str, verification_uri: str) -> None:
+        lines = [
+            f"To authenticate, enter code: {user_code}",
+            f"Verification URL: {verification_uri}",
+        ]
+        if self._tui is not None:
+            try:
+                for line in lines:
+                    self._tui.append_text(line)
+                return
+            except Exception:  # noqa: BLE001, S110 — fall back to print
+                pass
+        for line in lines:
+            print(line, flush=True)
 
 
 def _mask_sensitive(text: str) -> str:
@@ -247,11 +286,13 @@ async def _run_repl_tui(
     *,
     initial_prompt: str | None,
     quiet: bool,
+    auth_relay: _AuthNoticeRelay | None = None,
 ) -> int:
     """Full-screen Application + session reuse loop.
 
     v1.0: initial_prompt=None이면 "Initial Task 대기 모드"로 진입 — TUI 입력줄에서
     첫 입력을 받아 session.run(initial_prompt=task) 트리거 (결정 ② 2-A).
+    v1.1: auth_relay가 주어지면 TUI 로그로 OAuth 안내를 라우팅 (TUI_UX_FIX_DESIGN.md ①).
     """
     from .tui.app import SessionTUIApplication
 
@@ -273,6 +314,10 @@ async def _run_repl_tui(
         initial_task_mode=waiting_initial,       # ★ v1.0
         preserve_log_on_exit=True,
     )
+
+    # ★ v1.1: OAuth 안내를 TUI 로그 버퍼로 라우팅
+    if auth_relay is not None:
+        auth_relay.bind_tui(tui)
 
     if waiting_initial:
         # TUI 로그에 Initial Task 안내 (v1.0 §2.1)
@@ -372,11 +417,25 @@ async def _run_repl(
             return
         _log_tool_event(event)
 
-    session = Session.from_config(cfg, on_step=on_step, on_tool_event=on_tool_event)
+    # ★ v1.1: OAuth 안내 라우팅 (TUI 로그 / plain print)
+    auth_relay = _AuthNoticeRelay()
+
+    # ★ v0.7 (P9): allowed_roots 배선 복구 — 프로젝트 루트를 기본 root로 전달.
+    # config tools.file.allowed_roots 로 확장 가능 (합집합은 ToolPolicy.from_config).
+    session = Session.from_config(
+        cfg,
+        on_step=on_step,
+        on_tool_event=on_tool_event,
+        allowed_roots=[str(PROJECT_ROOT)],
+        on_user_code=auth_relay,
+    )
     try:
         if use_tui:
             return await _run_repl_tui(
-                session, initial_prompt=initial_prompt, quiet=quiet
+                session,
+                initial_prompt=initial_prompt,
+                quiet=quiet,
+                auth_relay=auth_relay,
             )
         return await _run_repl_plain(
             session,

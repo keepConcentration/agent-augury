@@ -2,6 +2,8 @@
 
 v0.2: includes phase-aware instructions for P1~P5 collaboration protocol.
 v0.3: includes language instruction for user-language-matched responses.
+v0.7 (AGENT_TOOLS_EXPANSION_DESIGN.md v4.1): tool instructions are rendered
+dynamically from the active tool specs (P6) — only enabled tools are described.
 """
 
 import re
@@ -43,6 +45,13 @@ Communication rules:
 - `read_resource` dumps full thread/message state. Use it only when you need
   history or recovery — it is never pushed to you automatically.
 
+{tool_instructions}{role_instructions}{human_instructions}{phase_instructions}{language_instruction}
+"""
+
+# Dynamic tool-instruction sections (P6 — rendered from active ToolBox specs).
+# Each section is included only when the corresponding tools are enabled.
+
+_FILESYSTEM_INSTRUCTIONS = """\
 Filesystem tools (for exploring code and files):
 - `read_file(path)` — read a file's content. Use this to examine source code,
   configuration files, or any text file you need to understand.
@@ -54,9 +63,54 @@ Filesystem tools (for exploring code and files):
 When investigating a codebase, start with `list_directory` to understand the
 structure, then use `read_file` on relevant files. Always read files before
 making claims about their contents.
-
-{role_instructions}{human_instructions}{phase_instructions}{language_instruction}
 """
+
+_SHELL_INSTRUCTIONS = """\
+Shell tool:
+- `run_command(command, timeout?)` — run a command asynchronously (no shell
+  interpreter; argv parsing via shlex). Returns stdout, stderr, exit code.
+  Output is truncated. Destructive commands (rm -rf, mkfs, sudo, reboot, ...)
+  are blocked. Use for git, pytest, builds, and other CLI tools.
+"""
+
+_WEB_INSTRUCTIONS = """\
+Web tools:
+- `fetch_url(url)` — fetch an HTTP(S) URL and return its text content
+  (HTML stripped, truncated). Private/link-local IPs and blocked redirect
+  targets are rejected (SSRF protection).
+- `web_search(query)` — search the web; returns title/url/snippet (limited).
+  Use `fetch_url` to read the full pages of promising results.
+"""
+
+_EDIT_INSTRUCTIONS = """\
+File edit tools:
+- `edit_file(path, old_string, new_string)` — replace the FIRST exact
+  occurrence of `old_string` with `new_string` (must occur exactly once).
+- `append_file(path, content)` — append content to the end of a file.
+"""
+
+
+def render_tool_instructions(tool_specs: list[dict]) -> str:
+    """Render the dynamic tool block (P6) from active tool specs.
+
+    Only enabled tools are described; disabled tools are never mentioned
+    (context economy + avoids model confusion). Returns "" when the specs
+    list contains no known tools (defensive).
+    """
+    names = {spec.get("name") for spec in tool_specs}
+    sections: list[str] = []
+
+    if {"read_file", "list_directory", "write_file"} & names:
+        sections.append(_FILESYSTEM_INSTRUCTIONS)
+    if "run_command" in names:
+        sections.append(_SHELL_INSTRUCTIONS)
+    if {"fetch_url", "web_search"} & names:
+        sections.append(_WEB_INSTRUCTIONS)
+    if {"edit_file", "append_file"} & names:
+        sections.append(_EDIT_INSTRUCTIONS)
+
+    return "\n".join(sections).rstrip("\n")
+
 
 _HUMAN_INSTRUCTIONS = """\
 Human-in-the-loop rules:
@@ -105,7 +159,14 @@ Current phase: **P5 SUBMIT**
 }
 
 
-def render_system_prompt(agent_id: str, phase: str = "", language: str = "", role_prompt: str = "", has_human: bool = False) -> str:
+def render_system_prompt(
+    agent_id: str,
+    phase: str = "",
+    language: str = "",
+    role_prompt: str = "",
+    has_human: bool = False,
+    tool_instructions: str = "",
+) -> str:
     """Render the system prompt for an agent.
 
     Args:
@@ -118,6 +179,8 @@ def render_system_prompt(agent_id: str, phase: str = "", language: str = "", rol
             block is prepended to the prompt.
         has_human: When True, human-in-the-loop rules are included so the
             agent knows how to ask the user via ``ask_user``.
+        tool_instructions: Dynamically rendered tool block (P6). Empty when
+            no tools are active (defensive).
     """
     role_instructions = ""
     if role_prompt:
@@ -132,6 +195,7 @@ def render_system_prompt(agent_id: str, phase: str = "", language: str = "", rol
         )
     return SYSTEM_PROMPT_TEMPLATE.format(
         agent_id=agent_id,
+        tool_instructions=tool_instructions,
         role_instructions=role_instructions,
         human_instructions=human_instructions,
         phase_instructions=phase_instructions,

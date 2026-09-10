@@ -8,6 +8,16 @@ calls, or when its scripted backend runs dry (IndexError).
 v0.2: integrates the P1~P5 collaboration protocol. When a protocol is
 configured, the session drives phase transitions and injects phase context
 into each agent's system prompt.
+
+v0.7 (AGENT_TOOLS_EXPANSION_DESIGN.md v4.1):
+- global ``tools:`` section → ``ToolPolicy`` (default = new tools enabled
+  + built-in safety); per-agent ``tools:`` deep-merged (§4.7).
+- web_search is injected as a LocalTool (track B) backed by
+  ``build_search_provider``; provider clients are aclosed at session end.
+
+v1.1 (TUI_UX_FIX_DESIGN.md ①): ``on_user_code`` is forwarded to backends so
+OAuth device-code notices can be routed to the TUI log instead of printing
+over the alternate screen.
 """
 
 from __future__ import annotations
@@ -31,7 +41,9 @@ try:
 except ImportError:
     pass
 
-from .agent.loop import AgentLoop
+from .agent.loop import AgentLoop, LocalTool
+from .agent.policy import ToolPolicy
+from .agent.web import build_search_provider
 from .auth.token_store import TokenStore
 from .backends_factory import build_backend
 from .channel.discord_bot import BotManager, DiscordBotAdapter, _format_event
@@ -51,6 +63,59 @@ from .server import MessageServer
 
 OnStep = Callable[[str, Any], None]
 OnToolEvent = Callable[[dict[str, Any]], None]
+
+# LocalTool 트랙 B로 주입하는 web_search tool spec (AGENT_TOOLS §3.2/§4.3.2).
+_WEB_SEARCH_TOOL_SPEC = {
+    "name": "web_search",
+    "description": (
+        "Search the web for a query; returns title/url/snippet metadata "
+        "(max results configurable, default 5). Use fetch_url to read full pages."
+    ),
+    "schema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "search query"},
+            "max_results": {
+                "type": "integer",
+                "description": "max result count (default: tools.web.max_results)",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+
+def _build_local_tools(policy: ToolPolicy) -> tuple[list[LocalTool], Any | None]:
+    """Build agent-local tools (track B) from a resolved policy.
+
+    Currently only ``web_search`` (provider-backed). Returns
+    ``(tools, provider)`` where *provider* must be aclosed at session end
+    (None when no provider was created).
+    """
+    if not policy.web_enabled:
+        return [], None
+    provider = build_search_provider(
+        policy.web_search_provider, timeout=policy.web_timeout
+    )
+    if provider is None:
+        # 요청한 provider의 API 키가 없으면 web_search 미노출 (config 검증 경고).
+        return [], None
+
+    async def _search(args: dict[str, Any]) -> dict[str, Any]:
+        query = (args.get("query") or "").strip()
+        if not query:
+            return {"error": "query is required"}
+        max_results = int(args.get("max_results") or policy.web_max_results)
+        results = await provider.search(query, max_results)
+        return {"results": results}
+
+    tool = LocalTool(
+        name=_WEB_SEARCH_TOOL_SPEC["name"],
+        description=_WEB_SEARCH_TOOL_SPEC["description"],
+        schema=_WEB_SEARCH_TOOL_SPEC["schema"],
+        handler=_search,
+    )
+    return [tool], provider
 
 
 class Session:
@@ -77,6 +142,8 @@ class Session:
         self.protocol: CollaborationProtocol | None = None
         # v0.3: Discord bot manager (N개 Client)
         self.bot_manager = bot_manager
+        # v0.7: local-tool providers (web_search) to aclose at session end
+        self._local_providers: list[Any] = []
         # Unified output queue for all display events (tools, steps, read_resource)
         self._output_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._output_task: asyncio.Task | None = None
@@ -93,11 +160,18 @@ class Session:
         on_tool_event=None,
         allowed_roots: list[str] | None = None,
         token_store: TokenStore | None = None,
+        on_user_code: Callable[[str, str], None] | None = None,
     ) -> Session:
         server = MessageServer()
         agents: list[AgentLoop] = []
+        pending_providers: list[Any] = []
         # Shared token store so all backends use the same OAuth tokens
         shared_token_store = token_store or TokenStore()
+
+        # v0.7: 전역 tools: 섹션 → ToolPolicy (기본 = 신규 도구 전부 활성 + 안전장치)
+        global_policy = ToolPolicy.from_config(
+            cfg.get("tools", {}), allowed_roots=allowed_roots
+        )
 
         # Human-in-the-loop: 항상 내장 (v1.0)
         # config에 human 섹션이 있든 없든, 항상 켜져 있음
@@ -108,12 +182,21 @@ class Session:
             server.register_agent(spec["id"])
             # role 처리: role → roles 프리셋의 prompt 사용, role_custom → 직접 사용
             role_prompt = _resolve_role_prompt(spec, cfg.get("roles"))
+            # v0.7: 에이전트별 tools: 딥 병합 (agent-2, §4.7-6)
+            agent_policy = global_policy.merge(spec.get("tools"))
+            local_tools, provider = _build_local_tools(agent_policy)
             agents.append(
                 AgentLoop(
                     agent_id=spec["id"],
                     server=server,
-                    backend=build_backend(spec["backend"], token_store=shared_token_store),
-                    allowed_roots=allowed_roots,
+                    backend=build_backend(
+                        spec["backend"],
+                        token_store=shared_token_store,
+                        on_user_code=on_user_code,
+                    ),
+                    allowed_roots=list(agent_policy.allowed_roots) or None,
+                    policy=agent_policy,
+                    local_tools=local_tools,
                     role_prompt=role_prompt,
                     has_human=has_human,
                     on_tool_call=lambda agent_id, tool, args, result, _server=server: (
@@ -128,6 +211,8 @@ class Session:
                     ),
                 )
             )
+            if provider is not None:
+                pending_providers.append(provider)
 
         # v0.3: bots 섹션 파싱 → BotManager 구성
         bot_manager: BotManager | None = None
@@ -151,6 +236,8 @@ class Session:
             bot_manager=bot_manager,
             has_human=has_human,
         )
+        # v0.7: provider clients are instance-owned (closed at session end)
+        session._local_providers.extend(pending_providers)
         session.on_step = on_step
         session.on_tool_event = on_tool_event
         gate_spec = cfg.get("gate")
@@ -381,6 +468,11 @@ class Session:
 
         if self.mirror is not None:
             await self.mirror.aclose()
+        # v0.7: close local-tool providers (web_search HTTP clients)
+        for provider in self._local_providers:
+            aclose = getattr(provider, "aclose", None)
+            if aclose is not None:
+                await aclose()
         for agent in self.agents:
             aclose = getattr(agent.backend, "aclose", None)
             if aclose is not None:

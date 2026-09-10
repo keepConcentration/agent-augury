@@ -15,6 +15,133 @@ _VALID_BACKEND_TYPES = {"openai", "nous", "nous_oauth"}
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
+# ---------------------------------------------------------------------------
+# tools: 섹션 검증 (AGENT_TOOLS_EXPANSION_DESIGN.md §4.7, agent-2 담당)
+# ---------------------------------------------------------------------------
+
+# 허용된 tools: 최상위 키
+_TOOLS_TOP_KEYS = frozenset({"shell", "web", "file"})
+
+# tools.shell 허용 키
+_TOOLS_SHELL_KEYS = frozenset(
+    {
+        "enabled",
+        "allowed",
+        "blocked",
+        "timeout_seconds",
+        "max_output_chars",
+        "cwd",
+    }
+)
+
+# tools.web 허용 키
+_TOOLS_WEB_KEYS = frozenset(
+    {
+        "enabled",
+        "search_provider",
+        "allow_domains",
+        "deny_domains",
+        "block_private_ips",
+        "timeout_seconds",
+        "max_bytes",
+        "max_results",
+    }
+)
+
+# tools.file 허용 키
+_TOOLS_FILE_KEYS = frozenset({"edit_enabled", "allowed_roots"})
+
+# 유효한 web search provider (v0.9에서 searxng 추가 예정)
+_VALID_SEARCH_PROVIDERS = frozenset({"duckduckgo", "serper", "tavily", "searxng"})
+
+# IP 리터럴 / localhost — allow_domains에 넣으면 경고
+_LOCALHOST_NAMES = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
+
+
+def _validate_tools_section(tools: Any, *, where: str) -> None:
+    """Validate a ``tools:`` mapping (global or per-agent).
+
+    ``where`` is used for error messages (e.g. "tools", "agents[0].tools").
+    """
+    if not isinstance(tools, dict):
+        raise ConfigError(f"'{where}' must be a mapping")
+    for key in tools:
+        if key not in _TOOLS_TOP_KEYS:
+            raise ConfigError(
+                f"'{where}' contains unknown key {key!r} — "
+                f"only {sorted(_TOOLS_TOP_KEYS)} are allowed"
+            )
+
+    shell = tools.get("shell")
+    if shell is not None:
+        if not isinstance(shell, dict):
+            raise ConfigError(f"'{where}.shell' must be a mapping")
+        for key in shell:
+            if key not in _TOOLS_SHELL_KEYS:
+                raise ConfigError(
+                    f"'{where}.shell' contains unknown key {key!r} — "
+                    f"only {sorted(_TOOLS_SHELL_KEYS)} are allowed"
+                )
+        # enabled:true + 빈 allowed → 경고 (agent-1 피드백 5). load_config는
+        # 경고를 출력하고 진행한다 (치명 오류 아님 — 기본 활성화 정책).
+        if shell.get("enabled", True) is not False:
+            allowed = shell.get("allowed")
+            if allowed is not None and not isinstance(allowed, list):
+                raise ConfigError(f"'{where}.shell.allowed' must be a list")
+            if allowed == []:
+                print(
+                    f"  [config] warning: '{where}.shell.allowed' is empty — "
+                    "ALL commands allowed (only the built-in blocklist applies). "
+                    "See docs/TOOLS_OPERATION_GUIDE.md for hardening.",
+                    flush=True,
+                )
+
+    web = tools.get("web")
+    if web is not None:
+        if not isinstance(web, dict):
+            raise ConfigError(f"'{where}.web' must be a mapping")
+        for key in web:
+            if key not in _TOOLS_WEB_KEYS:
+                raise ConfigError(
+                    f"'{where}.web' contains unknown key {key!r} — "
+                    f"only {sorted(_TOOLS_WEB_KEYS)} are allowed"
+                )
+        provider = web.get("search_provider")
+        if provider is not None and (not isinstance(provider, str) or provider.lower() not in _VALID_SEARCH_PROVIDERS):
+            raise ConfigError(
+                f"'{where}.web.search_provider' must be one of "
+                f"{sorted(_VALID_SEARCH_PROVIDERS)}, got {provider!r}"
+            )
+        allow_domains = web.get("allow_domains")
+        if allow_domains is not None:
+            if not isinstance(allow_domains, list):
+                raise ConfigError(f"'{where}.web.allow_domains' must be a list")
+            for d in allow_domains:
+                if not isinstance(d, str):
+                    raise ConfigError(f"'{where}.web.allow_domains' entries must be strings")
+                if d.lower().strip() in _LOCALHOST_NAMES or re.match(
+                    r"^\d{1,3}(\.\d{1,3}){3}$", d.strip()
+                ):
+                    print(
+                        f"  [config] warning: '{where}.web.allow_domains' contains "
+                        f"{d!r} (IP literal / localhost) — SSRF deny still applies.",
+                        flush=True,
+                    )
+
+    file_ = tools.get("file")
+    if file_ is not None:
+        if not isinstance(file_, dict):
+            raise ConfigError(f"'{where}.file' must be a mapping")
+        for key in file_:
+            if key not in _TOOLS_FILE_KEYS:
+                raise ConfigError(
+                    f"'{where}.file' contains unknown key {key!r} — "
+                    f"only {sorted(_TOOLS_FILE_KEYS)} are allowed"
+                )
+        roots = file_.get("allowed_roots")
+        if roots is not None and (not isinstance(roots, list) or not all(isinstance(r, str) for r in roots)):
+            raise ConfigError(f"'{where}.file.allowed_roots' must be a list of strings")
+
 
 def _expand_env_refs(data: Any) -> Any:
     """Replace ``${VAR_NAME}`` placeholders with os.environ values.
@@ -130,6 +257,11 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
                 f"agents[{i}].role_custom must be a non-empty string"
             )
 
+        # tools: 섹션 (에이전트별 오버라이드) 검증
+        agent_tools = agent.get("tools")
+        if agent_tools is not None:
+            _validate_tools_section(agent_tools, where=f"agents[{i}].tools")
+
     # mirror.url_env 검증
     mirror = data.get("mirror")
     if mirror is not None and isinstance(mirror, dict) and "url_env" not in mirror:
@@ -141,6 +273,11 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     human = data.get("human")
     if human is not None and isinstance(human, dict):
         pass  # accepted but ignored — no warning
+
+    # tools: 섹션 (전역) 검증 — AGENT_TOOLS_EXPANSION_DESIGN.md §4.7
+    tools = data.get("tools")
+    if tools is not None:
+        _validate_tools_section(tools, where="tools")
 
 # bots 섹션 검증 (N개 봇 통합)
     bots = data.get("bots")

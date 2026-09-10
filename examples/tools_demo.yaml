@@ -1,0 +1,55 @@
+# agent-augury — 신규 도구(run_command/fetch_url/edit_file 등) 데모 설정
+#
+# 사용법:
+#   cd C:\Users\test\IdeaProjects\agent-augury
+#   .venv\Scripts\python -m agent_augury --demo --config examples/tools_demo.yaml
+#
+# --demo: fake 백엔드(오프라인 데모) 허용 플래그
+#
+# 이 데모는 agent-1이 실제로:
+#   1) run_command로 셸 명령 실행 (python -c "print(1+1)")
+#   2) read_file/list_directory로 파일 탐색
+#   3) edit_file/append_file로 파일 편집
+# 을 호출하는 것을 보여줍니다. fake 백엔드는 LLM 대신 미리 정해진
+# tool 호출을 재생하므로, 로그에서 각 도구의 실제 실행 결과(exit_code,
+# stdout 등)를 확인할 수 있습니다.
+
+task: "셸 도구와 파일 도구가 실제로 동작하는지 데모를 수행하라"
+max_steps: 8
+
+# tools: 섹션은 생략 가능 — 기본 활성화(D3)로 신규 도구가 모두 노출됩니다.
+# 명시적으로 끄려면 예: tools.shell.enabled: false
+# tools:
+#   shell:
+#     enabled: true
+#   web:
+#     enabled: true
+
+agents:
+  - id: agent-1
+    backend:
+      type: fake
+      script:
+        # 1) 셸 실행 — 실제 subprocess가 돌고 exit_code/stdout이 반환됨
+        - tool_calls:
+            - name: run_command
+              arguments:
+                command: "python -c \"print(1+1)\""
+        # 2) 프로젝트 구조 탐색 (allowed_roots = 프로젝트 루트로 제한됨)
+        - tool_calls:
+            - name: list_directory
+              arguments:
+                path: "."
+        # 3) 파일 부분 수정 — read 후 edit (고정 문자열 1회 치환)
+        - tool_calls:
+            - name: read_file
+              arguments:
+                path: "examples/tools_demo.yaml"
+        # 4) 파일 끝에 추가
+        - tool_calls:
+            - name: append_file
+              arguments:
+                path: "examples/demo_append.txt"
+                content: "appended by agent-augury demo\n"
+        # 5) 최종 요약
+        - "데모 완료: run_command/list_directory/read_file/append_file 모두 호출됨"

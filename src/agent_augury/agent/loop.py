@@ -3,6 +3,11 @@
 Also resolves ``$thread:N`` placeholders against this agent's own
 create_thread results, so scripted/real tool sequences can reference
 threads created earlier in the same run.
+
+v0.7 (AGENT_TOOLS_EXPANSION_DESIGN.md v4.1):
+- ``policy`` param threads a ``ToolPolicy`` into the ``ToolBox`` (P9/P11).
+- ``_update_phase_in_prompt`` renders the dynamic tool-instruction block
+  (P6) from the active tool specs — only enabled tools are described.
 """
 
 from __future__ import annotations
@@ -15,7 +20,8 @@ from typing import Any
 
 from ..backend.base import Completion, ModelBackend
 from ..server import MessageServer
-from .system_prompt import render_system_prompt
+from .policy import ToolPolicy
+from .system_prompt import render_system_prompt, render_tool_instructions
 from .tools import ToolBox
 
 Message = dict[str, Any]
@@ -67,13 +73,15 @@ class AgentLoop:
         local_tools: list[LocalTool] | None = None,
         on_tool_call: Callable[[str, str, dict[str, Any], Any], None] | None = None,
         allowed_roots: list[str] | None = None,
+        policy: ToolPolicy | None = None,
         role_prompt: str = "",
         has_human: bool = False,
     ) -> None:
         self.agent_id = agent_id
         self.server = server
         self.backend = backend
-        self.tools = ToolBox(server, allowed_roots=allowed_roots)
+        self.policy = policy  # v0.7 — may be None (legacy callers)
+        self.tools = ToolBox(server, allowed_roots=allowed_roots, policy=policy)
         self.local_tools: dict[str, LocalTool] = {t.name: t for t in local_tools or []}
         self.conversation: list[Message] = [
             {
@@ -114,18 +122,21 @@ class AgentLoop:
         return specs
 
     def _update_phase_in_prompt(self) -> None:
-        """Update the system prompt to reflect the current phase, language, and role."""
+        """Update the system prompt to reflect the current phase, language,
+        role, and active tools (P6 — dynamic tool block)."""
         if self._custom_system_prompt:
             return  # user-supplied prompt — don't overwrite
         if self.conversation and self.conversation[0]["role"] == "system":
+            tool_instructions = render_tool_instructions(self.tool_specs)
             self.conversation[0]["content"] = render_system_prompt(
                 self.agent_id, self.current_phase, self.language,
-                role_prompt=self._role_prompt, has_human=self._has_human
+                role_prompt=self._role_prompt, has_human=self._has_human,
+                tool_instructions=tool_instructions,
             )
 
     async def step(self) -> StepResult:
         """One model turn. Drains the inbox first; injects a [radio] user turn."""
-        # Update system prompt with current phase
+        # Update system prompt with current phase + active tools
         self._update_phase_in_prompt()
         drained = await self.server.drain_inbox(self.agent_id)
 

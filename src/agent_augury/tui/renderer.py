@@ -24,6 +24,12 @@ _TOOL_ICONS = {
     "send_message": '💬',
     "create_thread": '🧵',
     "read_resource": '📊',
+    # v0.7 — AGENT_TOOLS_EXPANSION_DESIGN.md 신규 도구 아이콘
+    "run_command": '⚙️',
+    "fetch_url": '🌐',
+    "web_search": '🔎',
+    "edit_file": '✏️',
+    "append_file": '➕',
 }
 
 _style_console = Console(

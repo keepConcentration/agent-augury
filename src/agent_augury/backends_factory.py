@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from typing import Any
 
 from .auth.oauth import NOUS_PORTAL_CONFIG
@@ -41,7 +42,18 @@ def _api_key_from_env(spec: dict[str, Any]) -> str:
     return value
 
 
-def build_backend(spec: dict[str, Any], token_store: TokenStore | None = None) -> ModelBackend:
+def build_backend(
+    spec: dict[str, Any],
+    token_store: TokenStore | None = None,
+    on_user_code: Callable[[str, str], None] | None = None,
+) -> ModelBackend:
+    """Build a backend from a config spec.
+
+    ``on_user_code`` is forwarded to OAuth backends so the CLI/TUI can surface
+    the device-code verification URL without printing to a full-screen TUI
+    (TUI_UX_FIX_DESIGN.md ①). Defaults to None (backward compatible — the
+    backend then falls back to its own print path).
+    """
     btype = spec.get("type")
     if btype == "fake":
         return FakeModelBackend([_completion_from_spec(e) for e in spec.get("script", [])])
@@ -65,6 +77,7 @@ def build_backend(spec: dict[str, Any], token_store: TokenStore | None = None) -
             model=spec["model"],
             base_url=spec.get("base_url", "https://inference-api.nousresearch.com/v1"),
             token_store=token_store,
+            on_user_code=on_user_code,
         )
     raise ValueError(f"unknown backend type: {btype!r}")
 

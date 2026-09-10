@@ -1,4 +1,30 @@
-"""SessionTUIApplication - full-screen layout + input routing lifecycle."""
+"""SessionTUIApplication - full-screen layout + input routing lifecycle.
+
+v1.1 (TUI_UX_FIX_DESIGN.md):
+- ② 마우스 휠 스크롤 시 `_log_follow` 해제 (SCROLL_UP/SCROLL_DOWN 바인딩),
+  `F` 키 follow 토글, 상태 표시줄 FOLLOW/SCROLL.
+- ① `on_ask_user` 시 질문+전체 옵션을 로그 버퍼에 백업 (긴 선택지 확인).
+- ③ 선택지 패널 활성 시 PgUp/PgDn이 로그 대신 패널 옵션을 스크롤.
+
+v1.2 (TUI_SCROLLABLE_INPUT_DESIGN.md — 옵션 A):
+- `ScrollablePane` 도입: **로그 + 입력창 위젯이 함께 스크롤** (일반 CLI처럼
+  위로 스크롤하면 입력창도 함께 올라감).
+- 선택지 패널/상태바는 ScrollablePane **밖 고정** — ask_user 질문/세션 상태 항상 가시.
+- **keep_cursor_visible=False / keep_focused_window_visible=False** — ScrollablePane의
+  입력창 강제 가시화를 끄고, follow(최하단) 상태를 우리가 명시적으로 관리한다.
+  (기본 True면 렌더마다 입력창이 화면 하단에 붙도록 scroll이 되돌려져
+  "입력창 고정"이 재현되고 로그가 위로 밀려 "3줄만 보임"이 된다 — 회귀 수정.)
+- 타이핑 시 follow 복귀: `InputBar.on_text_changed` 훅 → `_on_typing()`이
+  `_set_log_follow(True)` + `_follow_log_tail()` (keep_cursor_visible 대체).
+- Enter 제출 시 명시적 최하단 복귀 (`vertical_scroll` 큰 값 → 내부 클램프).
+- 사용자 입력 내용 로깅(`✓ human → ...`)은 기존 경로 그대로 유지.
+
+v1.2.1 (회귀 수정):
+- HSplit의 `(container, weight)` 튜플 문법은 prompt_toolkit에서 지원하지 않아
+  `to_container()`가 ValueError를 던졌다 (pytest 25건 실패 원인).
+  → `self.scrollable`을 튜플 없이 children에 직접 넣는다. ScrollablePane 자체가
+  preferred_height로 남는 공간을 차지하므로 weight 불필요.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +36,15 @@ from typing import Any
 from prompt_toolkit.application import Application
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import ConditionalContainer, Dimension, HSplit, Layout, Window
+from prompt_toolkit.keys import Keys
+from prompt_toolkit.layout import (
+    ConditionalContainer,
+    Dimension,
+    HSplit,
+    Layout,
+    ScrollablePane,
+    Window,
+)
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 
@@ -29,6 +63,9 @@ class SessionTUIApplication:
 
     _CHOICE_MAX_LINES = 8       # D-4 확정 (결정 ③ 3-A)
     _LOG_SCROLL_PAGE = 10       # D-5 확정 (PgUp/PgDn)
+    # ScrollablePane 최하단 정렬용 충분히 큰 값 — 내부 _make_window_visible()이
+    # max(virtual_height - visible_height)로 클램프한다 (agent-2 검증, §5.2).
+    _FOLLOW_MAX_SCROLL = 10**9
 
     def __init__(
         self,
@@ -65,11 +102,11 @@ class SessionTUIApplication:
             self.handle_input,
             app_ref=self,
             on_quit=on_quit,
+            on_text_changed=self._on_typing,
             history=history_file,
         )
 
         # ★ 로그 Window — S2 단일 소스 (v1.0 §2.3).
-        #   _build_layout()이 self.log_window를 참조하므로 반드시 그 전에 정의.
         #   get_cursor_position 람다는 렌더 시점에 평가 → 초기화 순환 참조 없음.
         self.log_window = Window(
             FormattedTextControl(
@@ -81,6 +118,20 @@ class SessionTUIApplication:
             wrap_lines=True,
             always_hide_cursor=True,        # 커서 숨김 (focusable=False 유지)
             allow_scroll_beyond_bottom=True,
+        )
+
+        # ★ v1.2: ScrollablePane — 로그 + 입력창 위젯이 함께 스크롤
+        #   (TUI_SCROLLABLE_INPUT_DESIGN.md 옵션 A).
+        #   keep_cursor_visible=False / keep_focused_window_visible=False:
+        #   ScrollablePane의 입력창 강제 가시화를 끄고 follow를 우리가 관리.
+        #   선택지 패널/상태바는 이 Pane 밖(아래)에 고정.
+        self.scrollable = ScrollablePane(
+            HSplit([
+                self.log_window,
+                self.input_bar.widget,
+            ]),
+            keep_cursor_visible=False,
+            keep_focused_window_visible=False,
         )
 
         app_kwargs: dict[str, Any] = {
@@ -113,8 +164,13 @@ class SessionTUIApplication:
     # -- layout --------------------------------------------------------------
 
     def _build_layout(self) -> HSplit:
+        # v1.2: ScrollablePane(로그+입력) + 고정 선택지 패널 + 고정 상태바.
+        #   ⚠️ v1.2.1: HSplit은 (container, weight) 튜플을 지원하지 않는다
+        #   (to_container()가 튜플 처리 못해 ValueError — pytest 25건 실패 원인).
+        #   ScrollablePane 자체가 preferred_height로 남는 공간을 차지하므로
+        #   weight 없이 children에 직접 넣는다.
         return HSplit([
-            self.log_window,                        # ★ S2 로그 Window
+            self.scrollable,                    # ★ 로그+입력 (함께 스크롤)
             ConditionalContainer(
                 Window(
                     self.choice_panel.control(),
@@ -129,7 +185,6 @@ class SessionTUIApplication:
                 height=1,
                 style="class:status",
             ),
-            self.input_bar.widget,
         ])
 
     def _choice_height(self) -> Dimension:
@@ -139,10 +194,42 @@ class SessionTUIApplication:
             preferred=self.choice_panel.line_count(self._CHOICE_MAX_LINES),
         )
 
+    # -- log follow state (v1.1 ② — status bar 동기화) -----------------------
+
+    def _set_log_follow(self, follow: bool) -> None:
+        """Set follow state and mirror it to the status bar."""
+        self._log_follow = follow
+        try:
+            self.status_bar.set_log_follow(follow)
+        except Exception:  # noqa: BLE001, S110 — status bar는 best-effort
+            pass
+
+    # -- v1.2: 타이핑 시 follow 복귀 (keep_cursor_visible 대체) ---------------
+
+    def _on_typing(self, _text: str) -> None:
+        """InputBar.on_text_changed → follow 복귀 (TUI_SCROLLABLE_INPUT_DESIGN.md §5.3).
+
+        ScrollablePane의 keep_cursor_visible을 끈 대신, 사용자가 타이핑을
+        시작/변경하면 최하단 follow로 복귀해 입력창이 화면 하단에 보이게 한다.
+        """
+        self._set_log_follow(True)
+        self._follow_log_tail()
+
     # -- global key bindings (v1.0 §2.3 — self closure, event.app 금지) ------
 
     def _build_app_kb(self) -> KeyBindings:
-        """전역 kb: PgUp/PgDn·Alt+↑/↓ = 로그 스크롤 (결정 ① 1-A).
+        """전역 kb: PgUp/PgDn·Alt+↑/↓ = 스크롤 (결정 ① 1-A).
+
+        v1.1 (TUI_UX_FIX_DESIGN.md ②③):
+        - 마우스 휠(SCROLL_UP/DOWN) 추가 — 스크롤 시 `_log_follow` 해제.
+        - `F` 키 — follow 토글.
+        - 선택지 패널이 활성이면:
+            PgUp/PgDn      → 패널 옵션 **페이지 단위** 스크롤
+            휠 / Alt+↑/↓   → 패널 옵션 **1줄 단위** 스크롤
+
+        v1.2 (TUI_SCROLLABLE_INPUT_DESIGN.md):
+        - 패널 비활성일 때 스크롤 대상 = `ScrollablePane.vertical_scroll` (로그+입력 함께)
+        - 패널 활성이면 기존 패널 옵션 스크롤 분기 유지
 
         ⚠️ self 클로저로 구성 — `event.app`은 prompt_toolkit Application이지
         SessionTUIApplication이 아니므로 `event.app.log_window` 금지 (v0.13 함정).
@@ -151,50 +238,89 @@ class SessionTUIApplication:
 
         @kb.add("pageup")
         def _pgup(event: Any) -> None:
-            self.log_window.vertical_scroll = max(
-                0, self.log_window.vertical_scroll - self._LOG_SCROLL_PAGE
+            if self.choice_panel.has_pending_bool():
+                self.choice_panel.scroll_up(self._CHOICE_MAX_LINES)   # 페이지 단위
+                return
+            self.scrollable.vertical_scroll = max(
+                0, self.scrollable.vertical_scroll - self._LOG_SCROLL_PAGE
             )
-            self._log_follow = False
+            self._set_log_follow(False)
             self.app.invalidate()
 
         @kb.add("pagedown")
         def _pgdn(event: Any) -> None:
-            max_scroll = max(0, self.log_buffer.line_count() - 1)
-            self.log_window.vertical_scroll = min(
-                max_scroll, self.log_window.vertical_scroll + self._LOG_SCROLL_PAGE
+            if self.choice_panel.has_pending_bool():
+                self.choice_panel.scroll_down(self._CHOICE_MAX_LINES)  # 페이지 단위
+                return
+            self.scrollable.vertical_scroll = (
+                self.scrollable.vertical_scroll + self._LOG_SCROLL_PAGE
             )
-            if self.log_window.vertical_scroll >= max_scroll:
-                self._log_follow = True     # 끝 도달 → follow 복귀
+            self._set_log_follow(False)
             self.app.invalidate()
 
         @kb.add("escape", "up")     # Alt+↑ (결정 ① 1-A)
         def _alt_up(event: Any) -> None:
-            self.log_window.vertical_scroll = max(
-                0, self.log_window.vertical_scroll - 1
+            if self.choice_panel.has_pending_bool():
+                self.choice_panel.scroll_line_up(self._CHOICE_MAX_LINES)  # 1줄 단위
+                return
+            self.scrollable.vertical_scroll = max(
+                0, self.scrollable.vertical_scroll - 1
             )
-            self._log_follow = False
+            self._set_log_follow(False)
             self.app.invalidate()
 
         @kb.add("escape", "down")   # Alt+↓ (결정 ① 1-A)
         def _alt_down(event: Any) -> None:
-            max_scroll = max(0, self.log_buffer.line_count() - 1)
-            self.log_window.vertical_scroll = min(
-                max_scroll, self.log_window.vertical_scroll + 1
+            if self.choice_panel.has_pending_bool():
+                self.choice_panel.scroll_line_down(self._CHOICE_MAX_LINES)  # 1줄 단위
+                return
+            self.scrollable.vertical_scroll = self.scrollable.vertical_scroll + 1
+            self._set_log_follow(False)
+            self.app.invalidate()
+
+        # ★ v1.1 ②: 마우스 휠 — 스크롤 시 follow 해제/복귀 (TUI_UX_FIX_DESIGN.md)
+        #   Keys.ScrollUp/ScrollDown enum (v1.1.1 fix — 문자열 키 파싱 실패 방지)
+        @kb.add(Keys.ScrollUp, eager=True)
+        def _wheel_up(event: Any) -> None:
+            if self.choice_panel.has_pending_bool():
+                self.choice_panel.scroll_line_up(self._CHOICE_MAX_LINES)  # 1줄 단위
+                return
+            self.scrollable.vertical_scroll = max(
+                0, self.scrollable.vertical_scroll - 3
             )
-            if self.log_window.vertical_scroll >= max_scroll:
-                self._log_follow = True
+            self._set_log_follow(False)
+            self.app.invalidate()
+
+        @kb.add(Keys.ScrollDown, eager=True)
+        def _wheel_down(event: Any) -> None:
+            if self.choice_panel.has_pending_bool():
+                self.choice_panel.scroll_line_down(self._CHOICE_MAX_LINES)  # 1줄 단위
+                return
+            self.scrollable.vertical_scroll = self.scrollable.vertical_scroll + 3
+            self._set_log_follow(False)
+            self.app.invalidate()
+
+        # ★ v1.1 ②: F 키 — follow 토글 (TUI_UX_FIX_DESIGN.md)
+        @kb.add("f", eager=True)
+        def _toggle_follow(event: Any) -> None:
+            self._set_log_follow(not self._log_follow)
+            if self._log_follow:
+                self._follow_log_tail()
             self.app.invalidate()
 
         return kb
 
     def _follow_log_tail(self) -> None:
-        """append 후 tail follow — follow=True면 최신 하단 유지 (v1.0 §2.3)."""
+        """append 후 tail follow — follow=True면 최하단 유지 (v1.0 §2.3).
+
+        v1.2: ScrollablePane 기준 — 충분히 큰 값을 설정하면 내부
+        `_make_window_visible()`이 `max(virtual_height - visible_height)`로
+        클램프해 최하단(입력창 화면 하단)으로 정렬한다 (agent-2 검증).
+        """
         if not self._log_follow:
             return
         try:
-            self.log_window.vertical_scroll = max(
-                0, self.log_buffer.line_count() - 1
-            )
+            self.scrollable.vertical_scroll = self._FOLLOW_MAX_SCROLL
         except Exception:  # noqa: BLE001, S110  # 렌더 전 초기화 중 무해 실패 무시
             pass
 
@@ -227,6 +353,19 @@ class SessionTUIApplication:
         thread_id = args.get("thread")
         if thread_id:
             self._recent_thread = thread_id
+        # ★ v1.1 ③: 로그 백업 — 패널이 잘려도 전체 옵션을 로그 스크롤로 확인
+        #   (TUI_UX_FIX_DESIGN.md ③ — 패널=현재 질문, 로그=전체 이력 보완 관계)
+        try:
+            question = args.get("question", "")
+            options = list(args.get("options") or [])
+            lines = [f"❓ [{agent_id}] {question}"]
+            for i, opt in enumerate(options, 1):
+                lines.append(f"   [{i}] {opt}")
+            self.log_buffer.append(mask_sensitive("\n".join(lines)))
+            self.log_buffer.append("-" * 40)
+            self._follow_log_tail()
+        except Exception:  # noqa: BLE001, S110 — 로그 백업 실패는 치명적이지 않음
+            pass
 
     def create_background_task(self, coro: Any) -> Any:
         return self.app.create_background_task(coro)
@@ -235,6 +374,11 @@ class SessionTUIApplication:
         return self.create_background_task(coro)
 
     async def handle_input(self, text: str) -> None:
+        # ★ v1.2: Enter 제출 시 최하단 follow 복귀 (사용자 요구)
+        #   (TUI_SCROLLABLE_INPUT_DESIGN.md §5.3 — 제출 시 명시적 복귀)
+        self._set_log_follow(True)
+        self._follow_log_tail()
+
         ctx = RouterContext(
             active_question=self.choice_panel.active,
             recent_thread=self._resolve_recent_thread(),
@@ -322,7 +466,7 @@ class SessionTUIApplication:
         if len(preview) > 80:
             preview = preview[:77] + "..."
         who = f"mentions={mentions}" if mentions else "broadcast"
-        # Design R10 feedback line
+        # Design R10 feedback line — 사용자 입력 내용 로깅 (기존 경로 유지, P2)
         self.append_text(f"✓ human → {thread_id} ({who}): {preview}")
         self._recent_thread = thread_id
 

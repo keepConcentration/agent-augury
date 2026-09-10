@@ -1,4 +1,9 @@
-"""InputBar - TextArea with accept_handler (Enter=submit)."""
+"""InputBar - TextArea with accept_handler (Enter=submit).
+
+v1.2 (TUI_SCROLLABLE_INPUT_DESIGN.md):
+- ``on_text_changed`` 훅 추가 — 사용자가 타이핑을 시작/변경하면 호출되어
+  앱이 follow로 복귀한다 (keep_cursor_visible 자동 조정을 대체).
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ from prompt_toolkit.widgets import TextArea
 
 SubmitHandler = Callable[[str], Awaitable[None] | None]
 QuitHandler = Callable[[], None]
+TextChangedHandler = Callable[[str], None]
 
 
 class InputBar:
@@ -25,12 +31,14 @@ class InputBar:
         *,
         app_ref: Any | None = None,
         on_quit: QuitHandler | None = None,
+        on_text_changed: TextChangedHandler | None = None,
         prompt: str = '👤 > ',
         history: History | str | Path | None = None,
         height: int = 3,
     ) -> None:
         self._on_submit = on_submit
         self._on_quit = on_quit
+        self._on_text_changed = on_text_changed
         self._app = app_ref
         self._kb = self._build_bindings()
 
@@ -58,11 +66,25 @@ class InputBar:
         # prompt_toolkit 3.0 TextArea has no key_bindings= kwarg - attach on control.
         self.widget.control.key_bindings = self._kb
 
+        # v1.2: 타이핑 시 follow 복귀 훅 (TUI_SCROLLABLE_INPUT_DESIGN.md §5.3)
+        try:
+            self.widget.buffer.on_text_changed += self._handle_text_changed
+        except Exception:  # noqa: BLE001, S110 — 훅 실패는 치명적이지 않음
+            pass
+
     def set_app(self, app: Any) -> None:
         self._app = app
 
     def set_on_quit(self, on_quit: QuitHandler | None) -> None:
         self._on_quit = on_quit
+
+    def _handle_text_changed(self, _event: Any) -> None:
+        """타이핑/변경 시 follow 복귀 (keep_cursor_visible 대체)."""
+        if self._on_text_changed is not None:
+            try:
+                self._on_text_changed(self.widget.buffer.text)
+            except Exception:  # noqa: BLE001, S110
+                pass
 
     def _dispatch(self, text: str) -> None:
         result = self._on_submit(text)

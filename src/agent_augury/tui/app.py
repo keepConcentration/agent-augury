@@ -29,6 +29,7 @@ v1.2.1 (회귀 수정):
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -42,10 +43,10 @@ from prompt_toolkit.layout import (
     Dimension,
     HSplit,
     Layout,
-    ScrollablePane,
     Window,
 )
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.styles import Style
 
 from .choice_panel import ChoicePanel
@@ -55,6 +56,7 @@ from .key_aliases import install_tui_key_aliases
 from .log_buffer import LogBuffer
 from .renderer import mask_sensitive, render_event
 from .router import RouterContext, route
+from .scrollable_pane import FollowScrollablePane, WheelScrollWindow
 from .status_bar import StatusBar
 
 
@@ -63,6 +65,7 @@ class SessionTUIApplication:
 
     _CHOICE_MAX_LINES = 8       # D-4 확정 (결정 ③ 3-A)
     _LOG_SCROLL_PAGE = 10       # D-5 확정 (PgUp/PgDn)
+    _WHEEL_DELTA = 3            # v1.4: 휠 한 칸 스크롤 줄 수 (#10)
     # ScrollablePane 최하단 정렬용 충분히 큰 값 — 내부 _make_window_visible()이
     # max(virtual_height - visible_height)로 클램프한다 (agent-2 검증, §5.2).
     _FOLLOW_MAX_SCROLL = 10**9
@@ -91,6 +94,8 @@ class SessionTUIApplication:
         self._initial_task_mode = initial_task_mode
         self._preserve_log_on_exit = preserve_log_on_exit
         self._recent_thread: str | None = None
+        self._pending_messages: list[dict[str, Any]] = []  # v1.4: pending msgs (#1)
+        self._last_ctrl_c: float = 0.0  # v1.4: Ctrl+C double-tap (#9)
         self._running = False
         self._shutting_down = False
         self._log_follow = True     # ★ tail follow (앱 레벨 상태, v1.0 §2.3)
@@ -125,13 +130,14 @@ class SessionTUIApplication:
         #   keep_cursor_visible=False / keep_focused_window_visible=False:
         #   ScrollablePane의 입력창 강제 가시화를 끄고 follow를 우리가 관리.
         #   선택지 패널/상태바는 이 Pane 밖(아래)에 고정.
-        self.scrollable = ScrollablePane(
+        self.scrollable = FollowScrollablePane(
             HSplit([
                 self.log_window,
                 self.input_bar.widget,
             ]),
             keep_cursor_visible=False,
             keep_focused_window_visible=False,
+            wheel_handler=self._handle_log_wheel,
         )
 
         app_kwargs: dict[str, Any] = {
@@ -141,7 +147,7 @@ class SessionTUIApplication:
             "mouse_support": True,                  # ★ 마우스 휠 (v1.0)
             "key_bindings": self._build_app_kb(),   # ★ 전역 kb (self 클로저)
             "style": Style.from_dict({
-                "status": "bg:#222222",
+                "status": "bg:#333333 fg:#cccccc",
                 "choice": "bg:#333333",
             }),
             "refresh_interval": 0.1,
@@ -172,11 +178,12 @@ class SessionTUIApplication:
         return HSplit([
             self.scrollable,                    # ★ 로그+입력 (함께 스크롤)
             ConditionalContainer(
-                Window(
+                WheelScrollWindow(
                     self.choice_panel.control(),
                     height=self._choice_height,     # ★ 동적 높이 (결정 ③ 3-A)
                     wrap_lines=True,                # ★ 긴 옵션 wrap (잘림 없음)
                     style="class:choice",
+                    wheel_handler=self._handle_panel_wheel,
                 ),
                 filter=self.choice_panel.has_pending,
             ),
@@ -310,6 +317,56 @@ class SessionTUIApplication:
 
         return kb
 
+    def _scroll_log(self, delta: int) -> None:
+        """#10/#4: 스크롤 이동 + follow 해제 + 하단 도달 시 자동 복귀."""
+        self.scrollable.vertical_scroll = max(
+            0, self.scrollable.vertical_scroll + delta
+        )
+        self._set_log_follow(False)
+        self._maybe_auto_follow()
+        self.app.invalidate()
+
+    def _handle_log_wheel(self, event: Any) -> None:
+        """#10: 로그+입력 영역 휠 → scrollable.vertical_scroll 조작."""
+        if event.event_type == MouseEventType.SCROLL_UP:
+            self._scroll_log(-self._WHEEL_DELTA)
+        elif event.event_type == MouseEventType.SCROLL_DOWN:
+            self._scroll_log(self._WHEEL_DELTA)
+
+    def _handle_panel_wheel(self, event: Any) -> None:
+        """#10: 선택지 패널 휠 → 패널 옵션 스크롤."""
+        if event.event_type == MouseEventType.SCROLL_UP:
+            self.choice_panel.scroll_line_up(self._CHOICE_MAX_LINES)
+        elif event.event_type == MouseEventType.SCROLL_DOWN:
+            self.choice_panel.scroll_line_down(self._CHOICE_MAX_LINES)
+
+    def _maybe_auto_follow(self) -> None:
+        """#4: 수동 스크롤이 최하단 근처면 follow 자동 복귀 (best-effort)."""
+        if self._log_follow:
+            return
+        try:
+            if self.scrollable.vertical_scroll >= self._FOLLOW_MAX_SCROLL:
+                self._set_log_follow(True)
+                self._follow_log_tail()
+        except Exception:  # noqa: BLE001, S110 — 렌더 전 초기화 중 무해 실패 무시
+            pass
+
+    def _handle_ctrl_c(self) -> None:
+        """#9: Ctrl+C 더블탭 → 종료, 단일 탭 → 안내."""
+        now = time.monotonic()
+        if now - self._last_ctrl_c < 1.0:
+            self.append_text("⚠️ Ctrl+C pressed twice — exiting...")
+            if self._on_quit is not None:
+                self._on_quit()
+            try:
+                if self.app.is_running:
+                    self.app.exit()
+            except Exception:  # noqa: BLE001, S110
+                pass
+            return
+        self._last_ctrl_c = now
+        self.append_text("⚠️ Press Ctrl+C again to exit, or type /quit")
+
     def _follow_log_tail(self) -> None:
         """append 후 tail follow — follow=True면 최하단 유지 (v1.0 §2.3).
 
@@ -332,6 +389,17 @@ class SessionTUIApplication:
         self._invalidate()
 
     def append_event(self, event: dict[str, Any]) -> None:
+        # v1.4 #8: protocol violation 카운터 연동
+        if event.get("protocol_violation"):
+            try:
+                self.status_bar.increment_violation()
+            except Exception:  # noqa: BLE001, S110
+                pass
+        # v1.4 #1: create_thread 이벤트 → 대기 메시지 자동 전송
+        if event.get("type") == "create_thread" and self._pending_messages:
+            tid = event.get("thread_id")
+            if tid:
+                self.create_background_task(self._flush_pending_messages(tid))
         ansi = render_event(event)
         if ansi:
             self.log_buffer.append(ansi)
@@ -451,7 +519,15 @@ class SessionTUIApplication:
         mentions: list[str] | None,
     ) -> None:
         if not thread_id:
-            self.append_text('✗ send failed: no active thread')
+            # v1.4 #1: thread 없으면 대기 큐에 보관, 첫 thread 생성 시 자동 전송
+            self._pending_messages.append({
+                "content": content,
+                "mentions": mentions,
+            })
+            preview = mask_sensitive(content)
+            if len(preview) > 60:
+                preview = preview[:57] + "..."
+            self.append_text(f'⏳ 대기 중 (thread 생성 후 자동 전송): {preview}')
             return
         try:
             await self._session.human_send(
@@ -469,6 +545,16 @@ class SessionTUIApplication:
         # Design R10 feedback line — 사용자 입력 내용 로깅 (기존 경로 유지, P2)
         self.append_text(f"✓ human → {thread_id} ({who}): {preview}")
         self._recent_thread = thread_id
+
+    async def _flush_pending_messages(self, thread_id: str) -> None:
+        """#1: 대기 중인 메시지를 새 thread로 일괄 전송."""
+        if not self._pending_messages:
+            return
+        msgs = self._pending_messages[:]
+        self._pending_messages.clear()
+        self.append_text(f'📤 대기 메시지 {len(msgs)}건 전송 중...')
+        for msg in msgs:
+            await self._send(thread_id, msg["content"], mentions=msg["mentions"])
 
     def _resolve_recent_thread(self) -> str | None:
         if self._recent_thread:

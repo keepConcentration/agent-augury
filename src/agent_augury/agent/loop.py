@@ -206,6 +206,7 @@ class AgentLoop:
                     return json.dumps(
                         {
                             "error": "gate_closed",
+                            "phase": self.current_phase or "?",
                             "message": (
                                 f"Gate is CLOSED. Work-share on thread '{thread_id}' is blocked. "
                                 f"Post APPROVE on the gate thread '{self.gate_thread_id}' to open the gate."
@@ -223,6 +224,7 @@ class AgentLoop:
                         return json.dumps(
                             {
                                 "error": "gate_closed",
+                                "phase": self.current_phase or "?",
                                 "message": (
                                     f"Gate is CLOSED. Work-share on thread '{thread_id}' is blocked. "
                                     f"Send READY: to finish P1 exploration first."

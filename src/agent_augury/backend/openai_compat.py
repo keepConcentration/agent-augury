@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -40,27 +41,44 @@ class OpenAICompatBackend(ModelBackend):
         if tools:
             payload["tools"] = [self._map_tool(t) for t in tools]
 
-        try:
-            response = await self._post(f"{self.base_url}/chat/completions", payload)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            # HTTP error (4xx/5xx) — return error text so the agent can
-            # surface it to the user instead of crashing the session.
-            detail = exc.response.text[:500] if exc.response is not None else ""
-            return Completion(
-                text=(
-                    f"[backend error] HTTP {exc.response.status_code if exc.response is not None else '?'}"
-                    f" from {self.base_url}/chat/completions. "
-                    f"The provider endpoint may be unavailable or the model '{self.model}' may not exist. "
-                    f"Detail: {detail}"
+        last_error = ""
+        for attempt in range(3):
+            try:
+                response = await self._post(f"{self.base_url}/chat/completions", payload)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code if exc.response is not None else "?"
+                if isinstance(exc.response.status_code, int) and 500 <= exc.response.status_code < 600:
+                    if attempt < 2:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                detail = exc.response.text[:500] if exc.response is not None else ""
+                return Completion(
+                    text=(
+                        f"[backend error] HTTP {status}"
+                        f" from chat/completions. "
+                        f"Model '{self.model}' may not exist. "
+                        f"Detail: {detail}"
+                    )
                 )
-            )
-        except httpx.RequestError as exc:
-            # Network-level error (DNS, connection refused, timeout, etc.)
+            except httpx.RequestError as exc:
+                if attempt < 2:
+                    last_error = str(exc)
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return Completion(
+                    text=(
+                        f"[backend error] Network error (retried 3 times): {last_error}. "
+                        f"Check your connection."
+                    )
+                )
+            else:
+                break
+        else:
             return Completion(
                 text=(
-                    f"[backend error] Network error calling {self.base_url}/chat/completions: {exc}. "
-                    f"Please check your internet connection and the base URL."
+                    f"[backend error] Network error (retried 3 times): {last_error}. "
+                    f"Check your connection."
                 )
             )
 

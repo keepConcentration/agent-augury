@@ -497,12 +497,42 @@ class Session:
 
         event_type = event["type"]
         if event_type == "tool":
+            import json
+
+            tool = event.get("tool", "")
+            result_str = event.get("result", "")
+            # v1.4 #3: run_command 성공 + 짧은 출력이면 로그 스킵 (노이즈 감소)
+            if tool == "run_command":
+                try:
+                    parsed = json.loads(result_str) if isinstance(result_str, str) else result_str
+                    if isinstance(parsed, dict) and parsed.get("exit_code") == 0 \
+                            and len(str(parsed.get("stdout", ""))) < 200 \
+                            and not str(parsed.get("stderr", "")).strip():
+                        return
+                except Exception:
+                    pass
+            # v1.4 #8: gate_closed -> protocol violation 태깅
+            is_violation = False
+            violation_msg = ""
+            phase = "?"
+            try:
+                parsed = json.loads(result_str) if isinstance(result_str, str) else result_str
+                if isinstance(parsed, dict) and parsed.get("error") == "gate_closed":
+                    is_violation = True
+                    violation_msg = parsed.get("message", "")
+                    phase = parsed.get("phase", "?")
+            except Exception:
+                pass
             try:
                 self._output_queue.put_nowait({
                     "type": "tool",
                     "agent_id": event["agent_id"],
                     "tool": event["tool"],
                     "args": event.get("args", {}),
+                    "result": result_str,
+                    "protocol_violation": is_violation,
+                    "violation_message": violation_msg,
+                    "phase": phase,
                     "timestamp": event.get("timestamp", __import__("time").time()),
                 })
             except asyncio.QueueFull:

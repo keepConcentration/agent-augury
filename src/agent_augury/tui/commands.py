@@ -114,3 +114,64 @@ register(SlashCommand("status", "threads/msgs/gate/phase", _status_text))
 register(SlashCommand("threads", "thread list + recent", _threads_text))
 register(SlashCommand("clear", "clear log buffer", _clear_buffer))
 register(SlashCommand("skip", "dismiss current question", _skip_question))
+
+# v1.4: /verbose toggle (P2-3 run_command 로그 필터링)
+_verbose_mode = False
+
+
+def verbose_mode() -> bool:
+    return _verbose_mode
+
+
+def _toggle_verbose(_ctx, _args):
+    global _verbose_mode
+    _verbose_mode = not _verbose_mode
+    return f"(verbose mode: {"ON" if _verbose_mode else "OFF"})"
+
+
+def _copy_log(ctx, args):
+    """Copy last N lines of log to clipboard (or export to file)."""
+    buf = ctx.get("log_buffer")
+    if buf is None:
+        return "(no log buffer)"
+    n = 50
+    if args.strip():
+        try:
+            n = int(args.strip())
+        except ValueError:
+            pass
+    tail = buf.export_tail(n)
+    if not tail:
+        return "(log is empty)"
+    try:
+        import pyperclip
+        pyperclip.copy(tail)
+        return f"(copied last {len(tail.splitlines())} lines to clipboard)"
+    except ImportError:
+        import tempfile
+        from pathlib import Path
+        path = Path(tempfile.gettempdir()) / "agent-augury-log.txt"
+        path.write_text(tail, encoding="utf-8")
+        return f"(pyperclip not installed. Saved to {path})"
+
+
+def _export_log(ctx, _args):
+    """Export full log to a file."""
+    buf = ctx.get("log_buffer")
+    if buf is None:
+        return "(no log buffer)"
+    tail = buf.export_tail(99999)
+    if not tail:
+        return "(log is empty)"
+    import datetime
+    from pathlib import Path
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = Path.home() / ".agent-augury" / f"log-{ts}.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(tail, encoding="utf-8")
+    return f"(log exported to {path})"
+
+
+register(SlashCommand("verbose", "toggle verbose tool logging", _toggle_verbose))
+register(SlashCommand("copy", "copy last N log lines to clipboard", _copy_log))
+register(SlashCommand("export", "export full log to file", _export_log))

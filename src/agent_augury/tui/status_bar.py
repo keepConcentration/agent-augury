@@ -24,6 +24,8 @@ class StatusBar:
         self._refresh_interval = refresh_interval
         self._idle_hint = '👤 waiting'
         self._running = False
+        # v1.4: protocol violation counter (P2-8)
+        self._violation_count = 0
         # v1.1: 로그 follow 상태 (app.py가 갱신) — TUI_UX_FIX_DESIGN.md ②
         self._log_follow = True
         # v1.2.1: control 인스턴스 캐시
@@ -35,6 +37,10 @@ class StatusBar:
     def set_log_follow(self, follow: bool) -> None:
         """앱 레벨 follow 상태를 반영 (SessionTUIApplication이 호출)."""
         self._log_follow = follow
+
+    def increment_violation(self) -> None:
+        """v1.4: protocol violation counter increment (P2-8)."""
+        self._violation_count += 1
 
     def _line(self) -> str:
         try:
@@ -52,12 +58,13 @@ class StatusBar:
         hint = "running" if self._running else self._idle_hint
         # v1.1: follow 상태 인디케이터 (TUI_UX_FIX_DESIGN.md ②)
         follow_s = "FOLLOW" if self._log_follow else "SCROLL"
+        viol_s = f" viol={self._violation_count}" if self._violation_count else ""
         return (
             f"threads={len(snap.get('threads', []))} · "
             f"msgs={len(snap.get('messages', []))} · "
             f"gate={gate_s} · phase={phase} · "
             f"agents={len(snap.get('agents', []))} · "
-            f"{follow_s} · {hint}"
+            f"{follow_s}{viol_s} · {hint}"
         )
 
     def control(self) -> FormattedTextControl:

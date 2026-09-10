@@ -128,6 +128,10 @@ class InputBar:
 
         @kb.add("c-c")
         def _clear(event: Any) -> None:
-            event.current_buffer.reset()
+            # v1.4: Ctrl+C → delegate to app._handle_ctrl_c (double-tap to quit)
+            if self._app is not None and hasattr(self._app, '_handle_ctrl_c'):
+                self._app._handle_ctrl_c()
+            else:
+                event.current_buffer.reset()
 
         return kb

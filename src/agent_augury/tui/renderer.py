@@ -60,8 +60,16 @@ def render_event(event: dict[str, Any]) -> str | None:
             return None
     elif event_type == "tool":
         tool = event.get("tool", "")
-        if tool in ("send_message", "create_thread", "read_resource"):
+        # v1.4: protocol_violation -> always render (dont skip)
+        if event.get("protocol_violation"):
+            pass
+        elif tool in ("send_message", "create_thread", "read_resource"):
             return None
+        # v1.4: verbose OFF + run_command -> skip (log noise reduction, #3)
+        elif tool == "run_command":
+            from .commands import _verbose_mode
+            if not _verbose_mode:
+                return None
     elif event_type not in (
         "create_thread",
         "read_resource",
@@ -119,12 +127,39 @@ def render_event(event: dict[str, Any]) -> str | None:
                     _style_console.print("   (options: " + " / ".join(options) + ")")
             else:
                 icon = _TOOL_ICONS.get(tool, '🔧')
-                path = args.get("path", "")
-                if path:
-                    short_path = os.path.basename(path.replace("\\", "/"))
-                    _style_console.print(f"{icon} {agent_id}: {tool} {short_path}")
+                # v1.4: protocol violation -> bold red (P2-8)
+                if event.get("protocol_violation"):
+                    msg = event.get("violation_message", "")
+                    phase = event.get("phase", "?")
+                    _style_console.print(
+                        f"⚠️ [{agent_id}] PROTOCOL VIOLATION (phase={phase}): {msg}",
+                        style="bold red"
+                    )
+                # v1.4: run_command -> show command (#2)
+                elif tool == "run_command":
+                    cmd = args.get("command", "")
+                    short = cmd[:60] + "..." if len(cmd) > 60 else cmd
+                    _style_console.print(f"{icon} {agent_id}: {tool} `{short}`")
+                # v1.4: fetch_url -> show URL (#2)
+                elif tool == "fetch_url":
+                    url = args.get("url", "")
+                    short = url[:60] + "..." if len(url) > 60 else url
+                    _style_console.print(f"{icon} {agent_id}: {tool} {short}")
+                # v1.4: file tools -> show basename (#2)
+                elif tool in ("read_file", "write_file", "edit_file", "append_file", "list_directory"):
+                    path = args.get("path", "")
+                    if path:
+                        short_path = os.path.basename(path.replace("\\", "/"))
+                        _style_console.print(f"{icon} {agent_id}: {tool} {short_path}")
+                    else:
+                        _style_console.print(f"{icon} {agent_id}: {tool}")
                 else:
-                    _style_console.print(f"{icon} {agent_id}: {tool}")
+                    path = args.get("path", "")
+                    if path:
+                        short_path = os.path.basename(path.replace("\\", "/"))
+                        _style_console.print(f"{icon} {agent_id}: {tool} {short_path}")
+                    else:
+                        _style_console.print(f"{icon} {agent_id}: {tool}")
 
         elif event_type == "feedback" or event_type == "summary":
             _style_console.print(event.get("text", ""))

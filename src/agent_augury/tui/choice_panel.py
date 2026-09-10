@@ -1,4 +1,10 @@
-"""ask_user choice panel - FIFO queue + FormattedTextControl."""
+"""ask_user choice panel - FIFO queue + FormattedTextControl.
+
+v1.0 (INITIAL_TASK_TUI_INTEGRATION_RESULT.md, 결정 ③ 3-A):
+- 옵션을 세로 목록(옵션당 1줄)으로 렌더 — 가로 join 제거 (3줄 잘림 해결).
+- `line_count(max_lines=...)` 제공 — 패널 동적 높이(Dimension callable) 계산용
+  (app.py `_choice_height()`가 `line_count(self._CHOICE_MAX_LINES)`로 호출).
+"""
 
 from __future__ import annotations
 
@@ -11,6 +17,10 @@ from typing import Any, Literal
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.layout.controls import FormattedTextControl
+
+# 패널 최대 논리 줄 수 기본값 (결정 ③ 3-A / D-4 확정).
+# app.py가 `_CHOICE_MAX_LINES`(8)를 인자로 넘겨 재정의 가능 — 단일 소스 유지.
+MAX_PANEL_LINES = 8
 
 
 @dataclass
@@ -96,6 +106,19 @@ class ChoicePanel:
         self.queue.clear()
         self._bump()
 
+    def line_count(self, max_lines: int = MAX_PANEL_LINES) -> int:
+        """논리 줄 수 — 질문 1 + 옵션 수 + (queued 1), 최대 *max_lines*.
+
+        app.py의 `_choice_height()`가 이 값을 `Dimension(preferred=...)`로 사용
+        (호출 시 `self._CHOICE_MAX_LINES`를 인자로 전달).
+        (wrap_lines=True인 Window가 실제 줄바꿈 높이를 계산하므로, 이 값은
+        옵션 wrap 전의 논리 줄 수.)
+        """
+        pq = self.active
+        if pq is None:
+            return 0
+        return min(max_lines, 1 + len(pq.options) + (1 if len(self.queue) > 1 else 0))
+
     def render(self) -> FormattedText:
         if self._formatted is not None:
             return self._formatted
@@ -104,10 +127,9 @@ class ChoicePanel:
             self._formatted = FormattedText([("", "")])
             return self._formatted
         lines = [f"❓ {pq.agent_id}: {pq.question}"]
-        if pq.options:
-            lines.append(
-                "   " + "   ".join(f"[{i + 1}] {opt}" for i, opt in enumerate(pq.options))
-            )
+        # ★ 세로 목록 (결정 ③ 3-A) — 옵션당 1줄, 가로 join 제거
+        for i, opt in enumerate(pq.options, 1):
+            lines.append(f"   [{i}] {opt}")
         if len(self.queue) > 1:
             lines.append(f"   (queued {len(self.queue) - 1})")
         self._formatted = FormattedText([("bold", "\n".join(lines))])

@@ -11,6 +11,8 @@ Flags:
 
 Design: ``docs/tui/SESSION_TUI_REDESIGN.md`` (v2.5) — full-screen TUI on TTY,
 plain ``input()`` fallback otherwise. ``--repl`` / one-shot ``_run`` removed.
+v1.0 (INITIAL_TASK_TUI_INTEGRATION_RESULT.md): Initial Task는 TTY에서 full-screen
+TUI 첫 입력으로 통합 (결정 ② 2-A). 비-TTY는 기존 ``_prompt_multiline`` 유지.
 """
 
 from __future__ import annotations
@@ -37,6 +39,9 @@ from .wizard import WizardCancelled, check_tty, run_wizard
 _DEFAULT_OUTPUT_PATH = Path.home() / ".agent-augury" / "agent-augury-session.yaml"
 _INVALID_PATH_CHARS = set('<>"|?*')
 _INVISIBLE_CODEPOINTS = frozenset({0x3164, 0x200B, 0x200C, 0x200D, 0xFEFF, 0x00A0})
+
+_INITIAL_TASK_PROMPT = "What would you like to do? [Multi-agent collaboration] "
+_INITIAL_TASK_DEFAULT = "Multi-agent collaboration"
 
 
 def _mask_sensitive(text: str) -> str:
@@ -77,7 +82,11 @@ def _resolve_output_path(raw: str | None, default: Path = _DEFAULT_OUTPUT_PATH) 
 
 
 def _prompt_multiline(prompt: str) -> str:
-    """Read multi-line free-text (Enter submits). Non-TTY -> stdin.read()."""
+    """Read multi-line free-text (Enter submits). Non-TTY -> stdin.read().
+
+    v1.0: TTY 환경에서는 더 이상 이 경로를 사용하지 않는다 (Initial Task는
+    full-screen TUI 첫 입력으로 통합 — 결정 ② 2-A). 비-TTY(파이프/CI) fallback으로만 유지.
+    """
     if not sys.stdin.isatty():
         return sys.stdin.read().strip()
 
@@ -119,6 +128,7 @@ def _prompt_multiline(prompt: str) -> str:
         text = ""
 
     return text.strip()
+
 
 def _prompt_output_path(default: Path = _DEFAULT_OUTPUT_PATH) -> Path:
     """Prompt for a YAML output path; Enter uses *default*, invalid input warns."""
@@ -238,11 +248,16 @@ async def _run_repl_tui(
     initial_prompt: str | None,
     quiet: bool,
 ) -> int:
-    """Full-screen Application + session reuse loop."""
+    """Full-screen Application + session reuse loop.
+
+    v1.0: initial_prompt=None이면 "Initial Task 대기 모드"로 진입 — TUI 입력줄에서
+    첫 입력을 받아 session.run(initial_prompt=task) 트리거 (결정 ② 2-A).
+    """
     from .tui.app import SessionTUIApplication
 
     next_turn: asyncio.Queue[str | None] = asyncio.Queue()
     quit_flag = asyncio.Event()
+    waiting_initial = initial_prompt is None      # ★ v1.0: Initial Task 대기 모드
 
     def on_quit() -> None:
         quit_flag.set()
@@ -255,8 +270,15 @@ async def _run_repl_tui(
         session,
         on_quit=on_quit,
         on_next_turn=on_next_turn,
+        initial_task_mode=waiting_initial,       # ★ v1.0
         preserve_log_on_exit=True,
     )
+
+    if waiting_initial:
+        # TUI 로그에 Initial Task 안내 (v1.0 §2.1)
+        tui.append_text("--- Initial Task ---")
+        tui.append_text(_INITIAL_TASK_PROMPT.rstrip())
+        tui.append_text("(Enter to submit, Shift+Enter for newline)")
 
     def on_step(agent_id: str, result: StepResult) -> None:
         if quiet:
@@ -282,7 +304,14 @@ async def _run_repl_tui(
     async def session_loop() -> int:
         tui.set_running(True)
         try:
-            steps = await session.run(initial_prompt=initial_prompt)
+            if waiting_initial:
+                # ★ v1.0: 첫 입력을 TUI 입력줄에서 대기 → session.run(initial_prompt=task)
+                task = await next_turn.get()
+                if task is None:
+                    return 0
+                steps = await session.run(initial_prompt=task)
+            else:
+                steps = await session.run(initial_prompt=initial_prompt)
         finally:
             tui.set_running(False)
         if session.mirror is not None:
@@ -375,7 +404,12 @@ def _run_wizard_flow(
     force_reconfigure: bool = False,
     quiet: bool = False,
 ) -> int:
-    """Run the interactive wizard, save the YAML, then start a REPL session."""
+    """Run the interactive wizard, save the YAML, then start a REPL session.
+
+    v1.0 (결정 ② 2-A): TTY면 위저드 직후 바로 full-screen TUI 시작 → Initial Task를
+    TUI 입력줄에서 받는다 (initial_prompt=None → _run_repl_tui의 대기 모드).
+    비-TTY(파이프/CI)는 기존 인라인 _prompt_multiline 유지 (회귀 0).
+    """
     if not check_tty():
         print(
             "error: interactive wizard requires a TTY. "
@@ -417,12 +451,15 @@ def _run_wizard_flow(
         print("\nWizard cancelled.")
         return 130
 
+    # ★ v1.0: TTY면 Initial Task를 full-screen TUI 첫 입력으로 통합 (결정 ② 2-A)
+    if _want_fullscreen_tui():
+        return asyncio.run(_run_repl(str(output_path), initial_prompt=None, quiet=quiet))
+
+    # 비-TTY fallback: 기존 인라인 _prompt_multiline 유지 (회귀 0)
     print("\n--- Initial Task ---")
-    task = _prompt_multiline(
-        "What would you like to do? [Multi-agent collaboration] "
-    )
+    task = _prompt_multiline(_INITIAL_TASK_PROMPT)
     if not task:
-        task = "Multi-agent collaboration"
+        task = _INITIAL_TASK_DEFAULT
 
     return asyncio.run(_run_repl(str(output_path), initial_prompt=task, quiet=quiet))
 

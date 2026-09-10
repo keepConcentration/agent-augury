@@ -14,7 +14,11 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 
 class LogBuffer:
-    """Line buffer with dirty-cache FormattedText for the log pane."""
+    """Line buffer with dirty-cache FormattedText for the log pane.
+
+    Pure buffer: scroll/follow state is owned by SessionTUIApplication
+    (design INITIAL_TASK_TUI_INTEGRATION_RESULT.md v1.0 §2.3).
+    """
 
     def __init__(
         self,
@@ -46,6 +50,10 @@ class LogBuffer:
         self._cache = None
         if self._invalidate is not None:
             self._invalidate()
+
+    def line_count(self) -> int:
+        """Number of buffered lines (used by app for scroll follow)."""
+        return len(self._lines)
 
     def render(self) -> FormattedText:
         if self._cache is None:

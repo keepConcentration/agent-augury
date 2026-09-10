@@ -18,15 +18,14 @@ _SENSITIVE_PATTERNS = [
 ]
 
 _TOOL_ICONS = {
-    "read_file": "\U0001f4d6",
-    "write_file": "\U0001f4dd",
-    "list_directory": "\U0001f4c1",
-    "send_message": "\U0001f4ac",
-    "create_thread": "\U0001f9f5",
-    "read_resource": "\U0001f4ca",
+    "read_file": '📖',
+    "write_file": '📝',
+    "list_directory": '📁',
+    "send_message": '💬',
+    "create_thread": '🧵',
+    "read_resource": '📊',
 }
 
-# Module-level recorder (design �3.3) � export_text(clear=True) resets between calls.
 _style_console = Console(
     record=True,
     file=io.StringIO(),
@@ -45,7 +44,6 @@ def render_event(event: dict[str, Any]) -> str | None:
     """Convert one session/cli event into a single ANSI block, or None to skip."""
     event_type = event.get("type")
 
-    # Early outs before any print � keep recorder clean.
     if event_type == "step":
         result = event.get("result")
         text = getattr(result, "text", None) if result is not None else event.get("text")
@@ -73,7 +71,7 @@ def render_event(event: dict[str, Any]) -> str | None:
         if event_type == "step":
             result = event.get("result")
             text = getattr(result, "text", None) if result is not None else event.get("text")
-            _style_console.print(f"\U0001f4ad {event.get('agent_id', '')}:")
+            _style_console.print(f"💭 {event.get('agent_id', '')}:")
             _style_console.print(Markdown(text))
 
         elif event_type == "create_thread":
@@ -81,7 +79,7 @@ def render_event(event: dict[str, Any]) -> str | None:
             name = event["name"]
             participants = ", ".join(event["participants"])
             _style_console.print(
-                f"\U0001f9f5 [{tid}] create_thread {name} ({participants})"
+                f"🧵 [{tid}] create_thread {name} ({participants})"
             )
 
         elif event_type == "send_message":
@@ -89,7 +87,7 @@ def render_event(event: dict[str, Any]) -> str | None:
             tid = event["thread_id"]
             delivered = event.get("delivered_to", [])
             targets = ", ".join(delivered) if delivered else "broadcast"
-            _style_console.print(f"\U0001f4ac [{author} -> {targets}][{tid}]")
+            _style_console.print(f"💬 [{author} -> {targets}][{tid}]")
             _style_console.print(Markdown(mask_sensitive(event.get("content", ""))))
 
         elif event_type == "read_resource":
@@ -97,7 +95,7 @@ def render_event(event: dict[str, Any]) -> str | None:
             threads = event.get("threads", 0)
             messages = event.get("messages", 0)
             _style_console.print(
-                f"\U0001f4ca {agent_id}: read_resource "
+                f"📊 {agent_id}: read_resource "
                 f"(threads={threads}, messages={messages})"
             )
 
@@ -109,12 +107,12 @@ def render_event(event: dict[str, Any]) -> str | None:
                 question = args.get("question", "")
                 options = args.get("options")
                 _style_console.print(
-                    f"\U0001f464 {agent_id} asks: {question}", style="bold"
+                    f"👤 {agent_id} asks: {question}", style="bold"
                 )
                 if options:
                     _style_console.print("   (options: " + " / ".join(options) + ")")
             else:
-                icon = _TOOL_ICONS.get(tool, "\U0001f527")
+                icon = _TOOL_ICONS.get(tool, '🔧')
                 path = args.get("path", "")
                 if path:
                     short_path = os.path.basename(path.replace("\\", "/"))
@@ -122,10 +120,7 @@ def render_event(event: dict[str, Any]) -> str | None:
                 else:
                     _style_console.print(f"{icon} {agent_id}: {tool}")
 
-        elif event_type == "feedback":
-            _style_console.print(event.get("text", ""))
-
-        elif event_type == "summary":
+        elif event_type == "feedback" or event_type == "summary":
             _style_console.print(event.get("text", ""))
 
         else:

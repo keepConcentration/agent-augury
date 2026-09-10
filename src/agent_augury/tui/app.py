@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, Window
@@ -151,7 +152,7 @@ class SessionTUIApplication:
             try:
                 if self.app.is_running:
                     self.app.exit()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110  # 종료 시 무해한 정리 실패 무시
                 pass
             return
 
@@ -201,7 +202,7 @@ class SessionTUIApplication:
         mentions: list[str] | None,
     ) -> None:
         if not thread_id:
-            self.append_text("\u2717 send failed: no active thread")
+            self.append_text('✗ send failed: no active thread')
             return
         try:
             await self._session.human_send(
@@ -210,14 +211,14 @@ class SessionTUIApplication:
                 mentions=mentions,
             )
         except Exception as exc:  # noqa: BLE001
-            self.append_text(f"\u2717 send failed: {exc}")
+            self.append_text('✗ send failed: ' + f"{exc}")
             return
         preview = mask_sensitive(content)
         if len(preview) > 80:
             preview = preview[:77] + "..."
         who = f"mentions={mentions}" if mentions else "broadcast"
-        # Design R10: "\u2713 human \u2192 {thread} ..."
-        self.append_text(f"\u2713 human \u2192 {thread_id} ({who}): {preview}")
+        # Design R10 feedback line
+        self.append_text(f"✓ human → {thread_id} ({who}): {preview}")
         self._recent_thread = thread_id
 
     def _resolve_recent_thread(self) -> str | None:
@@ -228,7 +229,7 @@ class SessionTUIApplication:
             threads = snap.get("threads") or []
             if threads:
                 return threads[0].get("thread_id")
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110  # 스냅샷 실패 시 recent_thread 폴백
             pass
         return None
 
@@ -252,12 +253,12 @@ class SessionTUIApplication:
         try:
             if self.app.is_running:
                 self.app.exit()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110  # 종료 시 무해한 정리 실패 무시
             pass
         self.choice_panel.reset()
         try:
             self.input_bar.widget.buffer.reset()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110  # 종료 시 무해한 정리 실패 무시
             pass
         if self._preserve_log_on_exit:
             tail = self.log_buffer.export_tail()

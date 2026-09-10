@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 from prompt_toolkit.layout.controls import FormattedTextControl

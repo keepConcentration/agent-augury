@@ -76,6 +76,6 @@ def install_tui_key_aliases() -> int:
     ):
         try:
             total += installer()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110  # 키 별칭 설치는 무해 실패 허용
             pass
     return total

@@ -14,7 +14,7 @@ class StatusBar:
     def __init__(self, session: Any, *, refresh_interval: float = 1.0) -> None:
         self._session = session
         self._refresh_interval = refresh_interval
-        self._idle_hint = "\U0001f464 waiting"
+        self._idle_hint = '👤 waiting'
         self._running = False
 
     def set_running(self, running: bool) -> None:
@@ -35,10 +35,10 @@ class StatusBar:
         )
         hint = "running" if self._running else self._idle_hint
         return (
-            f"threads={len(snap.get('threads', []))}  |  "
-            f"msgs={len(snap.get('messages', []))}  |  "
-            f"gate={gate_s}  |  phase={phase}  |  "
-            f"agents={len(snap.get('agents', []))}  |  {hint}"
+            f"threads={len(snap.get('threads', []))} · "
+            f"msgs={len(snap.get('messages', []))} · "
+            f"gate={gate_s} · phase={phase} · "
+            f"agents={len(snap.get('agents', []))} · {hint}"
         )
 
     def control(self) -> FormattedTextControl:

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
@@ -102,8 +103,7 @@ class ChoicePanel:
         if pq is None:
             self._formatted = FormattedText([("", "")])
             return self._formatted
-        qmark = "\u2753"
-        lines = [f"{qmark} {pq.agent_id}: {pq.question}"]
+        lines = [f"❓ {pq.agent_id}: {pq.question}"]
         if pq.options:
             lines.append(
                 "   " + "   ".join(f"[{i + 1}] {opt}" for i, opt in enumerate(pq.options))

@@ -5,9 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-_QUESTION_REPLY_NOTICE = (
-    "(\uc9c8\ubb38\uc5d0 \uc751\ub2f5\ud558\ub294 \ub300\uc2e0 \uc77c\ubc18 \uba54\uc2dc\uc9c0\ub85c \ubcf4\ub0c4)"
-)
+_QUESTION_REPLY_NOTICE = '(질문에 응답하는 대신 일반 메시지로 보냄)'
 
 
 class ActiveQuestion(Protocol):
@@ -20,7 +18,7 @@ class ActiveQuestion(Protocol):
 class RouteResult:
     """Routing decision - caller executes (human_send / slash / quit)."""
 
-    kind: str  # command | choice | question_reply | plain | ignored | quit
+    kind: str
     content: str = ""
     thread_id: str | None = None
     mentions: list[str] | None = None

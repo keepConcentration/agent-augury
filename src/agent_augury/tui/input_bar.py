@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.history import FileHistory, History
@@ -24,7 +25,7 @@ class InputBar:
         *,
         app_ref: Any | None = None,
         on_quit: QuitHandler | None = None,
-        prompt: str = "\U0001f464 > ",
+        prompt: str = 'ðŸ‘¤ > ',
         history: History | str | Path | None = None,
         height: int = 3,
     ) -> None:
@@ -54,7 +55,7 @@ class InputBar:
             accept_handler=_accept,
             history=hist,
         )
-        # prompt_toolkit 3.0 TextArea has no key_bindings= kwarg — attach on control.
+        # prompt_toolkit 3.0 TextArea has no key_bindings= kwarg - attach on control.
         self.widget.control.key_bindings = self._kb
 
     def set_app(self, app: Any) -> None:
@@ -85,13 +86,10 @@ class InputBar:
         def _nl1(event: Any) -> None:
             event.current_buffer.insert_text("\n")
 
-        # Shift+Enter is normalized to Esc+Enter via key_aliases (ANSI sequences).
-        # Do not bind "s-enter" — invalid in prompt_toolkit 3.x key names.
+        # Shift+Enter normalized via key_aliases; do not bind s-enter.
 
         @kb.add("c-d")
         def _quit(event: Any) -> None:
-            # Must notify CLI session_loop (quit_flag + next_turn) before exit,
-            # otherwise await next_turn.get() deadlocks (P0 review).
             if self._on_quit is not None:
                 self._on_quit()
             event.app.exit()

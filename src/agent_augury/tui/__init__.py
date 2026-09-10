@@ -6,7 +6,7 @@ Design: docs/tui/SESSION_TUI_REDESIGN.md (v2.5).
 from __future__ import annotations
 
 from .choice_panel import ChoicePanel, PendingQuestion
-from .router import RouteResult, RouterContext, route
+from .router import RouterContext, RouteResult, route
 
 __all__ = [
     "ChoicePanel",

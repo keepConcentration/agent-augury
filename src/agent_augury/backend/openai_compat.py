@@ -48,10 +48,13 @@ class OpenAICompatBackend(ModelBackend):
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code if exc.response is not None else "?"
-                if isinstance(exc.response.status_code, int) and 500 <= exc.response.status_code < 600:
-                    if attempt < 2:
-                        await asyncio.sleep(2 ** attempt)
-                        continue
+                if (
+                    isinstance(exc.response.status_code, int)
+                    and 500 <= exc.response.status_code < 600
+                    and attempt < 2
+                ):
+                    await asyncio.sleep(2 ** attempt)
+                    continue
                 detail = exc.response.text[:500] if exc.response is not None else ""
                 return Completion(
                     text=(

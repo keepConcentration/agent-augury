@@ -27,15 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agent_augury.session import Session  # noqa: E402
-from agent_augury.protocol.phases import (
-    P1_EXPLORE,
-    P2_SPLIT,
-    P3_EXECUTE,
-    P4_REVIEW,
-    P5_SUBMIT,
-    COMPLETED,
-)
+from agent_augury.session import Session
 
 AGENTS = ["agent-1", "agent-2", "agent-3"]
 
@@ -301,7 +293,6 @@ def main() -> int:
     propose = next(m for m in by_seq if m["content"].startswith("PROPOSE:"))
     approvals = [m for m in by_seq if m["content"].startswith("APPROVE:")]
     work = [m for m in by_seq if m["content"].startswith("(FYI)")]
-    results = [m for m in by_seq if m["content"].startswith("RESULT:")]
     finals = [m for m in by_seq if m["content"].startswith("FINAL:")]
 
     # P1: exactly 3 READY: messages, all before PROPOSE

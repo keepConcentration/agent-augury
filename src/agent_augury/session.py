@@ -509,7 +509,7 @@ class Session:
                             and len(str(parsed.get("stdout", ""))) < 200 \
                             and not str(parsed.get("stderr", "")).strip():
                         return
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 — best-effort parse for log skip
                     pass
             # v1.4 #8: gate_closed -> protocol violation 태깅
             is_violation = False
@@ -521,7 +521,7 @@ class Session:
                     is_violation = True
                     violation_msg = parsed.get("message", "")
                     phase = parsed.get("phase", "?")
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — best-effort parse for violation tag
                 pass
             try:
                 self._output_queue.put_nowait({

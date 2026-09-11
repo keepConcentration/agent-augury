@@ -163,9 +163,9 @@ def _export_log(ctx, _args):
     tail = buf.export_tail(99999)
     if not tail:
         return "(log is empty)"
-    import datetime
+    from datetime import UTC, datetime
     from pathlib import Path
-    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     path = Path.home() / ".agent-augury" / f"log-{ts}.txt"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(tail, encoding="utf-8")

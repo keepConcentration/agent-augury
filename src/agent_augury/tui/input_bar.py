@@ -110,13 +110,14 @@ class InputBar:
         def _submit(event: Any) -> None:
             event.current_buffer.validate_and_handle()
 
-        # Newline: Esc+Enter (Shift+Enter via key_aliases -> Escape,ControlM).
-        @kb.add("escape", "enter")
+        # Newline: Esc+Enter (Shift+Enter via win32 patch → Escape,ControlM).
+        # eager so a pending Escape+Enter wins over Enter=submit when both match.
+        @kb.add("escape", "enter", eager=True)
         def _nl1(event: Any) -> None:
             event.current_buffer.insert_text("\n")
 
-        # Newline: win32 Ctrl+Enter arrives as (Escape, ControlJ).
-        @kb.add("escape", "c-j")
+        # Newline: Esc+C-j (win32 Ctrl+Enter, or Shift+Enter as \\n).
+        @kb.add("escape", "c-j", eager=True)
         def _nl2(event: Any) -> None:
             event.current_buffer.insert_text("\n")
 

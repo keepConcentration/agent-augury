@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 from unittest.mock import patch
 
 from agent_augury.cli import _mask_sensitive
@@ -241,12 +242,48 @@ def test_wizard_flow_stops_when_api_key_env_missing(tmp_path, monkeypatch):
     with patch("agent_augury.cli._run_repl", fake_run), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
-         patch("agent_augury.cli.load_model_config", return_value=cfg):
+         patch("agent_augury.cli.load_model_config", return_value=cfg), \
+         patch("getpass.getpass", return_value=""):
         result = _run_wizard_flow(output_path=out_path, quiet=True)
 
     assert result == 1
     assert calls == []
     assert out_path.exists()
+
+
+def test_wizard_flow_prompts_for_missing_api_key(tmp_path, monkeypatch):
+    """When the env var is unset, prompt for the key and continue the session."""
+    from agent_augury.cli import _run_wizard_flow
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    cfg = {
+        "max_steps": 0,
+        "agents": [
+            {
+                "id": "a1",
+                "backend": {
+                    "type": "openai",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                    "model": "anthropic/claude-sonnet-4",
+                },
+            }
+        ],
+    }
+    out_path = tmp_path / "wizard_out.yaml"
+    calls, fake_run = _make_run_recorder()
+    with patch("agent_augury.cli._run_repl", fake_run), \
+         patch("agent_augury.cli.check_tty", return_value=True), \
+         patch("agent_augury.cli._want_fullscreen_tui", return_value=True), \
+         patch("agent_augury.cli.model_config_exists", return_value=True), \
+         patch("agent_augury.cli.load_model_config", return_value=cfg), \
+         patch("getpass.getpass", return_value="sk-or-test-key"):
+        result = _run_wizard_flow(output_path=out_path, quiet=True)
+
+    assert result == 0
+    assert len(calls) == 1
+    assert os.environ.get("OPENROUTER_API_KEY") == "sk-or-test-key"
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
 
 # ---------------------------------------------------------------------------

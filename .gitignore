@@ -16,6 +16,7 @@ htmlcov/
 .idea/
 .vscode/
 *.log
+node_modules/
 
 # Root experiment/wizard scratch configs (not part of the runtime)
 /agent-augury-session.yaml

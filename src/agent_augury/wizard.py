@@ -24,6 +24,7 @@ from typing import Any
 from .model_config import (
     save_model_config,
 )
+from .model_listing import ModelInfo, format_aligned_labels
 
 # -- constants ---------------------------------------------------------------
 
@@ -149,23 +150,23 @@ def _try_list_models(
     backend_type: str,
     base_url: str,
     api_key_env: str | None,
-) -> list[str] | None:
-    """Attempt to fetch model IDs from the provider.
+) -> list[str] | list[ModelInfo] | None:
+    """Attempt to fetch models from the provider.
 
-    Returns a list of model IDs on success, None on failure (network
-    error, unsupported endpoint, missing credentials, etc.).
+    Returns model IDs (str) or priced ``ModelInfo`` rows on success, None on failure.
     """
     from .backends_factory import (
         list_models_nous_oauth,
         list_models_nous_portal,
         list_models_openai_compat,
+        list_openrouter_models,
     )
 
     try:
         if backend_type == "openrouter":
             # OpenRouter /models is public; use env key when present, else unauthenticated.
             api_key = os.environ.get(api_key_env, "") if api_key_env else ""
-            return list_models_openai_compat(base_url, api_key)
+            return list_openrouter_models(base_url, api_key)
         if backend_type == "openai":
             if not api_key_env:
                 return None
@@ -174,11 +175,8 @@ def _try_list_models(
                 return None
             return list_models_openai_compat(base_url, api_key)
         if backend_type == "nous":
-            if not api_key_env:
-                return None
-            api_key = os.environ.get(api_key_env, "")
-            if not api_key:
-                return None
+            # Nous /models is public; prefer env key when set.
+            api_key = os.environ.get(api_key_env, "") if api_key_env else ""
             return list_models_nous_portal(base_url, api_key)
         if backend_type == "nous_oauth":
             return list_models_nous_oauth(base_url)
@@ -316,16 +314,19 @@ def _try_refresh_oauth_token() -> bool:
         return False
 
 
-def _select_model_interactive(models: list[str]) -> str | None:
+def _select_model_interactive(models: list[str] | list[ModelInfo]) -> str | None:
     """Show a numbered model list; return selected model ID or None for manual."""
     print("\n  Available models:")
-    for i, m in enumerate(models, 1):
-        print(f"    {i}) {m}")
+    labels = format_aligned_labels(models)
+    index_width = len(str(len(models) + 1))
+    for i, label in enumerate(labels, 1):
+        print(f"    {i:>{index_width}}) {label}")
     manual_idx = len(models) + 1
-    print(f"    {manual_idx}) Enter model ID manually")
+    print(f"    {manual_idx:>{index_width}}) Enter model ID manually")
     choice = _input_int("  Select model", manual_idx)
     if 1 <= choice <= len(models):
-        return models[choice - 1]
+        selected = models[choice - 1]
+        return selected.id if isinstance(selected, ModelInfo) else selected
     return None
 
 
@@ -400,16 +401,19 @@ def _build_agent(
     backend: dict[str, Any] = {"type": emit_type}
 
     if backend_type == "openrouter":
-        # Fixed URL + env name — no Base URL / reuse / env-name prompts.
+        # Fixed URL + env *name* — actual secret stays in the process env only.
         base_url = OPENROUTER_DEFAULT_BASE_URL
         backend["base_url"] = base_url
         backend["api_key_env"] = OPENROUTER_DEFAULT_API_KEY_ENV
         print(f"  (OpenRouter — {base_url})")
-        print(f"  (API key env: {OPENROUTER_DEFAULT_API_KEY_ENV})")
+        print(
+            f"  (config will reference env var name {OPENROUTER_DEFAULT_API_KEY_ENV}; "
+            "the secret is never written to YAML)"
+        )
         if not os.environ.get(OPENROUTER_DEFAULT_API_KEY_ENV):
             print(
-                f"  (warning: {OPENROUTER_DEFAULT_API_KEY_ENV} is not set "
-                "in this shell — model list may work, but the session needs it)"
+                f"  (note: {OPENROUTER_DEFAULT_API_KEY_ENV} is not set yet — "
+                "you will be prompted for the key after setup)"
             )
         backend["model"] = _collect_model_for_backend(
             backend_type, base_url, OPENROUTER_DEFAULT_API_KEY_ENV

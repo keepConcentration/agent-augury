@@ -1,19 +1,16 @@
 """Discord bot adapter — N개 discord.Client in a single asyncio loop.
 
-Read-only observation: the bot only SENDS messages to a configured channel.
-It never reads or processes inbound Discord messages (SSOT principle —
-MessageServer is the single source of truth).
-
-Design (DISCORD_BOT_INTEGRATION.md §4):
-  - DiscordBotAdapter: wraps one discord.Client for one agent
-  - BotManager: owns N adapters, routes events by agent_id
-  - Single asyncio loop, cooperative scheduling (no locks)
+Outbound: send-only observation (SSOT — MessageServer is truth).
+Inbound (M5): optional ``inbound=True`` registers ``on_message`` and forwards
+channel text to a Gateway handler as Wire ``human.*`` commands.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from collections.abc import Callable
 from typing import Any
 
 import discord
@@ -23,12 +20,15 @@ log = logging.getLogger(__name__)
 # Discord message limit is 2000; we stay under with headroom.
 _MAX_CONTENT = 1800
 
+InboundHandler = Callable[..., None]
+_MENTION_RE = re.compile(r"<@!?\d+>")
+
 
 class DiscordBotAdapter:
     """One discord.Client bound to one agent + one channel.
 
-    Send-only: ``enqueue()`` pushes text; a sender task drains the outbox
-    to the Discord channel.  No on_message handler is registered.
+    Default: send-only. With ``inbound=True``, messages in ``channel_id``
+    (non-bot authors) are forwarded to ``set_inbound_handler``.
     """
 
     def __init__(
@@ -37,14 +37,22 @@ class DiscordBotAdapter:
         token: str,
         channel_id: int,
         *,
+        inbound: bool = False,
         intents: discord.Intents | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.channel_id = channel_id
+        self.inbound = bool(inbound)
         self._token = token
-        self._client = discord.Client(
-            intents=intents or discord.Intents.default(),
-        )
+        self._inbound_handler: InboundHandler | None = None
+
+        if intents is None:
+            intents = discord.Intents.default()
+            if self.inbound:
+                # Required to read message bodies in guild channels.
+                intents.message_content = True
+
+        self._client = discord.Client(intents=intents)
         self._ready = asyncio.Event()
         self._outbox: asyncio.Queue[str] = asyncio.Queue()
         self._sender_task: asyncio.Task | None = None
@@ -53,6 +61,39 @@ class DiscordBotAdapter:
         async def on_ready() -> None:
             self._ready.set()
             log.info("bot %s ready as %s", self.agent_id, self._client.user)
+
+        if self.inbound:
+            @self._client.event
+            async def on_message(message: discord.Message) -> None:
+                self._handle_inbound_message(message)
+
+    def set_inbound_handler(self, handler: InboundHandler | None) -> None:
+        """Install/replace the callback used when ``inbound=True``."""
+        self._inbound_handler = handler
+
+    def _handle_inbound_message(self, message: discord.Message) -> None:
+        if not self.inbound or self._inbound_handler is None:
+            return
+        if not accept_inbound_message(
+            message,
+            channel_id=self.channel_id,
+            bot_user_id=getattr(self._client.user, "id", None),
+        ):
+            return
+        content = normalize_inbound_content(
+            message.content or "",
+            bot_user_id=getattr(self._client.user, "id", None),
+        )
+        if not content:
+            return
+        try:
+            self._inbound_handler(
+                content,
+                user_id=str(message.author.id),
+                channel_id=int(message.channel.id),
+            )
+        except Exception:
+            log.exception("bot %s inbound handler failed", self.agent_id)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -110,6 +151,9 @@ class BotManager:
         """Register an adapter.  Re-registering the same agent_id overwrites."""
         self._bots[bot.agent_id] = bot
 
+    def adapters(self) -> list[DiscordBotAdapter]:
+        return list(self._bots.values())
+
     def route_event(self, agent_id: str, content: str) -> None:
         """Enqueue a message to the bot for *agent_id* (no-op if unknown)."""
         bot = self._bots.get(agent_id)
@@ -129,6 +173,33 @@ class BotManager:
 
     def __contains__(self, agent_id: str) -> bool:
         return agent_id in self._bots
+
+
+def accept_inbound_message(
+    message: Any,
+    *,
+    channel_id: int,
+    bot_user_id: int | None,
+) -> bool:
+    """Return True when *message* should be treated as human input."""
+    author = getattr(message, "author", None)
+    if author is None:
+        return False
+    if getattr(author, "bot", False):
+        return False
+    if bot_user_id is not None and getattr(author, "id", None) == bot_user_id:
+        return False
+    channel = getattr(message, "channel", None)
+    return channel is not None and int(getattr(channel, "id", 0)) == int(channel_id)
+
+
+def normalize_inbound_content(content: str, *, bot_user_id: int | None = None) -> str:
+    """Strip bot mentions and collapse whitespace."""
+    text = content or ""
+    if bot_user_id is not None:
+        text = re.sub(rf"<@!?{bot_user_id}>", "", text)
+    text = _MENTION_RE.sub("", text)
+    return " ".join(text.split()).strip()
 
 
 def _format_event(event: dict[str, Any]) -> str | None:

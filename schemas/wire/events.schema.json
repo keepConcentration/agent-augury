@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-augury.dev/schemas/wire/events.schema.json",
+  "title": "AuguryWireEvents",
+  "description": "Server → surfaces (dir=event).",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "session.started" },
+        "agents": { "type": "array", "items": { "type": "string" } },
+        "meta": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "session.phase" },
+        "phase": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "agent_id"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "agent.step" },
+        "agent_id": { "type": "string" },
+        "result": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "tool" },
+        "agent_id": { "type": "string" },
+        "tool": { "type": "string" },
+        "args": { "type": "object" },
+        "result": {}
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "question"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "human.question" },
+        "agent_id": { "type": "string" },
+        "thread_id": { "type": "string" },
+        "question": { "type": "string" },
+        "options": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "thread.created" },
+        "thread_id": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "message" },
+        "thread_id": { "type": "string" },
+        "author": { "type": "string" },
+        "content": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "text"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "log" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "session.ended" },
+        "steps": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "message"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "error" },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "read_resource" },
+        "agent_id": { "type": "string" },
+        "threads": { "type": "integer" },
+        "messages": { "type": "integer" }
+      },
+      "additionalProperties": true
+    }
+  ]
+}

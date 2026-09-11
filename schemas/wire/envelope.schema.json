@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-augury.dev/schemas/wire/envelope.schema.json",
+  "title": "AuguryWireEnvelope",
+  "description": "One JSONL line on the wire (or in-proc message).",
+  "type": "object",
+  "required": ["dir"],
+  "properties": {
+    "dir": {
+      "type": "string",
+      "enum": ["event", "cmd", "result"]
+    },
+    "id": {
+      "type": "string",
+      "description": "Correlation id for cmd/result pairs."
+    },
+    "type": {
+      "type": "string",
+      "description": "Event or command type name."
+    }
+  },
+  "additionalProperties": true
+}

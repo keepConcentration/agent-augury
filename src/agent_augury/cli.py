@@ -134,6 +134,10 @@ def _prompt_multiline(prompt: str) -> str:
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.patch_stdout import patch_stdout
 
+    from .tui.key_aliases import install_tui_key_aliases
+
+    install_tui_key_aliases()
+
     kb = KeyBindings()
 
     @kb.add("enter", eager=True)
@@ -142,8 +146,8 @@ def _prompt_multiline(prompt: str) -> str:
         buff = event.current_buffer  # type: ignore[attr-defined]
         buff.validate_and_handle()
 
-    @kb.add("escape", "enter")
-    @kb.add("escape", "c-j")
+    @kb.add("escape", "enter", eager=True)
+    @kb.add("escape", "c-j", eager=True)
     def _newline(event: object) -> None:
         buff = event.current_buffer  # type: ignore[attr-defined]
         buff.insert_text("\n")
@@ -195,6 +199,8 @@ async def _close_session(session: Session) -> None:
     """Close mirror and backend HTTP clients after flush (normal shutdown)."""
     if session.mirror is not None:
         await session.mirror.aclose()
+    if session.slack_mirror is not None:
+        await session.slack_mirror.aclose()
     for agent in session.agents:
         aclose = getattr(agent.backend, "aclose", None)
         if aclose is not None:
@@ -256,8 +262,7 @@ async def _run_repl_plain(
 ) -> int:
     """Plain REPL: input() loop. Blank = ignored; /quit or EOF exits."""
     steps = await session.run(initial_prompt=initial_prompt)
-    if session.mirror is not None:
-        await session.mirror.flush()
+    await session.flush_observers()
     if not quiet:
         print(_session_summary_line(session, steps))
 
@@ -274,8 +279,7 @@ async def _run_repl_plain(
             break
         # Plain quit/exit are normal prompts (v0.5.1) — not exit tokens.
         steps = await session.run(initial_prompt=question)
-        if session.mirror is not None:
-            await session.mirror.flush()
+        await session.flush_observers()
         if not quiet:
             print(_session_summary_line(session, steps))
     return 0
@@ -375,8 +379,7 @@ async def _run_repl_tui(
             tui.shutdown()
             return 0
 
-        if session.mirror is not None:
-            await session.mirror.flush()
+        await session.flush_observers()
         if not quiet:
             # Interrupted runs still get a short summary; user may resume.
             if session.interrupted():
@@ -390,8 +393,7 @@ async def _run_repl_tui(
             steps = await do_run(question)
             if quit_flag.is_set():
                 break
-            if session.mirror is not None:
-                await session.mirror.flush()
+            await session.flush_observers()
             if not quiet:
                 if session.interrupted():
                     tui.append_text("⏹ run interrupted")
@@ -495,6 +497,35 @@ def _missing_api_key_envs(cfg: dict[str, Any]) -> list[str]:
     return missing
 
 
+def _prompt_and_set_api_keys(env_names: list[str]) -> list[str]:
+    """Prompt for missing API keys and set them in the current process env.
+
+    Keys are never written to the YAML config — only into ``os.environ`` for
+    this run. Returns names that are still unset after prompting.
+    """
+    import getpass
+
+    still_missing: list[str] = []
+    for name in env_names:
+        print(
+            f"\n{name} is not set in this shell.\n"
+            "Enter the API key for this session "
+            "(not saved to config — only the env var name is):"
+        )
+        try:
+            key = getpass.getpass(f"  {name}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            still_missing.append(name)
+            continue
+        if not key:
+            still_missing.append(name)
+            continue
+        os.environ[name] = key
+        print(f"  ({name} set for this process)")
+    return still_missing
+
+
 def _run_wizard_flow(
     output_path: Path | None = None,
     force_reconfigure: bool = False,
@@ -549,6 +580,9 @@ def _run_wizard_flow(
 
     missing = _missing_api_key_envs(cfg)
     if missing:
+        # Interactive: collect keys into process env so the session can start.
+        missing = _prompt_and_set_api_keys(missing)
+    if missing:
         print(
             "\nerror: required API key environment variable(s) are not set:",
             file=sys.stderr,
@@ -557,17 +591,19 @@ def _run_wizard_flow(
             print(f"  - {name}", file=sys.stderr)
         print(
             "Set them in this shell, then re-run agent-augury "
-            "(config is already saved).",
+            "(config is already saved).\n"
+            "Note: the YAML stores the env var *name* (e.g. OPENROUTER_API_KEY), "
+            "not the secret itself.",
             file=sys.stderr,
         )
         if sys.platform == "win32":
             print(
-                f'  PowerShell: $env:{missing[0]}="your-key"',
+                f'  PowerShell: $env:{missing[0]}="sk-or-..."',
                 file=sys.stderr,
             )
         else:
             print(
-                f'  export {missing[0]}="your-key"',
+                f'  export {missing[0]}="sk-or-..."',
                 file=sys.stderr,
             )
         return 1
@@ -583,6 +619,32 @@ def _run_wizard_flow(
         task = _INITIAL_TASK_DEFAULT
 
     return asyncio.run(_run_repl(str(output_path), initial_prompt=task, quiet=quiet))
+
+
+def _run_ink_hello() -> int:
+    """Spawn ``npm start`` in fronts/ink (M2). Does not replace the pt TUI session."""
+    import shutil
+    import subprocess
+
+    ink_dir = PROJECT_ROOT / "fronts" / "ink"
+    if not ink_dir.is_dir():
+        print(f"error: missing Ink front at {ink_dir}", file=sys.stderr)
+        return 1
+    npm = shutil.which("npm")
+    if npm is None:
+        print("error: npm not found — install Node.js >= 22", file=sys.stderr)
+        return 1
+    if not (ink_dir / "node_modules").is_dir():
+        print("Installing fronts/ink dependencies…", flush=True)
+        install = subprocess.run([npm, "install"], cwd=ink_dir, check=False)
+        if install.returncode != 0:
+            return install.returncode
+    env = os.environ.copy()
+    env.setdefault("AUGURY_PYTHON", sys.executable)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(PROJECT_ROOT / "src"), env.get("PYTHONPATH", "")]
+    ).rstrip(os.pathsep)
+    return subprocess.call([npm, "start"], cwd=ink_dir, env=env)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -623,7 +685,16 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--ink-hello",
+        action="store_true",
+        default=False,
+        help="M2 demo: launch fronts/ink hello Surface (Node) against Gateway JSONL",
+    )
     args = parser.parse_args(argv)
+
+    if args.ink_hello:
+        return _run_ink_hello()
 
     if args.output is not None and args.config is not None:
         print("error: --output is only valid without --config", file=sys.stderr)

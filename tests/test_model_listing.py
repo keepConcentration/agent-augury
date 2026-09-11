@@ -62,6 +62,96 @@ def test_sort_model_ids_stable_duplicates():
     assert sort_model_ids(["dup", "other", "dup"]) == ["dup", "dup", "other"]
 
 
+def test_model_info_label_shows_pricing_and_free():
+    from agent_augury.model_listing import ModelInfo
+
+    paid = ModelInfo(id="anthropic/claude-sonnet-4", prompt_per_token=3e-6, completion_per_token=1.5e-5)
+    free = ModelInfo(id="meta/llama:free", prompt_per_token=0.0, completion_per_token=0.0)
+    assert "[free]" in free.label()
+    assert "per 1M tok" in paid.label()
+    assert paid.id in paid.label()
+
+
+def test_format_aligned_labels_pads_ids():
+    from agent_augury.model_listing import ModelInfo, format_aligned_labels
+
+    labels = format_aligned_labels(
+        [
+            ModelInfo(id="a/short", prompt_per_token=1e-6, completion_per_token=2e-6),
+            ModelInfo(id="provider/much-longer-id", prompt_per_token=0.0, completion_per_token=0.0),
+        ]
+    )
+    assert labels[0].startswith("a/short")
+    assert labels[1].startswith("provider/much-longer-id")
+    # id columns share the same width before the pricing suffix
+    assert labels[0].index("[") == labels[1].index("[")
+    assert "[free]" in labels[1]
+
+
+def test_is_general_purpose_model_id_filters_specialty():
+    from agent_augury.model_listing import is_general_purpose_model_id
+
+    assert is_general_purpose_model_id("anthropic/claude-sonnet-4")
+    assert is_general_purpose_model_id("meta/llama:free")
+    assert not is_general_purpose_model_id("openai/gpt-4o:batch")
+    assert not is_general_purpose_model_id("openai/gpt-4o-2024-11-20")
+    assert not is_general_purpose_model_id("qwen/qwen3.8-max-0902")
+    assert not is_general_purpose_model_id("tencent/hy4-preview")
+    assert not is_general_purpose_model_id("~z-ai/glm-latest")
+    assert not is_general_purpose_model_id("openai/gpt-4o:US")
+    assert not is_general_purpose_model_id("google/gemini-3-pro-image")
+
+
+def test_sort_model_infos_free_last_then_name():
+    from agent_augury.model_listing import ModelInfo, sort_model_infos
+
+    models = [
+        ModelInfo(id="zoo/free-a", prompt_per_token=0.0, completion_per_token=0.0),
+        ModelInfo(id="aaa/paid", prompt_per_token=1e-6, completion_per_token=2e-6),
+        ModelInfo(id="mmm/free-b", prompt_per_token=0.0, completion_per_token=0.0),
+        ModelInfo(id="bbb/paid", prompt_per_token=1e-6, completion_per_token=2e-6),
+    ]
+    sorted_ids = [m.id for m in sort_model_infos(models, free_last=True)]
+    assert sorted_ids == ["aaa/paid", "bbb/paid", "mmm/free-b", "zoo/free-a"]
+
+
+def test_extract_model_infos_openrouter_pricing_sort():
+    from agent_augury.model_listing import extract_model_infos
+
+    items = [
+        {"id": "z/free", "pricing": {"prompt": "0", "completion": "0"}},
+        {"id": "a/paid", "pricing": {"prompt": "0.000001", "completion": "0.000002"}},
+        {"id": "m/free", "pricing": {"prompt": "0", "completion": "0"}},
+    ]
+    infos = extract_model_infos(items, include_pricing=True, free_last=True)
+    assert [m.id for m in infos] == ["a/paid", "m/free", "z/free"]
+    assert infos[0].is_free is False
+    assert infos[1].is_free is True
+
+
+def test_extract_model_infos_general_purpose_only():
+    from agent_augury.model_listing import extract_model_infos
+
+    items = [
+        {"id": "keep/me", "pricing": {"prompt": "0.000001", "completion": "0.000002"}},
+        {"id": "drop/me:batch", "pricing": {"prompt": "0.000001", "completion": "0.000002"}},
+        {
+            "id": "drop/image-out",
+            "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+            "architecture": {"output_modalities": ["image", "text"]},
+        },
+        {
+            "id": "drop/expiring",
+            "pricing": {"prompt": "0", "completion": "0"},
+            "expiration_date": 123,
+        },
+    ]
+    infos = extract_model_infos(
+        items, include_pricing=True, free_last=True, general_purpose_only=True
+    )
+    assert [m.id for m in infos] == ["keep/me"]
+
+
 # ---------------------------------------------------------------------------
 # OpenAICompatBackend.list_models
 # ---------------------------------------------------------------------------
@@ -161,12 +251,18 @@ def test_list_models_nous_portal_success():
     from unittest.mock import patch
 
     from agent_augury.backends_factory import list_models_nous_portal
+    from agent_augury.model_listing import ModelInfo
 
-    with patch("agent_augury.backends_factory._fetch_models_sync") as mock:
-        mock.return_value = ["Hermes-4"]
-        assert list_models_nous_portal("https://inference-api.nousresearch.com/v1", "key") == [
-            "Hermes-4"
-        ]
+    infos = [ModelInfo(id="Hermes-4", prompt_per_token=1e-6, completion_per_token=2e-6)]
+    with patch("agent_augury.backends_factory._fetch_model_infos_sync", return_value=infos) as mock:
+        assert list_models_nous_portal("https://inference-api.nousresearch.com/v1", "key") == infos
+        mock.assert_called_once_with(
+            "https://inference-api.nousresearch.com/v1",
+            "key",
+            include_pricing=True,
+            free_last=True,
+            general_purpose_only=True,
+        )
 
 
 def test_list_models_nous_oauth_no_token():
@@ -184,21 +280,22 @@ def test_list_models_nous_oauth_no_token():
 
 
 def test_list_models_nous_oauth_with_token():
-    """With a stored token, calls _fetch_models_sync."""
+    """With a stored token, calls list_models_nous_portal."""
     from unittest.mock import MagicMock, patch
 
     from agent_augury.auth.token_store import TokenStore
     from agent_augury.backends_factory import list_models_nous_oauth
+    from agent_augury.model_listing import ModelInfo
 
     store = MagicMock(spec=TokenStore)
     store.get_provider_tokens.return_value = {"access_token": "tok-123"}
+    infos = [ModelInfo(id="Hermes-4", prompt_per_token=0.0, completion_per_token=0.0)]
 
     with patch("agent_augury.backends_factory.TokenStore", return_value=store), \
-         patch("agent_augury.backends_factory._fetch_models_sync") as mock_fetch:
-        mock_fetch.return_value = ["Hermes-4"]
+         patch("agent_augury.backends_factory.list_models_nous_portal", return_value=infos) as mock_list:
         result = list_models_nous_oauth("https://inference-api.nousresearch.com/v1")
-        assert result == ["Hermes-4"]
-        mock_fetch.assert_called_once_with("https://inference-api.nousresearch.com/v1", "tok-123")
+        assert result == infos
+        mock_list.assert_called_once_with("https://inference-api.nousresearch.com/v1", "tok-123")
 
 
 # ---------------------------------------------------------------------------
@@ -253,14 +350,19 @@ def test_try_list_models_openrouter_without_key_still_lists(monkeypatch):
     """OpenRouter listing must not require OPENROUTER_API_KEY to be set."""
     from unittest.mock import patch
 
+    from agent_augury.model_listing import ModelInfo
     from agent_augury.wizard import _try_list_models
 
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with patch("agent_augury.backends_factory.list_models_openai_compat") as mock:
-        mock.return_value = ["anthropic/claude-sonnet-4", "openai/gpt-4o"]
-        assert _try_list_models(
+    infos = [
+        ModelInfo(id="anthropic/claude-sonnet-4", prompt_per_token=0.000003, completion_per_token=0.000015),
+        ModelInfo(id="openai/gpt-4o", prompt_per_token=0.0, completion_per_token=0.0),
+    ]
+    with patch("agent_augury.backends_factory.list_openrouter_models", return_value=infos) as mock:
+        result = _try_list_models(
             "openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"
-        ) == ["anthropic/claude-sonnet-4", "openai/gpt-4o"]
+        )
+        assert result == infos
         mock.assert_called_once_with("https://openrouter.ai/api/v1", "")
 
 
@@ -292,6 +394,19 @@ def test_select_model_interactive_manual_fallback():
         # 3 = manual entry option
         mp.setattr("builtins.input", lambda _: "3")
         assert _select_model_interactive(["gpt-4o", "gpt-4o-mini"]) is None
+
+
+def test_select_model_interactive_modelinfo_returns_id():
+    from agent_augury.model_listing import ModelInfo
+    from agent_augury.wizard import _select_model_interactive
+
+    models = [
+        ModelInfo(id="a/paid", prompt_per_token=1e-6, completion_per_token=2e-6),
+        ModelInfo(id="z/free", prompt_per_token=0.0, completion_per_token=0.0),
+    ]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("builtins.input", lambda _: "2")
+        assert _select_model_interactive(models) == "z/free"
 
 
 # ---------------------------------------------------------------------------

@@ -1,20 +1,11 @@
 """SessionTUIApplication unit tests - no full TTY required.
 
 Covers:
-* (existing) quit/plain/blank input, ctrl-d, ask_user choice path
-* (v1.0) initial_task_mode one-shot release + no _send on first input
-* (v1.0) S2 log scroll: PgUp/PgDn/Alt+Up/Down adjust scroll position
-* (v1.0) _log_follow tail-follow behaviour
-* (v1.0) choice panel dynamic height (_choice_height)
-* (v1.1) mouse wheel scroll-up/down toggles _log_follow (TUI_UX_FIX_DESIGN.md ②)
-* (v1.1) F key toggles follow; status bar FOLLOW/SCROLL indicator (②)
-* (v1.1) choice panel option-area scrolling with indicator (③)
-* (v1.1) on_ask_user log backup of full question+options (③)
-* (v1.2) ScrollablePane layout: log + input scroll together (TUI_SCROLLABLE_INPUT_DESIGN.md)
-* (v1.2) keep_cursor_visible=False / keep_focused_window_visible=False (P8 — 입력창 강제 고정 제거)
-* (v1.2) _follow_log_tail sets scrollable.vertical_scroll to a huge value (clamped on render)
-* (v1.2) typing (on_text_changed) restores follow; submit restores follow
-* (v1.2) user input still logged (✓ human → ...)
+* quit/plain/blank input, ctrl-d, ask_user choice path
+* initial_task_mode one-shot release
+* v1.5 Static bottom dock (no ScrollablePane); batched terminal log streaming
+* choice panel option scrolling + ask_user log backup
+* Ctrl+C interrupt / double-tap quit
 """
 
 from __future__ import annotations
@@ -257,68 +248,7 @@ async def test_initial_task_mode_blank_keeps_waiting(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# v1.2: ScrollablePane layout (TUI_SCROLLABLE_INPUT_DESIGN.md)
-# ---------------------------------------------------------------------------
-
-
-def test_scrollable_pane_layout(tmp_path):
-    """v1.2: layout = ScrollablePane(log+input) + fixed choice/status.
-
-    P8: keep_cursor_visible=False / keep_focused_window_visible=False —
-    ScrollablePane의 입력창 강제 가시화를 꺼서 "입력창 고정/3줄만 보임"을 방지.
-    """
-    session = FakeSession()
-    tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
-    try:
-        from prompt_toolkit.layout import HSplit, ScrollablePane, to_container
-        from prompt_toolkit.layout.controls import FormattedTextControl
-
-        layout = tui._build_layout()
-        # HSplit children: [scrollable, ConditionalContainer(choice), Window(status)]
-        assert len(layout.children) == 3
-        scrollable = layout.children[0]
-        assert isinstance(scrollable, ScrollablePane)
-        # P8: 입력창 강제 가시화 OFF
-        assert scrollable.keep_cursor_visible() is False
-        assert scrollable.keep_focused_window_visible() is False
-        # ScrollablePane content = HSplit(log_window, input_bar window)
-        content = scrollable.content
-        assert isinstance(content, HSplit)
-        assert len(content.children) == 2
-        assert content.children[0] is tui.log_window
-        # TextArea wraps its internal Window; layout holds the Window.
-        assert content.children[1] is to_container(tui.input_bar.widget)
-        # choice panel + status bar are OUTSIDE (fixed) — control wired
-        choice_container = layout.children[1]
-        choice_window = choice_container.content
-        assert isinstance(choice_window.content, FormattedTextControl)
-        # control의 text 콜백이 panel.render와 같은지 (동작 검증, is 비교 대체)
-        assert choice_window.content.text == tui.choice_panel.render
-        status_window = layout.children[2]
-        assert isinstance(status_window.content, FormattedTextControl)
-        assert status_window.content.text == tui.status_bar._line
-    finally:
-        pipe_ctx.__exit__(None, None, None)
-
-
-def test_follow_tail_uses_scrollable_huge_value(tmp_path):
-    """v1.2: _follow_log_tail sets scrollable.vertical_scroll to a huge value."""
-    session = FakeSession()
-    tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
-    try:
-        for i in range(20):
-            tui.log_buffer.append(f"line {i}")
-        tui.scrollable.vertical_scroll = 5
-        tui._set_log_follow(True)
-        tui._follow_log_tail()
-        # huge value set → clamped to max on next render (agent-2)
-        assert tui.scrollable.vertical_scroll == tui._FOLLOW_MAX_SCROLL
-    finally:
-        pipe_ctx.__exit__(None, None, None)
-
-
-# ---------------------------------------------------------------------------
-# v1.0: S2 log scroll (V4 / V4b) — now via ScrollablePane
+# v1.5: Static terminal logs + bottom chrome (choice | input | status)
 # ---------------------------------------------------------------------------
 
 
@@ -333,173 +263,163 @@ def _kb_handler(tui: SessionTUIApplication, *want: object):
     return None
 
 
-def test_log_window_s2_single_source(tmp_path):
-    """log_window uses get_cursor_position reading vertical_scroll directly (S2)."""
+def test_bottom_chrome_layout(tmp_path):
+    """v1.5: layout = choice? + input + status; no ScrollablePane / log window."""
     session = FakeSession()
     tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
     try:
-        ctrl = tui.log_window.content
-        # FormattedTextControl created with get_cursor_position callable
-        gcp = getattr(ctrl, "get_cursor_position", None)
-        assert gcp is not None
-        # Point(x=0, y=self.log_window.vertical_scroll)
-        tui.log_window.vertical_scroll = 7
+        from prompt_toolkit.layout import to_container
+        from prompt_toolkit.layout.controls import FormattedTextControl
 
-        pt = gcp()
-        assert pt.x == 0
-        assert pt.y == 7
+        assert tui.app.full_screen is False
+        mouse = tui.app.mouse_support
+        assert mouse() is False if callable(mouse) else not mouse
+        assert not hasattr(tui, "scrollable")
+        assert hasattr(tui, "static_log")
+
+        layout = tui._build_layout()
+        assert len(layout.children) == 3
+        choice_container = layout.children[0]
+        assert choice_container.content is tui.choice_window
+        assert tui.choice_window.content.text == tui.choice_panel.render
+        assert layout.children[1] is to_container(tui.input_bar.widget)
+        status_window = layout.children[2]
+        assert isinstance(status_window.content, FormattedTextControl)
+        assert status_window.content.text == tui.status_bar._line
     finally:
         pipe_ctx.__exit__(None, None, None)
 
 
-def test_pgup_pgdn_scroll_log(tmp_path):
-    """V4: PgUp/PgDn adjust scrollable.vertical_scroll and disable follow."""
+def test_emit_log_buffers_and_writes(tmp_path, monkeypatch):
+    """v1.5: append_text stores in log_buffer and enqueues Static writer."""
     session = FakeSession()
     tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
+    writes: list[str] = []
+    monkeypatch.setattr(tui.static_log, "_write_fn", lambda p: writes.append(p))
     try:
-        for i in range(30):
-            tui.log_buffer.append(f"line {i}")
-        tui.scrollable.vertical_scroll = 20
-
-        pgup = _kb_handler(tui, Keys.PageUp) or _kb_handler(tui, "pageup")
-        pgdn = _kb_handler(tui, Keys.PageDown) or _kb_handler(tui, "pagedown")
-        assert pgup is not None
-        assert pgdn is not None
-
-        pgup(MagicMock())
-        assert tui.scrollable.vertical_scroll == 10  # 20 - 10
-        assert tui._log_follow is False
-
-        pgdn(MagicMock())
-        assert tui.scrollable.vertical_scroll == 20  # 10 + 10
+        tui.append_text("hello log")
+        assert "hello log" in tui.log_buffer.export_tail()
+        assert writes == ["hello log\n"]
     finally:
         pipe_ctx.__exit__(None, None, None)
 
 
-def test_alt_up_down_scroll_log_line(tmp_path):
-    """V4b: Alt+Up/Down (escape+up/down) scroll by 1 line (1-A)."""
-    session = FakeSession()
-    tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
-    try:
-        for i in range(10):
-            tui.log_buffer.append(f"line {i}")
-        tui.scrollable.vertical_scroll = 5
+def test_static_log_batches_manual_flush():
+    """enqueue buffers until flush_now; one write contains all lines."""
+    from agent_augury.tui.static_log import StaticLogWriter
 
-        alt_up = _kb_handler(tui, Keys.Escape, Keys.Up) or _kb_handler(tui, "escape", "up")
-        alt_down = _kb_handler(tui, Keys.Escape, Keys.Down) or _kb_handler(tui, "escape", "down")
-        assert alt_up is not None
-        assert alt_down is not None
+    class _App:
+        is_running = True
 
-        alt_up(MagicMock())
-        assert tui.scrollable.vertical_scroll == 4
-        assert tui._log_follow is False
+        def create_background_task(self, coro):
+            # Swallow the delayed-flush coroutine without running it.
+            try:
+                coro.close()
+            except Exception:  # noqa: BLE001, S110
+                pass
+            return MagicMock()
 
-        alt_down(MagicMock())
-        assert tui.scrollable.vertical_scroll == 5
-    finally:
-        pipe_ctx.__exit__(None, None, None)
-
-
-def test_follow_log_tail(tmp_path):
-    """V8: _follow_log_tail pins to bottom when following; no-op when not.
-
-    v1.2: follow=True → scrollable.vertical_scroll = huge (clamped on render).
-    follow=False → scroll position untouched.
-    """
-    session = FakeSession()
-    tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
-    try:
-        for i in range(20):
-            tui.log_buffer.append(f"line {i}")
-
-        # follow=True → _follow_log_tail sets huge value
-        tui.scrollable.vertical_scroll = 3
-        tui._set_log_follow(True)
-        tui.append_text("tail line")
-        assert tui.scrollable.vertical_scroll == tui._FOLLOW_MAX_SCROLL
-
-        # follow=False → append_text does not move scroll
-        tui.scrollable.vertical_scroll = 3
-        tui._set_log_follow(False)
-        tui.append_text("off-follow line")
-        assert tui.scrollable.vertical_scroll == 3
-    finally:
-        pipe_ctx.__exit__(None, None, None)
+    writes: list[str] = []
+    writer = StaticLogWriter(
+        _App(),
+        flush_interval=10.0,
+        write_fn=lambda p: writes.append(p),
+    )
+    writer.enqueue("line1")
+    writer.enqueue("line2")
+    assert writes == []
+    # flush_now would schedule _write_in_terminal; set not running for sync write:
+    writer._app.is_running = False  # type: ignore[attr-defined]
+    writer.flush_now()
+    assert writes == ["line1\nline2\n"]
 
 
-# ---------------------------------------------------------------------------
-# v1.1 ②: mouse wheel follow toggle + F key + status indicator (v1.2 scrollable)
-# ---------------------------------------------------------------------------
+def test_static_log_atomic_paint_when_running(monkeypatch):
+    """While running, flush uses atomic paint (not stock erase() mid-flush)."""
+    from agent_augury.tui import static_log as sl
 
+    calls: list[str] = []
+    pending: list[object] = []
 
-def test_wheel_up_disables_follow(tmp_path):
-    """v1.1: scroll-up handler must disable _log_follow (no jump on next output)."""
-    session = FakeSession()
-    tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
-    try:
-        for i in range(30):
-            tui.log_buffer.append(f"line {i}")
-        tui.scrollable.vertical_scroll = 20
+    class _Cursor:
+        x = 0
+        y = 2
 
-        wheel_up = _kb_handler(tui, Keys.ScrollUp) or _kb_handler(tui, "<scroll-up>")
-        assert wheel_up is not None
+    class _Output:
+        responds_to_cpr = False
 
-        wheel_up(MagicMock())
-        # scrolled up by 3 → 17, follow disabled
-        assert tui.scrollable.vertical_scroll == 17
-        assert tui._log_follow is False
-        # status bar mirrored
-        assert tui.status_bar._log_follow is False
-    finally:
-        pipe_ctx.__exit__(None, None, None)
+        def cursor_backward(self, _n):
+            calls.append("cursor_backward")
 
+        def cursor_up(self, _n):
+            calls.append("cursor_up")
 
-def test_wheel_down_increases_scroll_keeps_scroll_state(tmp_path):
-    """v1.1/v1.2: scroll-down increases scrollable position; follow stays off.
+        def erase_down(self):
+            calls.append("erase_down")
 
-    v1.2 policy (TUI_SCROLLABLE_INPUT_DESIGN.md §5.3): follow restoration is
-    explicit (typing hook / submit); wheel scroll just moves the position.
-    """
-    session = FakeSession()
-    tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
-    try:
-        for i in range(30):
-            tui.log_buffer.append(f"line {i}")
-        tui.scrollable.vertical_scroll = 5
-        tui._set_log_follow(False)
+        def reset_attributes(self):
+            calls.append("reset_attributes")
 
-        wheel_down = _kb_handler(tui, Keys.ScrollDown) or _kb_handler(tui, "<scroll-down>")
-        assert wheel_down is not None
+        def hide_cursor(self):
+            calls.append("hide_cursor")
 
-        wheel_down(MagicMock())
-        assert tui.scrollable.vertical_scroll == 8  # 5 + 3
-        assert tui._log_follow is False  # SCROLL state kept
-    finally:
-        pipe_ctx.__exit__(None, None, None)
+        def show_cursor(self):
+            calls.append("show_cursor")
 
+        def flush(self):
+            calls.append("flush")
 
-def test_f_key_toggles_follow(tmp_path):
-    """v1.1: F key toggles _log_follow and mirrors to status bar."""
-    session = FakeSession()
-    tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
-    try:
-        toggle = _kb_handler(tui, "f")
-        assert toggle is not None
+    class _Renderer:
+        _cursor_pos = _Cursor()
 
-        assert tui._log_follow is True
-        toggle(MagicMock())
-        assert tui._log_follow is False
-        assert tui.status_bar._log_follow is False
+        def reset(self):
+            calls.append("reset")
 
-        toggle(MagicMock())
-        assert tui._log_follow is True
-        assert tui.status_bar._log_follow is True
-    finally:
-        pipe_ctx.__exit__(None, None, None)
+        def erase(self):
+            calls.append("erase")  # should NOT be used on happy path
+
+    class _App:
+        is_running = True
+        _is_running = True
+        _running_in_terminal = False
+        _running_in_terminal_f = None
+        output = _Output()
+        renderer = _Renderer()
+
+        def create_background_task(self, coro):
+            pending.append(coro)
+            calls.append("bg")
+            return MagicMock()
+
+        def _request_absolute_cursor_position(self):
+            calls.append("cpr")
+
+        def _redraw(self):
+            calls.append("redraw")
+
+    monkeypatch.setattr(sl, "get_app_or_none", lambda: None)
+    writes: list[str] = []
+    writer = sl.StaticLogWriter(_App(), write_fn=lambda p: writes.append(p))
+    writer._buf.append("x\n")
+    writer._buf_chars = 2
+    writer.flush_now()
+
+    import asyncio
+
+    async def _run_pending():
+        for c in pending:
+            if asyncio.iscoroutine(c):
+                await c
+
+    asyncio.run(_run_pending())
+    assert "erase_down" in calls
+    assert "redraw" in calls
+    assert "erase" not in calls  # stock erase() avoided
+    assert writes == ["x\n"]
 
 
 def test_status_bar_follow_indicator(tmp_path):
-    """v1.1: status bar line shows FOLLOW/SCROLL based on follow state."""
+    """Status bar still exposes FOLLOW/SCROLL for compatibility."""
     session = FakeSession()
     tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
     try:
@@ -513,60 +433,13 @@ def test_status_bar_follow_indicator(tmp_path):
         pipe_ctx.__exit__(None, None, None)
 
 
-# ---------------------------------------------------------------------------
-# v1.2: typing / submit restore follow + user input still logged
-# ---------------------------------------------------------------------------
-
-
-def test_typing_restores_follow(tmp_path):
-    """v1.2: typing (on_text_changed → _on_typing) restores follow (P8 대체).
-
-    bound method의 `is` 비교는 접근마다 새 객체가 생성되어 실패하므로,
-    동작 검증으로 확인한다 (agent-4 제안).
-    """
-    session = FakeSession()
-    tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
-    try:
-        for i in range(20):
-            tui.log_buffer.append(f"line {i}")
-        tui.scrollable.vertical_scroll = 5
-        tui._set_log_follow(False)
-
-        # on_text_changed 훅이 실제로 follow를 복귀시키는지 동작 검증
-        assert tui._log_follow is False
-        tui.input_bar._handle_text_changed("hello")
-        assert tui._log_follow is True
-        assert tui.scrollable.vertical_scroll == tui._FOLLOW_MAX_SCROLL
-    finally:
-        pipe_ctx.__exit__(None, None, None)
-
-
-@pytest.mark.asyncio
-async def test_submit_restores_follow(tui):
-    """v1.2: Enter submit restores follow (huge scroll) before routing."""
-    tui.scrollable.vertical_scroll = 5
-    tui._set_log_follow(False)
-
-    await tui.handle_input("hello")
-
-    assert tui._log_follow is True
-    assert tui.scrollable.vertical_scroll == tui._FOLLOW_MAX_SCROLL
-    # input still sent
-    assert len(tui._fake_session.sent) == 1
-
-
 @pytest.mark.asyncio
 async def test_user_input_still_logged(tui):
-    """v1.2: user input content is still logged (✓ human → ...) — P2, agent-4."""
+    """User input content is still logged (✓ human → ...)."""
     await tui.handle_input("hello world")
     exported = tui.log_buffer.export_tail()
     assert "✓ human → thread-1" in exported
     assert "hello world" in exported
-
-
-# ---------------------------------------------------------------------------
-# v1.1 ③: choice panel option-area scrolling + indicator + log backup
-# ---------------------------------------------------------------------------
 
 
 def _render_text(tui: SessionTUIApplication) -> str:
@@ -578,7 +451,7 @@ def _render_text(tui: SessionTUIApplication) -> str:
 
 
 def test_choice_panel_scroll_offset_for_many_options(tmp_path):
-    """v1.1: 10 options → panel caps at 8 lines, scroll reveals the rest."""
+    """10 options → panel caps at 8 lines, scroll reveals the rest."""
     session = FakeSession()
     tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
     try:
@@ -591,36 +464,29 @@ def test_choice_panel_scroll_offset_for_many_options(tmp_path):
                 "options": [f"option {i}" for i in range(1, 11)],
             },
         )
-        # 1 question + 7 visible options + 1 indicator = 8 (capped)
         assert tui.choice_panel.line_count(8) == 8
         assert tui.choice_panel.scroll_offset == 0
 
         rendered = _render_text(tui)
         assert "옵션 10개 중 1~7 표시" in rendered
 
-        # scroll down → reveals later options
         tui.choice_panel.scroll_down(8)
-        assert tui.choice_panel.scroll_offset == 3  # 10 - 7 = 3 max
+        assert tui.choice_panel.scroll_offset == 3
         rendered2 = _render_text(tui)
         assert "[4]" in rendered2
         assert "옵션 10개 중 4~10 표시" in rendered2
 
-        # scroll up
         tui.choice_panel.scroll_up(8)
         assert tui.choice_panel.scroll_offset == 2
     finally:
         pipe_ctx.__exit__(None, None, None)
 
 
-def test_choice_panel_pgdn_scrolls_options_not_log(tmp_path):
-    """v1.1/v1.2: with a pending question, PgDn scrolls the panel, not the log."""
+def test_choice_panel_pgdn_scrolls_options(tmp_path):
+    """With a pending question, PgDn scrolls choice options."""
     session = FakeSession()
     tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
     try:
-        for i in range(20):
-            tui.log_buffer.append(f"line {i}")
-        tui.scrollable.vertical_scroll = 0
-
         tui.on_ask_user(
             "agent-1",
             "ask_user",
@@ -632,18 +498,14 @@ def test_choice_panel_pgdn_scrolls_options_not_log(tmp_path):
         )
         pgdn = _kb_handler(tui, Keys.PageDown) or _kb_handler(tui, "pagedown")
         assert pgdn is not None
-
-        before_scroll = tui.scrollable.vertical_scroll
         pgdn(MagicMock())
-        # scrollable position unchanged; panel offset advanced
-        assert tui.scrollable.vertical_scroll == before_scroll
         assert tui.choice_panel.scroll_offset == 3
     finally:
         pipe_ctx.__exit__(None, None, None)
 
 
 def test_ask_user_log_backup(tmp_path):
-    """v1.1: on_ask_user backs up full question+options to the log buffer."""
+    """on_ask_user backs up full question+options to the log buffer."""
     session = FakeSession()
     tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
     try:
@@ -665,11 +527,6 @@ def test_ask_user_log_backup(tmp_path):
         pipe_ctx.__exit__(None, None, None)
 
 
-# ---------------------------------------------------------------------------
-# v1.0: choice panel dynamic height (V3)
-# ---------------------------------------------------------------------------
-
-
 def test_choice_height_dynamic(tmp_path):
     """_choice_height uses panel.line_count with min=1, max=8."""
     session = FakeSession()
@@ -683,9 +540,8 @@ def test_choice_height_dynamic(tmp_path):
         dim = tui._choice_height()
         assert dim.min == 1
         assert dim.max == 8
-        assert dim.preferred == 3  # question 1 + options 2
+        assert dim.preferred == 3
 
-        # Many options → capped at 8
         tui.choice_panel.reset()
         tui.on_ask_user(
             "agent-1",
@@ -703,7 +559,7 @@ def test_choice_height_dynamic(tmp_path):
 
 
 def test_layout_uses_dynamic_height_and_wrap(tmp_path):
-    """Layout wires the choice panel with dynamic height + wrap_lines=True."""
+    """Choice window uses dynamic height + wrap_lines=True."""
     session = FakeSession()
     tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
     try:
@@ -713,13 +569,9 @@ def test_layout_uses_dynamic_height_and_wrap(tmp_path):
             {"thread": "thread-1", "question": "Q?", "options": ["a", "b"]},
         )
         layout = tui._build_layout()
-        # HSplit children: [scrollable, ConditionalContainer(choice), Window(status)]
-        container = layout.children[1]
-        assert hasattr(container, "content")
-        choice_window = container.content
-        # Window.wrap_lines is a Filter (to_filter(True)) — call it to check.
+        choice_container = layout.children[0]
+        choice_window = choice_container.content
         assert choice_window.wrap_lines() is True
-        # height callable is the dynamic height fn
         assert callable(choice_window.height)
     finally:
         pipe_ctx.__exit__(None, None, None)

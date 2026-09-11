@@ -30,9 +30,10 @@ class LogBuffer:
         self._invalidate = invalidate
         self._app: Any = None
 
-    def set_app(self, app: Any) -> None:
+    def set_app(self, app: Any, *, bind_invalidate: bool = True) -> None:
         self._app = app
-        self._invalidate = app.invalidate
+        if bind_invalidate:
+            self._invalidate = app.invalidate
 
     def append(self, ansi_block: str) -> None:
         if not ansi_block:

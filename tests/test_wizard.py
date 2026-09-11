@@ -196,7 +196,7 @@ def test_wizard_openrouter_emits_openai_with_defaults(tmp_path):
     ])
     with patch("builtins.input", side_effect=lambda _: next(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
-         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
+         patch("agent_augury.backends_factory.list_openrouter_models", return_value=None):
         cfg = run_wizard()
 
     backend = cfg["agents"][0]["backend"]
@@ -208,22 +208,27 @@ def test_wizard_openrouter_emits_openai_with_defaults(tmp_path):
 
 def test_wizard_openrouter_lists_models_without_env_key(tmp_path):
     """OpenRouter /models works without OPENROUTER_API_KEY; user can pick from list."""
+    from agent_augury.model_listing import ModelInfo
+
     inputs = iter([
         "agent-1",
         "2",            # openrouter
         "1",            # pick first listed model
         "n",
     ])
+    infos = [
+        ModelInfo(id="anthropic/claude-sonnet-4", prompt_per_token=3e-6, completion_per_token=1.5e-5),
+        ModelInfo(id="openai/gpt-4o-mini", prompt_per_token=0.0, completion_per_token=0.0),
+    ]
     with patch("builtins.input", side_effect=lambda _: next(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch(
-             "agent_augury.backends_factory.list_models_openai_compat",
-             return_value=["anthropic/claude-sonnet-4", "openai/gpt-4o-mini"],
+             "agent_augury.backends_factory.list_openrouter_models",
+             return_value=infos,
          ) as mock_list:
         cfg = run_wizard()
 
     mock_list.assert_called()
-    # Called with whatever key is in env (often ""); listing must not be skipped.
     assert cfg["agents"][0]["backend"]["model"] == "anthropic/claude-sonnet-4"
 
 
@@ -730,7 +735,8 @@ def test_wizard_different_provider_triggers_new_auth():
     ])
     with patch("builtins.input", side_effect=lambda _: next(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
-         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
+         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None), \
+         patch("agent_augury.backends_factory.list_openrouter_models", return_value=None):
         cfg = run_wizard()
 
     assert len(cfg["agents"]) == 2

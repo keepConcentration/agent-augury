@@ -46,8 +46,13 @@ from .agent.policy import ToolPolicy
 from .agent.web import build_search_provider
 from .auth.token_store import TokenStore
 from .backends_factory import build_backend
-from .channel.discord_bot import BotManager, DiscordBotAdapter, _format_event
+from .channel.discord_bot import BotManager, DiscordBotAdapter
+from .channel.discord_inbound import attach_discord_inbound
 from .channel.discord_mirror import mirror_from_config
+from .channel.discord_observe import attach_discord_bots, attach_discord_mirror
+from .channel.slack_mirror import slack_from_config
+from .channel.slack_observe import attach_slack_mirror
+from .gateway import SessionBridge, SessionGateway
 from .protocol.approval import ConsensusGate
 from .protocol.collaboration import CollaborationProtocol
 from .protocol.phases import (
@@ -138,10 +143,15 @@ class Session:
         self.on_tool_event: OnToolEvent | None = None
         self.gate: ConsensusGate | None = None
         self.mirror: Any = None
+        self.slack_mirror: Any = None
         # v0.2: P1~P5 collaboration protocol
         self.protocol: CollaborationProtocol | None = None
         # v0.3: Discord bot manager (N개 Client)
         self.bot_manager = bot_manager
+        # M4: Session Gateway + bridge (Discord observe attaches as surfaces)
+        self.gateway = SessionGateway()
+        self.bridge = SessionBridge(gateway=self.gateway, session=self)
+        self.bridge.install()
         # v0.7: local-tool providers (web_search) to aclose at session end
         self._local_providers: list[Any] = []
         # Unified output queue for all display events (tools, steps, read_resource)
@@ -228,6 +238,7 @@ class Session:
                     agent_id=bot_entry["agent_id"],
                     token=token,
                     channel_id=int(bot_entry["channel_id"]),
+                    inbound=bool(bot_entry.get("inbound", False)),
                 )
                 bot_manager.register(adapter)
 
@@ -274,8 +285,20 @@ class Session:
             )
         session.mirror = mirror_from_config(cfg.get("mirror"))
         if session.mirror is not None:
-            server.subscribe(session.mirror.on_message)
-        # Subscribe server events to unified output queue
+            # M4: Gateway observe surface (replaces server.subscribe(mirror.on_message))
+            attach_discord_mirror(session.gateway, session.mirror)
+        session.slack_mirror = slack_from_config(cfg.get("slack"))
+        if session.slack_mirror is not None:
+            # M6: Slack Incoming Webhook observe surface
+            attach_slack_mirror(session.gateway, session.slack_mirror)
+        if session.bot_manager is not None:
+            # M4: Gateway observe surface (replaces inline route in _on_server_event)
+            attach_discord_bots(session.gateway, session.bot_manager)
+            # M5: opt-in inbound → interact surface + on_message → human.*
+            attach_discord_inbound(
+                session.gateway, session.bridge, session.bot_manager
+            )
+        # Subscribe server events to unified output queue (+ Gateway fan-out)
         server.subscribe_events(session._on_server_event)
         return session
 
@@ -359,6 +382,13 @@ class Session:
     def interrupted(self) -> bool:
         """True if ``request_interrupt()`` was called for the current/last run."""
         return self._interrupt.is_set()
+
+    async def flush_observers(self) -> None:
+        """Flush Discord/Slack observe outboxes (best-effort)."""
+        if self.mirror is not None:
+            await self.mirror.flush()
+        if self.slack_mirror is not None:
+            await self.slack_mirror.flush()
 
     async def run(self, initial_prompt: str | None = None) -> int:
         """Parallel steps until every agent finishes or max_steps is hit.
@@ -501,6 +531,8 @@ class Session:
 
         if self.mirror is not None:
             await self.mirror.aclose()
+        if self.slack_mirror is not None:
+            await self.slack_mirror.aclose()
         # v0.7: close local-tool providers (web_search HTTP clients)
         for provider in self._local_providers:
             aclose = getattr(provider, "aclose", None)
@@ -514,19 +546,13 @@ class Session:
     def _on_server_event(self, event: dict[str, Any]) -> None:
         """Capture server events and queue them for unified output.
 
-        Also routes events to the Discord bot manager (if configured).
+        M4: Discord bots/mirror observe via Gateway (publish Wire first).
         """
-        # v0.3: 봇 라우팅 (발신 전용)
-        if self.bot_manager:
-            agent_id = event.get("agent_id")
-            if agent_id is None:
-                # events without agent_id (create_thread, send_message) —
-                # route by author if available
-                agent_id = event.get("author")
-            if agent_id:
-                content = _format_event(event)
-                if content:
-                    self.bot_manager.route_event(agent_id, content)
+        # Fan-out to Gateway surfaces (Ink later; Discord observe now).
+        try:
+            self.bridge.publish_core_event(event)
+        except Exception:  # noqa: BLE001, S110 — never break Core for Wire
+            pass
 
         event_type = event["type"]
         if event_type == "tool":

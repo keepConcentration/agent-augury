@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-augury.dev/schemas/wire/commands.schema.json",
+  "title": "AuguryWireCommands",
+  "description": "Surfaces → server (dir=cmd). Chat surfaces with mode=observe must not emit human.*.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["dir", "type", "id"],
+      "properties": {
+        "dir": { "const": "cmd" },
+        "id": { "type": "string" },
+        "type": { "const": "session.start" },
+        "initial_prompt": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "id"],
+      "properties": {
+        "dir": { "const": "cmd" },
+        "id": { "type": "string" },
+        "type": { "const": "session.interrupt" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "id"],
+      "properties": {
+        "dir": { "const": "cmd" },
+        "id": { "type": "string" },
+        "type": { "const": "session.quit" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "id", "content"],
+      "properties": {
+        "dir": { "const": "cmd" },
+        "id": { "type": "string" },
+        "type": { "const": "human.send" },
+        "content": { "type": "string" },
+        "thread_id": { "type": ["string", "null"] },
+        "mentions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "surface": { "type": "string" },
+            "mode": { "type": "string", "enum": ["interact", "observe"] },
+            "user": { "type": "string" },
+            "channel": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "id", "content"],
+      "properties": {
+        "dir": { "const": "cmd" },
+        "id": { "type": "string" },
+        "type": { "const": "human.answer" },
+        "content": { "type": "string" },
+        "thread_id": { "type": ["string", "null"] },
+        "source": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "id"],
+      "properties": {
+        "dir": { "const": "cmd" },
+        "id": { "type": "string" },
+        "type": { "const": "human.skip" },
+        "source": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  ]
+}

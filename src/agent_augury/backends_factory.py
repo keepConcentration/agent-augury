@@ -14,7 +14,7 @@ from .backend.fake import FakeModelBackend
 from .backend.nous_portal import NousPortalBackend
 from .backend.nous_portal_oauth import NousPortalOAuthBackend
 from .backend.openai_compat import OpenAICompatBackend
-from .model_listing import extract_model_ids
+from .model_listing import ModelInfo
 
 
 def _completion_from_spec(entry: Any) -> Completion:
@@ -107,7 +107,25 @@ def _fetch_models_sync(base_url: str, api_key: str) -> list[str] | None:
 
     ``api_key`` may be empty — OpenRouter's ``/models`` is public without auth.
     """
+    infos = _fetch_model_infos_sync(base_url, api_key, include_pricing=False)
+    if infos is None:
+        return None
+    return [m.id for m in infos]
+
+
+def _fetch_model_infos_sync(
+    base_url: str,
+    api_key: str,
+    *,
+    include_pricing: bool = False,
+    free_last: bool = False,
+    general_purpose_only: bool = False,
+) -> list[ModelInfo] | None:
+    """Fetch /models and return ``ModelInfo`` rows (optional pricing / filtering)."""
     import httpx
+
+    from .model_listing import extract_model_infos
+
     headers: dict[str, str] = {"Accept": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -124,7 +142,12 @@ def _fetch_models_sync(base_url: str, api_key: str) -> list[str] | None:
         data = resp.json()
     except ValueError:
         return None
-    return extract_model_ids(data.get("data") or [])
+    return extract_model_infos(
+        data.get("data") or [],
+        include_pricing=include_pricing,
+        free_last=free_last,
+        general_purpose_only=general_purpose_only,
+    )
 
 
 def list_models_openai_compat(base_url: str, api_key: str) -> list[str] | None:
@@ -132,16 +155,33 @@ def list_models_openai_compat(base_url: str, api_key: str) -> list[str] | None:
     return _fetch_models_sync(base_url, api_key)
 
 
-def list_models_nous_portal(base_url: str, api_key: str) -> list[str] | None:
-    """List models for Nous Portal (API key). Returns None on failure."""
-    return _fetch_models_sync(base_url, api_key)
+def list_openrouter_models(base_url: str, api_key: str = "") -> list[ModelInfo] | None:
+    """List OpenRouter models with pricing; paid first, free last, then name."""
+    return _fetch_model_infos_sync(
+        base_url,
+        api_key,
+        include_pricing=True,
+        free_last=True,
+        general_purpose_only=True,
+    )
 
 
-def list_models_nous_oauth(base_url: str) -> list[str] | None:
-    """List models for Nous Portal (OAuth). Uses stored token or returns None."""
+def list_models_nous_portal(base_url: str, api_key: str = "") -> list[ModelInfo] | None:
+    """List Nous Portal models with pricing; paid first, free last, then name."""
+    return _fetch_model_infos_sync(
+        base_url,
+        api_key,
+        include_pricing=True,
+        free_last=True,
+        general_purpose_only=True,
+    )
+
+
+def list_models_nous_oauth(base_url: str) -> list[ModelInfo] | None:
+    """List Nous Portal models (OAuth). Uses stored token or returns None."""
     store = TokenStore()
     tokens = store.get_provider_tokens(NOUS_PORTAL_CONFIG.id)
     access_token = tokens.get("access_token")
     if not access_token:
         return None
-    return _fetch_models_sync(base_url, access_token)
+    return list_models_nous_portal(base_url, access_token)

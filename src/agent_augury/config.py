@@ -300,6 +300,30 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
                 raise ConfigError(
                     f"bots[{i}].channel_id must be an integer, got {bot['channel_id']!r}"
                 ) from exc
+            if "inbound" in bot and not isinstance(bot["inbound"], bool):
+                raise ConfigError(
+                    f"bots[{i}].inbound must be a boolean, got {bot['inbound']!r}"
+                )
+
+    # M6: slack observe (Incoming Webhook)
+    slack = data.get("slack")
+    if slack is not None:
+        if not isinstance(slack, dict):
+            raise ConfigError("'slack' must be a mapping")
+        if slack.get("enabled") is False:
+            pass
+        else:
+            mode = slack.get("mode", "observe")
+            if mode not in ("observe",):
+                raise ConfigError(
+                    f"slack.mode must be 'observe' in M6, got {mode!r}"
+                )
+            url_env = slack.get("url_env")
+            webhook = slack.get("webhook")
+            if url_env is None and isinstance(webhook, dict):
+                url_env = webhook.get("url_env")
+            if not url_env:
+                raise ConfigError("slack requires 'url_env' (or webhook.url_env)")
 
     data.setdefault("task", None)
     data.setdefault("max_steps", 0)

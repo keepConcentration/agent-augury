@@ -1,5 +1,9 @@
 # agent-augury — TUI 입력창 스크롤 연동 설계 (Scrollable Input)
 
+> **Superseded in part by** [TUI_BOTTOM_DOCK_DESIGN.md](TUI_BOTTOM_DOCK_DESIGN.md) (v1.3):
+> choice panel now lives **inside** the ScrollablePane above the input;
+> `full_screen=False`. Log+input co-scroll and `keep_cursor_visible=False` remain.
+
 > **Task:** 사용자 요청 — "사용자 입력 창을 고정시킬 필요가 없어. 타 cli 앱들 보니까 그렇게 안 하고 위로 스크롤 하면 사용자 입력창도 함께 아래로 내려가. 사용자가 입력했을 때 스크롤 다시 돌아오고. 이렇게 구현하기 위한 설계 문서 먼저 작성해줘."
 > **Date:** 2026-09 · agent-1 (설계) · 기여: agent-2 (ScrollablePane 기술 검증·max_scroll/포커스), agent-3 (요구사항 명확화·기술 검토), agent-4 (라이브러리 영향·테스트 보강·**렌더 결함 분석 및 수정안**)
 > **Scope:** 설계 문서. 기존 TUI_UX_FIX_DESIGN.md v1.1(② follow 인프라)의 확장.

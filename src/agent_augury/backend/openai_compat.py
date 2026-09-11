@@ -56,14 +56,18 @@ class OpenAICompatBackend(ModelBackend):
                     await asyncio.sleep(2 ** attempt)
                     continue
                 detail = exc.response.text[:500] if exc.response is not None else ""
-                return Completion(
-                    text=(
-                        f"[backend error] HTTP {status}"
-                        f" from chat/completions. "
-                        f"Model '{self.model}' may not exist. "
-                        f"Detail: {detail}"
+                if status in (401, 403):
+                    hint = (
+                        f"Authentication failed (HTTP {status}). "
+                        "Check that the API key env var is set to your real key "
+                        f"(not the env var name itself). Model '{self.model}'."
                     )
-                )
+                else:
+                    hint = (
+                        f"HTTP {status} from chat/completions. "
+                        f"Model '{self.model}' may not exist."
+                    )
+                return Completion(text=f"[backend error] {hint} Detail: {detail}")
             except httpx.RequestError as exc:
                 if attempt < 2:
                     last_error = str(exc)

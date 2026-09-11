@@ -1,0 +1,28 @@
+{
+  "name": "@agent-augury/ink",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ink interactive Surface for agent-augury (M2 hello)",
+  "type": "module",
+  "bin": {
+    "augury-ink": "./src/cli.tsx"
+  },
+  "scripts": {
+    "start": "tsx src/cli.tsx",
+    "hello": "tsx src/cli.tsx"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ink": "^5.2.1",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^18.3.18",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

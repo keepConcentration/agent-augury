@@ -382,7 +382,7 @@ def test_wizard_nous_oauth_with_model_listing(tmp_path):
 
         inputs = iter([
             "agent-1",      # agent id
-            "3",            # backend choice = nous_oauth
+            "4",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
         ])
@@ -404,7 +404,7 @@ def test_wizard_nous_oauth_no_base_url_prompt(tmp_path):
 
         inputs = iter([
             "agent-1",      # agent id
-            "3",            # backend choice = nous_oauth
+            "4",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
         ])
@@ -446,7 +446,7 @@ def test_wizard_nous_oauth_reuses_valid_token(tmp_path):
 
         inputs = iter([
             "agent-1",      # agent id
-            "3",            # backend choice = nous_oauth
+            "4",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
         ])
@@ -488,7 +488,7 @@ def test_wizard_nous_oauth_force_reconfigure(tmp_path):
 
         inputs = iter([
             "agent-1",      # agent id
-            "3",            # backend choice = nous_oauth
+            "4",            # backend choice = nous_oauth
             "1",            # select model #1
             "n",            # no more agents
         ])
@@ -514,7 +514,7 @@ def test_wizard_nous_oauth_auth_fallback_manual(tmp_path):
 
         inputs = iter([
             "agent-1",      # agent id
-            "3",            # backend choice = nous_oauth
+            "4",            # backend choice = nous_oauth
             "manual-model", # manual model entry after auth failure
             "n",            # no more agents
         ])

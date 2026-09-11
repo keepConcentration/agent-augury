@@ -163,7 +163,7 @@ def test_wizard_openai_backend_uses_default_base_url(tmp_path):
 def test_wizard_nous_backend_uses_default_base_url(tmp_path):
     inputs = iter([
         "agent-1",      # agent id
-        "2",            # backend choice = nous
+        "3",            # backend choice = nous
         "",             # base_url → default
         "NOUS_API_KEY", # api_key_env
         "Hermes-4",     # model (manual entry when listing fails)
@@ -179,6 +179,34 @@ def test_wizard_nous_backend_uses_default_base_url(tmp_path):
     assert backend["model"] == "Hermes-4"
     assert backend["base_url"] == NOUS_DEFAULT_BASE_URL
     assert backend["api_key_env"] == "NOUS_API_KEY"
+
+
+def test_wizard_openrouter_emits_openai_with_defaults(tmp_path):
+    """OpenRouter wizard preset stores type=openai + OpenRouter URL/env defaults."""
+    from agent_augury.wizard import (
+        OPENROUTER_DEFAULT_API_KEY_ENV,
+        OPENROUTER_DEFAULT_BASE_URL,
+    )
+
+    inputs = iter([
+        "agent-1",
+        "2",            # openrouter
+        "",             # base_url → OpenRouter default
+        "",             # api_key_env → OPENROUTER_API_KEY default
+        "anthropic/claude-sonnet-4",
+        "n",
+    ])
+    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+         patch("agent_augury.wizard.save_model_config"), \
+         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
+        cfg = run_wizard()
+
+    backend = cfg["agents"][0]["backend"]
+    assert backend["type"] == "openai"
+    assert backend["base_url"] == OPENROUTER_DEFAULT_BASE_URL
+    assert backend["api_key_env"] == OPENROUTER_DEFAULT_API_KEY_ENV
+    assert backend["model"] == "anthropic/claude-sonnet-4"
+
 
 
 # ---------------------------------------------------------------------------
@@ -472,11 +500,11 @@ def test_wizard_second_agent_reuses_oauth_no_reauthentication():
     """Second agent with nous_oauth should reuse token, not re-authenticate."""
     inputs = iter([
         "agent-1",      # agent-1 id
-        "3",            # backend = nous_oauth
+        "4",            # backend = nous_oauth
         "Hermes-4",     # model for agent-1 (manual entry)
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "3",            # backend = nous_oauth (same provider)
+        "4",            # backend = nous_oauth (same provider)
         "Hermes-4",     # model for agent-2 (manual entry)
         "n",            # no more agents
     ])
@@ -509,11 +537,11 @@ def test_wizard_second_agent_reuses_oauth_real_token_store(tmp_path):
 
     inputs = iter([
         "agent-1",      # agent-1 id
-        "3",            # backend = nous_oauth
+        "4",            # backend = nous_oauth
         "Hermes-4",     # model for agent-1 (manual entry)
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "3",            # backend = nous_oauth (same provider)
+        "4",            # backend = nous_oauth (same provider)
         "Hermes-4",     # model for agent-2 (manual entry)
         "n",            # no more agents
     ])
@@ -536,11 +564,11 @@ def test_wizard_second_agent_oauth_no_token_triggers_auth():
     """Second agent with nous_oauth and no token must authenticate."""
     inputs = iter([
         "agent-1",      # agent-1 id
-        "3",            # backend = nous_oauth
+        "4",            # backend = nous_oauth
         "Hermes-4",     # model for agent-1 (manual entry)
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "3",            # backend = nous_oauth (same provider)
+        "4",            # backend = nous_oauth (same provider)
         "Hermes-4",     # model for agent-2 (manual entry)
         "n",            # no more agents
     ])
@@ -668,7 +696,7 @@ def test_wizard_second_agent_chooses_different_api_key_env():
 
 
 def test_wizard_different_provider_triggers_new_auth():
-    """Agent 2 with different provider (nous after openai) should ask for new credentials."""
+    """Agent 2 with different provider (openrouter after openai) asks for new credentials."""
     inputs = iter([
         "agent-1",      # agent-1 id
         "1",            # backend = openai
@@ -677,10 +705,10 @@ def test_wizard_different_provider_triggers_new_auth():
         "gpt-4o",       # model for agent-1
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "2",            # backend = nous (different provider)
-        "",             # base_url → default
-        "NOUS_API_KEY", # new api_key_env
-        "Hermes-4",     # model for agent-2
+        "2",            # backend = openrouter (different provider)
+        "",             # base_url → OpenRouter default
+        "",             # api_key_env → OPENROUTER_API_KEY
+        "anthropic/claude-sonnet-4",
         "n",            # no more agents
     ])
     with patch("builtins.input", side_effect=lambda _: next(inputs)), \
@@ -692,8 +720,9 @@ def test_wizard_different_provider_triggers_new_auth():
     assert len(cfg["agents"]) == 2
     assert cfg["agents"][0]["backend"]["type"] == "openai"
     assert cfg["agents"][0]["backend"]["api_key_env"] == "OPENAI_API_KEY"
-    assert cfg["agents"][1]["backend"]["type"] == "nous"
-    assert cfg["agents"][1]["backend"]["api_key_env"] == "NOUS_API_KEY"
+    assert cfg["agents"][1]["backend"]["type"] == "openai"
+    assert "openrouter.ai" in cfg["agents"][1]["backend"]["base_url"]
+    assert cfg["agents"][1]["backend"]["api_key_env"] == "OPENROUTER_API_KEY"
 
 
 def test_find_existing_provider_config_returns_latest_match():
@@ -706,6 +735,34 @@ def test_find_existing_provider_config_returns_latest_match():
     ]
     result = _find_existing_provider_config(agents, "openai")
     assert result["api_key_env"] == "SECOND"
+
+
+def test_find_existing_provider_config_distinguishes_openrouter():
+    """OpenRouter (openai+openrouter URL) must not reuse plain OpenAI creds."""
+    from agent_augury.wizard import _find_existing_provider_config
+    agents = [
+        {
+            "id": "a1",
+            "backend": {
+                "type": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+        },
+        {
+            "id": "a2",
+            "backend": {
+                "type": "openai",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+            },
+        },
+    ]
+    assert _find_existing_provider_config(agents, "openai")["api_key_env"] == "OPENAI_API_KEY"
+    assert (
+        _find_existing_provider_config(agents, "openrouter")["api_key_env"]
+        == "OPENROUTER_API_KEY"
+    )
 
 
 def test_find_existing_provider_config_no_match():

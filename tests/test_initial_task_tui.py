@@ -64,6 +64,8 @@ def _mock_session() -> MagicMock:
     session.server.snapshot.return_value = {"threads": [], "messages": []}
     session.run = AsyncMock(return_value=2)
     session.close = AsyncMock()
+    session.request_interrupt = MagicMock()
+    session.interrupted = MagicMock(return_value=False)
     return session
 
 
@@ -149,6 +151,52 @@ async def test_waiting_initial_quit_before_input_returns_zero():
     assert rc == 0
     session.run.assert_not_called()
     assert fake.shutdown_called is True
+
+
+@pytest.mark.asyncio
+async def test_interrupt_then_message_starts_new_run():
+    """Ctrl+C interrupt → user message → second session.run (resume)."""
+    session = _mock_session()
+    # First run hangs until interrupt; second run returns quickly.
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    calls = {"n": 0}
+
+    async def run_side_effect(initial_prompt=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            first_entered.set()
+            await release_first.wait()
+            return 1
+        return 2
+
+    session.run = AsyncMock(side_effect=run_side_effect)
+    session.request_interrupt = MagicMock(
+        side_effect=lambda: release_first.set()
+    )
+    fake = FakeTUI(session)
+
+    with _patch_tui(fake):
+        tui_task = asyncio.create_task(
+            _run_repl_tui(session, initial_prompt="start", quiet=True)
+        )
+        await asyncio.wait_for(first_entered.wait(), timeout=2.0)
+        on_next_turn, on_quit = _captured_tui(fake)
+        on_interrupt = fake.kwargs.get("on_interrupt")
+        assert callable(on_interrupt)
+
+        on_interrupt()  # stop first run
+        await asyncio.sleep(0)
+        on_next_turn("resume")  # start second run
+        await asyncio.sleep(0)
+        on_quit()
+        rc = await asyncio.wait_for(tui_task, timeout=2.0)
+
+    assert rc == 0
+    assert session.run.await_count == 2
+    session.run.assert_any_call(initial_prompt="start")
+    session.run.assert_any_call(initial_prompt="resume")
+    session.request_interrupt.assert_called()
 
 
 @pytest.mark.asyncio

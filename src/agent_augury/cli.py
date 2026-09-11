@@ -301,8 +301,14 @@ async def _run_repl_tui(
     waiting_initial = initial_prompt is None      # ★ v1.0: Initial Task 대기 모드
 
     def on_quit() -> None:
+        # Always interrupt a live run so session_loop is not stuck in await run().
+        session.request_interrupt()
         quit_flag.set()
         next_turn.put_nowait(None)
+
+    def on_interrupt() -> None:
+        """Ctrl+C while running: stop agents; keep TUI / REPL open for resume."""
+        session.request_interrupt()
 
     def on_next_turn(text: str) -> None:
         next_turn.put_nowait(text)
@@ -311,6 +317,7 @@ async def _run_repl_tui(
         session,
         on_quit=on_quit,
         on_next_turn=on_next_turn,
+        on_interrupt=on_interrupt,
         initial_task_mode=waiting_initial,       # ★ v1.0
         preserve_log_on_exit=True,
     )
@@ -347,35 +354,47 @@ async def _run_repl_tui(
     session.on_tool_event = on_tool_event
 
     async def session_loop() -> int:
-        tui.set_running(True)
-        try:
-            if waiting_initial:
-                # ★ v1.0: 첫 입력을 TUI 입력줄에서 대기 → session.run(initial_prompt=task)
-                task = await next_turn.get()
-                if task is None:
-                    return 0
-                steps = await session.run(initial_prompt=task)
-            else:
-                steps = await session.run(initial_prompt=initial_prompt)
-        finally:
-            tui.set_running(False)
+        async def do_run(prompt: str | None) -> int:
+            tui.set_running(True)
+            try:
+                return await session.run(initial_prompt=prompt)
+            finally:
+                tui.set_running(False)
+
+        steps = 0
+        if waiting_initial:
+            # ★ v1.0: 첫 입력을 TUI 입력줄에서 대기 → session.run(initial_prompt=task)
+            task = await next_turn.get()
+            if task is None:
+                return 0
+            steps = await do_run(task)
+        else:
+            steps = await do_run(initial_prompt)
+
+        if quit_flag.is_set():
+            tui.shutdown()
+            return 0
+
         if session.mirror is not None:
             await session.mirror.flush()
         if not quiet:
+            # Interrupted runs still get a short summary; user may resume.
+            if session.interrupted():
+                tui.append_text("⏹ run interrupted")
             tui.append_text(_session_summary_line(session, steps))
 
         while not quit_flag.is_set():
             question = await next_turn.get()
             if question is None:
                 break
-            tui.set_running(True)
-            try:
-                steps = await session.run(initial_prompt=question)
-            finally:
-                tui.set_running(False)
+            steps = await do_run(question)
+            if quit_flag.is_set():
+                break
             if session.mirror is not None:
                 await session.mirror.flush()
             if not quiet:
+                if session.interrupted():
+                    tui.append_text("⏹ run interrupted")
                 tui.append_text(_session_summary_line(session, steps))
         tui.shutdown()
         return 0

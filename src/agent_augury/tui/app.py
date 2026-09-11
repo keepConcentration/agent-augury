@@ -79,6 +79,7 @@ class SessionTUIApplication:
         key_aliases: bool = True,
         on_quit: Callable[[], None] | None = None,
         on_next_turn: Callable[[str], None] | None = None,
+        on_interrupt: Callable[[], None] | None = None,
         initial_task_mode: bool = False,   # ★ v1.0: Initial Task 대기 모드
         preserve_log_on_exit: bool = True,
         pt_input: Any | None = None,
@@ -91,11 +92,12 @@ class SessionTUIApplication:
         self._response_format = response_format
         self._on_quit = on_quit
         self._on_next_turn = on_next_turn
+        self._on_interrupt = on_interrupt
         self._initial_task_mode = initial_task_mode
         self._preserve_log_on_exit = preserve_log_on_exit
         self._recent_thread: str | None = None
         self._pending_messages: list[dict[str, Any]] = []  # v1.4: pending msgs (#1)
-        self._last_ctrl_c: float = 0.0  # v1.4: Ctrl+C double-tap (#9)
+        self._last_ctrl_c: float = 0.0  # Ctrl+C: interrupt run / double-tap quit
         self._running = False
         self._shutting_down = False
         self._log_follow = True     # ★ tail follow (앱 레벨 상태, v1.0 §2.3)
@@ -352,9 +354,43 @@ class SessionTUIApplication:
             pass
 
     def _handle_ctrl_c(self) -> None:
-        """#9: Ctrl+C 더블탭 → 종료, 단일 탭 → 안내."""
+        """Ctrl+C state machine (does not conflict with /quit or Ctrl+D).
+
+        * Running + 1st: stop agent loop only (``on_interrupt``); keep TUI open.
+        * Running + 2nd within 1s: quit program (``on_quit`` + ``app.exit``).
+        * Idle/interrupted + 1st: prompt to press again.
+        * Idle/interrupted + 2nd within 1s: quit program.
+        """
         now = time.monotonic()
-        if now - self._last_ctrl_c < 1.0:
+        double = self._last_ctrl_c > 0.0 and (now - self._last_ctrl_c) < 1.0
+
+        if self._running:
+            if double:
+                self.append_text("⚠️ Ctrl+C pressed twice — exiting...")
+                if self._on_interrupt is not None:
+                    self._on_interrupt()
+                if self._on_quit is not None:
+                    self._on_quit()
+                try:
+                    if self.app.is_running:
+                        self.app.exit()
+                except Exception:  # noqa: BLE001, S110
+                    pass
+                return
+            if self._on_interrupt is not None:
+                self._on_interrupt()
+            self._last_ctrl_c = now
+            try:
+                self.input_bar.widget.buffer.reset()
+            except Exception:  # noqa: BLE001, S110
+                pass
+            self.append_text(
+                "⏹ Agents stopped. Send a message to resume, "
+                "or press Ctrl+C again to exit."
+            )
+            return
+
+        if double:
             self.append_text("⚠️ Ctrl+C pressed twice — exiting...")
             if self._on_quit is not None:
                 self._on_quit()
@@ -458,6 +494,9 @@ class SessionTUIApplication:
             return
 
         if result.kind == "quit":
+            # Stop agents first so session_loop can unwind, then quit REPL.
+            if self._running and self._on_interrupt is not None:
+                self._on_interrupt()
             if self._on_quit is not None:
                 self._on_quit()
             try:

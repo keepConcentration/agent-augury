@@ -723,3 +723,110 @@ def test_layout_uses_dynamic_height_and_wrap(tmp_path):
         assert callable(choice_window.height)
     finally:
         pipe_ctx.__exit__(None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# Ctrl+C: interrupt run vs double-tap quit
+# ---------------------------------------------------------------------------
+
+
+def test_ctrl_c_while_running_calls_interrupt_not_quit(tmp_path):
+    """1st Ctrl+C during run → on_interrupt only; TUI stays open for resume."""
+    session = FakeSession()
+    interrupts: list[bool] = []
+    quits: list[bool] = []
+    pipe_ctx = create_pipe_input()
+    pipe = pipe_ctx.__enter__()
+    try:
+        tui = SessionTUIApplication(
+            session,
+            history_file=tmp_path / "hist.txt",
+            key_aliases=False,
+            on_quit=lambda: quits.append(True),
+            on_next_turn=lambda _t: None,
+            on_interrupt=lambda: interrupts.append(True),
+            preserve_log_on_exit=False,
+            pt_input=pipe,
+            pt_output=DummyOutput(),
+        )
+        tui.set_running(True)
+        tui._handle_ctrl_c()
+        assert interrupts == [True]
+        assert quits == []
+        exported = tui.log_buffer.export_tail()
+        assert "Agents stopped" in exported
+        assert "Ctrl+C again" in exported
+    finally:
+        pipe_ctx.__exit__(None, None, None)
+
+
+def test_ctrl_c_twice_while_running_quits(tmp_path):
+    """2nd Ctrl+C within 1s while running → interrupt + quit."""
+    session = FakeSession()
+    interrupts: list[bool] = []
+    quits: list[bool] = []
+    pipe_ctx = create_pipe_input()
+    pipe = pipe_ctx.__enter__()
+    try:
+        tui = SessionTUIApplication(
+            session,
+            history_file=tmp_path / "hist.txt",
+            key_aliases=False,
+            on_quit=lambda: quits.append(True),
+            on_next_turn=lambda _t: None,
+            on_interrupt=lambda: interrupts.append(True),
+            preserve_log_on_exit=False,
+            pt_input=pipe,
+            pt_output=DummyOutput(),
+        )
+        tui.set_running(True)
+        tui._handle_ctrl_c()
+        tui._handle_ctrl_c()
+        assert interrupts == [True, True]
+        assert quits == [True]
+    finally:
+        pipe_ctx.__exit__(None, None, None)
+
+
+def test_ctrl_c_idle_still_double_tap_quit(tmp_path):
+    """Idle: 1st Ctrl+C warns; 2nd quits — no on_interrupt."""
+    session = FakeSession()
+    interrupts: list[bool] = []
+    quits: list[bool] = []
+    pipe_ctx = create_pipe_input()
+    pipe = pipe_ctx.__enter__()
+    try:
+        tui = SessionTUIApplication(
+            session,
+            history_file=tmp_path / "hist.txt",
+            key_aliases=False,
+            on_quit=lambda: quits.append(True),
+            on_next_turn=lambda _t: None,
+            on_interrupt=lambda: interrupts.append(True),
+            preserve_log_on_exit=False,
+            pt_input=pipe,
+            pt_output=DummyOutput(),
+        )
+        tui.set_running(False)
+        tui._handle_ctrl_c()
+        assert interrupts == []
+        assert quits == []
+        tui._handle_ctrl_c()
+        assert quits == [True]
+        assert interrupts == []
+    finally:
+        pipe_ctx.__exit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_message_while_interrupted_triggers_next_turn(tmp_path):
+    """After interrupt (not running), a plain message resumes via on_next_turn."""
+    session = FakeSession()
+    tui, pipe_ctx = _make_tui(session, tmp_path=tmp_path)
+    try:
+        tui.set_running(False)
+        await tui.handle_input("resume please")
+        assert tui._next_turns == ["resume please"]
+        assert len(session.sent) == 1
+    finally:
+        pipe_ctx.__exit__(None, None, None)

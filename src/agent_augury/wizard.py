@@ -29,12 +29,15 @@ from .model_config import (
 
 BACKEND_OPTIONS: dict[str, tuple[str, str]] = {
     "1": ("openai", "OpenAI-compatible API"),
-    "2": ("nous", "Nous Portal (API key)"),
-    "3": ("nous_oauth", "Nous Portal (OAuth device code)"),
+    "2": ("openrouter", "OpenRouter"),
+    "3": ("nous", "Nous Portal (API key)"),
+    "4": ("nous_oauth", "Nous Portal (OAuth device code)"),
 }
 
 NOUS_DEFAULT_BASE_URL = "https://inference-api.nousresearch.com/v1"
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
 
 
 # -- TTY detection -----------------------------------------------------------
@@ -159,7 +162,7 @@ def _try_list_models(
     )
 
     try:
-        if backend_type == "openai":
+        if backend_type in ("openai", "openrouter"):
             if not api_key_env:
                 return None
             api_key = os.environ.get(api_key_env, "")
@@ -249,14 +252,26 @@ def _run_nous_oauth_device_code(force_reconfigure: bool = False) -> str | None:
         return None
 
 
+def _wizard_provider_key(backend: dict[str, Any]) -> str:
+    """Map a saved backend to the wizard selection key (for credential reuse).
+
+    OpenRouter is stored as ``type: openai`` + openrouter base URL.
+    """
+    btype = backend.get("type") or ""
+    url = backend.get("base_url") or ""
+    if btype == "openai" and "openrouter.ai" in url:
+        return "openrouter"
+    return btype
+
+
 def _find_existing_provider_config(agents: list[dict[str, Any]], backend_type: str) -> dict[str, Any] | None:
-    """Find an existing backend config for the same provider type.
+    """Find an existing backend config for the same wizard provider.
 
     Returns the backend dict of the most recent matching agent, or None.
     """
     for agent in reversed(agents):
         backend = agent.get("backend", {})
-        if backend.get("type") == backend_type:
+        if _wizard_provider_key(backend) == backend_type:
             return backend
     return None
 
@@ -323,7 +338,7 @@ def _select_backend() -> str:
         choice = _input("Choice", "1")
         if choice in BACKEND_OPTIONS:
             return BACKEND_OPTIONS[choice][0]
-        print(f"  (invalid choice: {choice!r} — enter 1, 2, or 3)")
+        print(f"  (invalid choice: {choice!r} — enter 1, 2, 3, or 4)")
 
 
 def _collect_model_for_backend(
@@ -376,7 +391,9 @@ def _build_agent(
         else None
     )
 
-    backend: dict[str, Any] = {"type": backend_type}
+    # OpenRouter is a wizard preset; runtime still uses openai-compat.
+    emit_type = "openai" if backend_type == "openrouter" else backend_type
+    backend: dict[str, Any] = {"type": emit_type}
 
     if backend_type == "nous_oauth":
         # OAuth — use default Base URL internally, no prompt.
@@ -399,10 +416,16 @@ def _build_agent(
             print("  (authentication cancelled — manual model entry)")
             backend["model"] = _input("Model name")
     else:
-        # Real backends (openai, nous) — reuse existing env var if available.
-        default_url = (
-            NOUS_DEFAULT_BASE_URL if backend_type == "nous" else OPENAI_DEFAULT_BASE_URL
-        )
+        # Real backends (openai, openrouter, nous) — reuse existing env var if available.
+        if backend_type == "openrouter":
+            default_url = OPENROUTER_DEFAULT_BASE_URL
+            default_env = OPENROUTER_DEFAULT_API_KEY_ENV
+        elif backend_type == "nous":
+            default_url = NOUS_DEFAULT_BASE_URL
+            default_env = None
+        else:
+            default_url = OPENAI_DEFAULT_BASE_URL
+            default_env = None
         if existing:
             default_url = existing.get("base_url", default_url)
         base_url = _input("Base URL", default_url)
@@ -416,13 +439,20 @@ def _build_agent(
             if reuse.lower() in ("y", "yes"):
                 backend["api_key_env"] = existing_env
             else:
-                api_key_env = _input_required("API key env var name")
+                api_key_env = (
+                    _input("API key env var name", default_env)
+                    if default_env
+                    else _input_required("API key env var name")
+                )
                 backend["api_key_env"] = api_key_env
+        elif default_env:
+            backend["api_key_env"] = _input("API key env var name", default_env)
         else:
-            api_key_env = _input_required("API key env var name")
-            backend["api_key_env"] = api_key_env
+            backend["api_key_env"] = _input_required("API key env var name")
 
-        backend["model"] = _collect_model_for_backend(backend_type, base_url, backend["api_key_env"])
+        backend["model"] = _collect_model_for_backend(
+            backend_type, base_url, backend["api_key_env"]
+        )
 
     return {"id": agent_id, "backend": backend}
 

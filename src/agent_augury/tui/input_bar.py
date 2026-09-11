@@ -128,7 +128,8 @@ class InputBar:
 
         @kb.add("c-c")
         def _clear(event: Any) -> None:
-            # v1.4: Ctrl+C → delegate to app._handle_ctrl_c (double-tap to quit)
+            # Ctrl+C → SessionTUIApplication._handle_ctrl_c when wired;
+            # standalone InputBar (no app) still clears the draft.
             if self._app is not None and hasattr(self._app, '_handle_ctrl_c'):
                 self._app._handle_ctrl_c()
             else:

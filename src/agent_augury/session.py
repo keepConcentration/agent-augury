@@ -149,6 +149,9 @@ class Session:
         self._output_task: asyncio.Task | None = None
         self._setup_done: bool = False
         self._closed: bool = False
+        # Ctrl+C interrupt: cooperative stop + cancel in-flight agent tasks
+        self._interrupt = asyncio.Event()
+        self._agent_tasks: list[asyncio.Task[None]] = []
 
     # -- assembly ------------------------------------------------------------
 
@@ -341,6 +344,22 @@ class Session:
             thread_id, author="human", content=content, mentions=mentions
         )
 
+    def request_interrupt(self) -> None:
+        """Ask the current ``run()`` to stop (Ctrl+C / quit while agents work).
+
+        Sets a cooperative flag and cancels in-flight agent tasks so a stuck
+        ``step()`` (model HTTP / long tool) can unwind. Safe to call when no
+        run is active. Cleared automatically at the start of the next ``run()``.
+        """
+        self._interrupt.set()
+        for task in list(self._agent_tasks):
+            if not task.done():
+                task.cancel()
+
+    def interrupted(self) -> bool:
+        """True if ``request_interrupt()`` was called for the current/last run."""
+        return self._interrupt.is_set()
+
     async def run(self, initial_prompt: str | None = None) -> int:
         """Parallel steps until every agent finishes or max_steps is hit.
 
@@ -360,12 +379,16 @@ class Session:
         Reusable: call run() multiple times to continue the conversation.
         The first call initializes bots/gates/protocol; subsequent calls
         reuse them. Call close() when done to release resources.
+
+        ``request_interrupt()`` stops a run early; the next ``run()`` starts clean.
         """
         await self._setup()
         return await self._run_impl(initial_prompt)
 
     async def _run_impl(self, initial_prompt: str | None = None) -> int:
         """Core run logic (separated so start/stop wraps it cleanly)."""
+        self._interrupt.clear()
+
         # Broadcast the initial task to ALL agents (not just agents[0]), so
         # every worker gets the same user prompt and acts on it per its role.
         user_text = initial_prompt or self.task or ""
@@ -389,6 +412,9 @@ class Session:
             global budget allows."""
             nonlocal total_steps
             while True:
+                if self._interrupt.is_set():
+                    break
+
                 # Global budget gate — checked before every step.
                 if self.max_steps and total_steps >= self.max_steps:
                     break
@@ -404,6 +430,9 @@ class Session:
 
                 try:
                     result = await agent.step()
+                except asyncio.CancelledError:
+                    # request_interrupt() cancelled this task mid-step.
+                    break
                 except IndexError:
                     # Script exhausted — agent has no more completions.
                     # This is a normal finish, not an error.
@@ -443,7 +472,11 @@ class Session:
 
         # Launch all agents as parallel asyncio tasks.
         tasks = [asyncio.create_task(run_agent(agent)) for agent in self.agents]
-        await asyncio.gather(*tasks)
+        self._agent_tasks = tasks
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            self._agent_tasks = []
 
         return total_steps
 

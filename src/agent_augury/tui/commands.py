@@ -47,7 +47,7 @@ def _help_text(_ctx: dict[str, Any] | None = None, _args: str = "") -> str:
         "  Enter               - submit",
         "  Shift+Enter / Esc+Enter - newline",
         "  Ctrl+Enter          - newline (Windows)",
-        "  Ctrl+C              - clear draft",
+        "  Ctrl+C              - stop agents (again to quit)",
         "  Ctrl+D              - quit",
         "  Up / Down           - input history",
         "  PgUp / PgDn         - scroll log",

@@ -48,6 +48,8 @@ def _mock_session() -> MagicMock:
     }
     session_instance.run = AsyncMock(return_value=1)
     session_instance.close = AsyncMock()
+    session_instance.request_interrupt = MagicMock()
+    session_instance.interrupted = MagicMock(return_value=False)
     return session_instance
 
 

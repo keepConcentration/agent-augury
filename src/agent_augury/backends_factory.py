@@ -103,12 +103,18 @@ def _get_auth_lock(provider_id: str) -> asyncio.Lock:
 
 
 def _fetch_models_sync(base_url: str, api_key: str) -> list[str] | None:
-    """Synchronously fetch model IDs from an OpenAI-compatible /models endpoint."""
+    """Synchronously fetch model IDs from an OpenAI-compatible /models endpoint.
+
+    ``api_key`` may be empty — OpenRouter's ``/models`` is public without auth.
+    """
     import httpx
+    headers: dict[str, str] = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     try:
         resp = httpx.get(
             f"{base_url.rstrip('/')}/models",
-            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            headers=headers,
             timeout=15.0,
         )
         resp.raise_for_status()

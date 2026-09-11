@@ -162,7 +162,11 @@ def _try_list_models(
     )
 
     try:
-        if backend_type in ("openai", "openrouter"):
+        if backend_type == "openrouter":
+            # OpenRouter /models is public; use env key when present, else unauthenticated.
+            api_key = os.environ.get(api_key_env, "") if api_key_env else ""
+            return list_models_openai_compat(base_url, api_key)
+        if backend_type == "openai":
             if not api_key_env:
                 return None
             api_key = os.environ.get(api_key_env, "")
@@ -395,7 +399,22 @@ def _build_agent(
     emit_type = "openai" if backend_type == "openrouter" else backend_type
     backend: dict[str, Any] = {"type": emit_type}
 
-    if backend_type == "nous_oauth":
+    if backend_type == "openrouter":
+        # Fixed URL + env name — no Base URL / reuse / env-name prompts.
+        base_url = OPENROUTER_DEFAULT_BASE_URL
+        backend["base_url"] = base_url
+        backend["api_key_env"] = OPENROUTER_DEFAULT_API_KEY_ENV
+        print(f"  (OpenRouter — {base_url})")
+        print(f"  (API key env: {OPENROUTER_DEFAULT_API_KEY_ENV})")
+        if not os.environ.get(OPENROUTER_DEFAULT_API_KEY_ENV):
+            print(
+                f"  (warning: {OPENROUTER_DEFAULT_API_KEY_ENV} is not set "
+                "in this shell — model list may work, but the session needs it)"
+            )
+        backend["model"] = _collect_model_for_backend(
+            backend_type, base_url, OPENROUTER_DEFAULT_API_KEY_ENV
+        )
+    elif backend_type == "nous_oauth":
         # OAuth — use default Base URL internally, no prompt.
         # Authentication starts immediately (or reuses valid token).
         base_url = NOUS_DEFAULT_BASE_URL
@@ -416,16 +435,10 @@ def _build_agent(
             print("  (authentication cancelled — manual model entry)")
             backend["model"] = _input("Model name")
     else:
-        # Real backends (openai, openrouter, nous) — reuse existing env var if available.
-        if backend_type == "openrouter":
-            default_url = OPENROUTER_DEFAULT_BASE_URL
-            default_env = OPENROUTER_DEFAULT_API_KEY_ENV
-        elif backend_type == "nous":
-            default_url = NOUS_DEFAULT_BASE_URL
-            default_env = None
-        else:
-            default_url = OPENAI_DEFAULT_BASE_URL
-            default_env = None
+        # Real backends (openai, nous) — reuse existing env var if available.
+        default_url = (
+            NOUS_DEFAULT_BASE_URL if backend_type == "nous" else OPENAI_DEFAULT_BASE_URL
+        )
         if existing:
             default_url = existing.get("base_url", default_url)
         base_url = _input("Base URL", default_url)
@@ -439,14 +452,7 @@ def _build_agent(
             if reuse.lower() in ("y", "yes"):
                 backend["api_key_env"] = existing_env
             else:
-                api_key_env = (
-                    _input("API key env var name", default_env)
-                    if default_env
-                    else _input_required("API key env var name")
-                )
-                backend["api_key_env"] = api_key_env
-        elif default_env:
-            backend["api_key_env"] = _input("API key env var name", default_env)
+                backend["api_key_env"] = _input_required("API key env var name")
         else:
             backend["api_key_env"] = _input_required("API key env var name")
 

@@ -142,6 +142,21 @@ def test_list_models_openai_compat_success():
         mock.assert_called_once_with("https://api.openai.com/v1", "key")
 
 
+def test_fetch_models_sync_omits_auth_header_when_key_empty():
+    from unittest.mock import MagicMock, patch
+
+    from agent_augury.backends_factory import _fetch_models_sync
+
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"data": [{"id": "anthropic/claude-sonnet-4"}]}
+    with patch("httpx.get", return_value=resp) as mock_get:
+        ids = _fetch_models_sync("https://openrouter.ai/api/v1", "")
+    assert ids == ["anthropic/claude-sonnet-4"]
+    headers = mock_get.call_args.kwargs["headers"]
+    assert "Authorization" not in headers
+
+
 def test_list_models_nous_portal_success():
     from unittest.mock import patch
 
@@ -232,6 +247,21 @@ def test_try_list_models_openai_failure_returns_none(monkeypatch):
     with patch("agent_augury.backends_factory.list_models_openai_compat") as mock:
         mock.return_value = None
         assert _try_list_models("openai", "https://api.openai.com/v1", "OPENAI_API_KEY") is None
+
+
+def test_try_list_models_openrouter_without_key_still_lists(monkeypatch):
+    """OpenRouter listing must not require OPENROUTER_API_KEY to be set."""
+    from unittest.mock import patch
+
+    from agent_augury.wizard import _try_list_models
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with patch("agent_augury.backends_factory.list_models_openai_compat") as mock:
+        mock.return_value = ["anthropic/claude-sonnet-4", "openai/gpt-4o"]
+        assert _try_list_models(
+            "openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"
+        ) == ["anthropic/claude-sonnet-4", "openai/gpt-4o"]
+        mock.assert_called_once_with("https://openrouter.ai/api/v1", "")
 
 
 # ---------------------------------------------------------------------------

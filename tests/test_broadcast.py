@@ -217,6 +217,38 @@ def test_wizard_flow_quiet_false_by_default(tmp_path):
     assert calls[0]["quiet"] is False
 
 
+def test_wizard_flow_stops_when_api_key_env_missing(tmp_path, monkeypatch):
+    """Saved openai/openrouter config without env set must not start the session."""
+    from agent_augury.cli import _run_wizard_flow
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    cfg = {
+        "max_steps": 0,
+        "agents": [
+            {
+                "id": "a1",
+                "backend": {
+                    "type": "openai",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                    "model": "anthropic/claude-sonnet-4",
+                },
+            }
+        ],
+    }
+    out_path = tmp_path / "wizard_out.yaml"
+    calls, fake_run = _make_run_recorder()
+    with patch("agent_augury.cli._run_repl", fake_run), \
+         patch("agent_augury.cli.check_tty", return_value=True), \
+         patch("agent_augury.cli.model_config_exists", return_value=True), \
+         patch("agent_augury.cli.load_model_config", return_value=cfg):
+        result = _run_wizard_flow(output_path=out_path, quiet=True)
+
+    assert result == 1
+    assert calls == []
+    assert out_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # D2: _log_tool_event skips server-event-driven tools
 # ---------------------------------------------------------------------------

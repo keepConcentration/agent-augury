@@ -182,7 +182,7 @@ def test_wizard_nous_backend_uses_default_base_url(tmp_path):
 
 
 def test_wizard_openrouter_emits_openai_with_defaults(tmp_path):
-    """OpenRouter wizard preset stores type=openai + OpenRouter URL/env defaults."""
+    """OpenRouter wizard preset: no URL/env prompts; stores openai + OpenRouter defaults."""
     from agent_augury.wizard import (
         OPENROUTER_DEFAULT_API_KEY_ENV,
         OPENROUTER_DEFAULT_BASE_URL,
@@ -191,9 +191,7 @@ def test_wizard_openrouter_emits_openai_with_defaults(tmp_path):
     inputs = iter([
         "agent-1",
         "2",            # openrouter
-        "",             # base_url → OpenRouter default
-        "",             # api_key_env → OPENROUTER_API_KEY default
-        "anthropic/claude-sonnet-4",
+        "anthropic/claude-sonnet-4",  # model (listing mocked None → manual)
         "n",
     ])
     with patch("builtins.input", side_effect=lambda _: next(inputs)), \
@@ -206,6 +204,27 @@ def test_wizard_openrouter_emits_openai_with_defaults(tmp_path):
     assert backend["base_url"] == OPENROUTER_DEFAULT_BASE_URL
     assert backend["api_key_env"] == OPENROUTER_DEFAULT_API_KEY_ENV
     assert backend["model"] == "anthropic/claude-sonnet-4"
+
+
+def test_wizard_openrouter_lists_models_without_env_key(tmp_path):
+    """OpenRouter /models works without OPENROUTER_API_KEY; user can pick from list."""
+    inputs = iter([
+        "agent-1",
+        "2",            # openrouter
+        "1",            # pick first listed model
+        "n",
+    ])
+    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+         patch("agent_augury.wizard.save_model_config"), \
+         patch(
+             "agent_augury.backends_factory.list_models_openai_compat",
+             return_value=["anthropic/claude-sonnet-4", "openai/gpt-4o-mini"],
+         ) as mock_list:
+        cfg = run_wizard()
+
+    mock_list.assert_called()
+    # Called with whatever key is in env (often ""); listing must not be skipped.
+    assert cfg["agents"][0]["backend"]["model"] == "anthropic/claude-sonnet-4"
 
 
 
@@ -696,7 +715,7 @@ def test_wizard_second_agent_chooses_different_api_key_env():
 
 
 def test_wizard_different_provider_triggers_new_auth():
-    """Agent 2 with different provider (openrouter after openai) asks for new credentials."""
+    """Agent 2 with different provider (openrouter after openai) uses OpenRouter defaults."""
     inputs = iter([
         "agent-1",      # agent-1 id
         "1",            # backend = openai
@@ -705,16 +724,13 @@ def test_wizard_different_provider_triggers_new_auth():
         "gpt-4o",       # model for agent-1
         "y",            # add another agent
         "agent-2",      # agent-2 id
-        "2",            # backend = openrouter (different provider)
-        "",             # base_url → OpenRouter default
-        "",             # api_key_env → OPENROUTER_API_KEY
+        "2",            # backend = openrouter (no URL/env prompts)
         "anthropic/claude-sonnet-4",
         "n",            # no more agents
     ])
     with patch("builtins.input", side_effect=lambda _: next(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
-         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None), \
-         patch("agent_augury.backends_factory.list_models_nous_portal", return_value=None):
+         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
 
     assert len(cfg["agents"]) == 2

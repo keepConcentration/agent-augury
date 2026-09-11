@@ -477,6 +477,24 @@ def _save_config(cfg: dict[str, Any], output_path: Path) -> None:
     output_path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
 
 
+def _missing_api_key_envs(cfg: dict[str, Any]) -> list[str]:
+    """Return api_key_env names required by the config but unset in this process."""
+    missing: list[str] = []
+    seen: set[str] = set()
+    for agent in cfg.get("agents") or []:
+        backend = agent.get("backend") or {}
+        btype = backend.get("type")
+        if btype not in ("openai", "nous"):
+            continue
+        env_name = backend.get("api_key_env")
+        if not env_name or env_name in seen:
+            continue
+        seen.add(env_name)
+        if not os.environ.get(env_name):
+            missing.append(env_name)
+    return missing
+
+
 def _run_wizard_flow(
     output_path: Path | None = None,
     force_reconfigure: bool = False,
@@ -528,6 +546,31 @@ def _run_wizard_flow(
     except WizardCancelled:
         print("\nWizard cancelled.")
         return 130
+
+    missing = _missing_api_key_envs(cfg)
+    if missing:
+        print(
+            "\nerror: required API key environment variable(s) are not set:",
+            file=sys.stderr,
+        )
+        for name in missing:
+            print(f"  - {name}", file=sys.stderr)
+        print(
+            "Set them in this shell, then re-run agent-augury "
+            "(config is already saved).",
+            file=sys.stderr,
+        )
+        if sys.platform == "win32":
+            print(
+                f'  PowerShell: $env:{missing[0]}="your-key"',
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f'  export {missing[0]}="your-key"',
+                file=sys.stderr,
+            )
+        return 1
 
     # ★ v1.0: TTY면 Initial Task를 full-screen TUI 첫 입력으로 통합 (결정 ② 2-A)
     if _want_fullscreen_tui():

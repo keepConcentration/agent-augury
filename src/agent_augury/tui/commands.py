@@ -126,7 +126,7 @@ def verbose_mode() -> bool:
 def _toggle_verbose(_ctx, _args):
     global _verbose_mode
     _verbose_mode = not _verbose_mode
-    return f"(verbose mode: {"ON" if _verbose_mode else "OFF"})"
+    return f"(verbose mode: {'ON' if _verbose_mode else 'OFF'})"
 
 
 def _copy_log(ctx, args):

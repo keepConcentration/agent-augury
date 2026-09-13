@@ -1,4 +1,4 @@
-"""Event -> ANSI string renderer (rich record=True). Also non-TTY fallback."""
+"""Event → ANSI string renderer (rich record=True) for logs / tests."""
 
 from __future__ import annotations
 
@@ -65,11 +65,9 @@ def render_event(event: dict[str, Any]) -> str | None:
             pass
         elif tool in ("send_message", "create_thread", "read_resource"):
             return None
-        # v1.4: verbose OFF + run_command -> skip (log noise reduction, #3)
+        # Default: skip run_command tool events (noise); protocol_violation still shows.
         elif tool == "run_command":
-            from .commands import _verbose_mode
-            if not _verbose_mode:
-                return None
+            return None
     elif event_type not in (
         "create_thread",
         "read_resource",

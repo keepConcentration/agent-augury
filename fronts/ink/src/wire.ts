@@ -1,4 +1,4 @@
-/** Augury Wire JSONL helpers (M2/M3). */
+/** Augury Wire JSONL helpers + display formatting (pt TUI parity). */
 
 export type WireDir = "event" | "cmd" | "result";
 
@@ -14,11 +14,48 @@ export type WireMessage = {
   question_id?: string;
   options?: string[];
   agent_id?: string;
+  agents?: string[];
+  author?: string;
   thread_id?: string;
+  name?: string;
+  participants?: string[];
+  delivered_to?: string[];
+  tool?: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  threads?: number;
+  messages?: number;
+  protocol_violation?: boolean;
+  violation_message?: string;
+  phase?: string;
+  message?: string;
+  note?: string;
+  reason?: string;
   [key: string]: unknown;
 };
 
 let nextId = 1;
+
+const TOOL_ICONS: Record<string, string> = {
+  read_file: "📖",
+  write_file: "📝",
+  list_directory: "📁",
+  send_message: "💬",
+  create_thread: "🧵",
+  read_resource: "📊",
+  run_command: "⚙️",
+  fetch_url: "🌐",
+  web_search: "🔎",
+  edit_file: "✏️",
+  append_file: "➕",
+};
+
+const SENSITIVE: Array<[RegExp, string]> = [
+  [/(Authorization:\s+Bearer\s+)\S+/gi, "$1***"],
+  [/(Bearer\s+)\S+/gi, "$1***"],
+  [/(api[_-]?key["\s:=]+)\S+/gi, "$1***"],
+  [/(token["\s:=]+)\S+/gi, "$1***"],
+];
 
 export function encodeLine(message: WireMessage): string {
   return JSON.stringify(message);
@@ -44,21 +81,42 @@ export function makeCommand(
   return {dir: "cmd", type, id, ...fields};
 }
 
-export function formatEvent(event: WireMessage): string {
+export function maskSensitive(text: string): string {
+  let out = text;
+  for (const [pattern, replacement] of SENSITIVE) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
+function basename(path: string): string {
+  const norm = path.replace(/\\/g, "/");
+  const parts = norm.split("/");
+  return parts[parts.length - 1] || path;
+}
+
+function short(text: string, max = 60): string {
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+/**
+ * Format a Wire event for the Ink log — mirrors ``tui/renderer.py`` layout.
+ * Returns null when the event should be skipped (duplicate tool noise, etc.).
+ */
+export function formatEvent(event: WireMessage): string | null {
   const t = event.type ?? "?";
+
   if (t === "log" && typeof event.text === "string") {
     return event.text;
   }
-  if (t === "human.question") {
-    const opts = Array.isArray(event.options) ? event.options : [];
-    const lines = [
-      `? [${event.agent_id ?? "?"}] ${event.question ?? ""}`,
-      ...opts.map((o, i) => `   [${i + 1}] ${o}`),
-    ];
-    return lines.join("\n");
-  }
   if (t === "session.started") {
-    return `[session] started${event.note ? ` - ${String(event.note)}` : ""}`;
+    const note = event.note ? ` - ${String(event.note)}` : "";
+    const roster = Array.isArray(event.agents)
+      ? event.agents.map(String).filter(Boolean)
+      : [];
+    const agents =
+      roster.length > 0 ? ` — agents: ${roster.map((a) => `@${a}`).join(" ")}` : "";
+    return `[session] started${note}${agents}`;
   }
   if (t === "session.ended") {
     return `[session] ended (${String(event.reason ?? "done")})`;
@@ -66,5 +124,108 @@ export function formatEvent(event: WireMessage): string {
   if (t === "error") {
     return `[error] ${String(event.message ?? event.text ?? "")}`;
   }
-  return `[${t}] ${encodeLine(event)}`;
+
+  // human.question is shown in the ask_user panel; skip duplicate log line.
+  if (t === "human.question") {
+    return null;
+  }
+
+  if (t === "agent.step") {
+    const agent = String(event.agent_id ?? "");
+    const result = (event.result ?? {}) as Record<string, unknown>;
+    const text = typeof result.text === "string" ? result.text : "";
+    if (!text) {
+      return null;
+    }
+    // pt TUI: "💭 {agent_id}:" then body (no hard truncate)
+    return `💭 ${agent}:\n${maskSensitive(text)}`;
+  }
+
+  if (t === "thread.created") {
+    const tid = String(event.thread_id ?? "");
+    const name = String(event.name ?? "");
+    const participants = Array.isArray(event.participants)
+      ? event.participants.map(String).join(", ")
+      : "";
+    return `🧵 [${tid}] create_thread ${name} (${participants})`;
+  }
+
+  if (t === "message") {
+    const content = String(event.content ?? "");
+    if (content.startsWith("[ask-user]")) {
+      return null;
+    }
+    const author = String(event.author ?? event.agent_id ?? "");
+    const tid = String(event.thread_id ?? "");
+    const delivered = Array.isArray(event.delivered_to)
+      ? event.delivered_to.map(String)
+      : [];
+    const targets = delivered.length > 0 ? delivered.join(", ") : "broadcast";
+    return `💬 [${author} -> ${targets}][${tid}]\n${maskSensitive(content)}`;
+  }
+
+  if (t === "read_resource") {
+    const agent = String(event.agent_id ?? "");
+    const threads = event.threads ?? 0;
+    const messages = event.messages ?? 0;
+    return `📊 ${agent}: read_resource (threads=${threads}, messages=${messages})`;
+  }
+
+  if (t === "tool") {
+    const tool = String(event.tool ?? "");
+    const agent = String(event.agent_id ?? "");
+    const args = (event.args ?? {}) as Record<string, unknown>;
+
+    // Same skip list as renderer.py — covered by thread.created / message / read_resource
+    if (
+      !event.protocol_violation &&
+      (tool === "send_message" ||
+        tool === "create_thread" ||
+        tool === "read_resource")
+    ) {
+      return null;
+    }
+
+    if (tool === "ask_user") {
+      // Panel handles this via human.question
+      return null;
+    }
+
+    if (event.protocol_violation) {
+      const msg = String(event.violation_message ?? "");
+      const phase = String(event.phase ?? "?");
+      return `⚠️ [${agent}] PROTOCOL VIOLATION (phase=${phase}): ${msg}`;
+    }
+
+    const icon = TOOL_ICONS[tool] ?? "🔧";
+    if (tool === "run_command") {
+      const cmd = String(args.command ?? "");
+      return `${icon} ${agent}: ${tool} \`${short(cmd)}\``;
+    }
+    if (tool === "fetch_url") {
+      const url = String(args.url ?? "");
+      return `${icon} ${agent}: ${tool} ${short(url)}`;
+    }
+    if (
+      tool === "read_file" ||
+      tool === "write_file" ||
+      tool === "edit_file" ||
+      tool === "append_file" ||
+      tool === "list_directory"
+    ) {
+      const path = String(args.path ?? "");
+      if (path) {
+        return `${icon} ${agent}: ${tool} ${basename(path)}`;
+      }
+      return `${icon} ${agent}: ${tool}`;
+    }
+    const path = String(args.path ?? "");
+    if (path) {
+      return `${icon} ${agent}: ${tool} ${basename(path)}`;
+    }
+    return `${icon} ${agent}: ${tool}`;
+  }
+
+  // Unknown wire types: compact fallback (avoid dumping full JSON)
+  return `[${t}]`;
 }

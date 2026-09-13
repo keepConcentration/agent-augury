@@ -1,4 +1,4 @@
-/** Spawn Python Gateway hello_demo and speak Wire JSONL over stdio. */
+/** Spawn Python Gateway child and speak Wire JSONL over stdio. */
 
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
 import {createInterface} from "node:readline";
@@ -33,15 +33,38 @@ export function resolvePython(): string {
   return win ? "python" : "python3";
 }
 
+/** M2 hello_demo vs M7 real session_stdio (AUGURY_CONFIG). */
+export function resolveGatewayArgs(): string[] {
+  const mode = (process.env.AUGURY_GATEWAY_MODE || "hello").toLowerCase();
+  if (mode === "session") {
+    const config = process.env.AUGURY_CONFIG;
+    if (!config) {
+      throw new Error("AUGURY_GATEWAY_MODE=session requires AUGURY_CONFIG");
+    }
+    const args = ["-m", "agent_augury.gateway.session_stdio", "--config", config];
+    if (process.env.AUGURY_DEMO === "1" || process.env.AUGURY_DEMO === "true") {
+      args.push("--demo");
+    }
+    if (process.env.AUGURY_QUIET === "1" || process.env.AUGURY_QUIET === "true") {
+      args.push("--quiet");
+    }
+    if (
+      process.env.AUGURY_NO_AUTO_START === "1" ||
+      process.env.AUGURY_NO_AUTO_START === "true"
+    ) {
+      args.push("--no-auto-start");
+    }
+    return args;
+  }
+  return ["-m", "agent_augury.gateway.hello_demo"];
+}
+
 export class GatewayChild {
   private child: ChildProcessWithoutNullStreams;
   private closed = false;
 
   constructor(handlers: WireHandlers, python = resolvePython()) {
-    this.child = spawn(
-      python,
-      ["-m", "agent_augury.gateway.hello_demo"],
-      {
+    this.child = spawn(python, resolveGatewayArgs(), {
         cwd: repoRoot,
         env: {
           ...process.env,
@@ -66,9 +89,23 @@ export class GatewayChild {
 
     this.child.stderr.on("data", (buf: Buffer) => {
       const text = buf.toString("utf8").trim();
-      if (text) {
-        handlers.onError(new Error(`[gateway stderr] ${text}`));
+      if (!text) {
+        return;
       }
+      // Config/policy warnings and OAuth fallbacks — not fatal gateway errors.
+      if (
+        text.includes("tools.shell.enabled=true with empty") ||
+        text.includes("To authenticate, enter code:") ||
+        text.includes("Verification URL:")
+      ) {
+        handlers.onMessage({
+          dir: "event",
+          type: "log",
+          text: text.replace(/\s+/g, " "),
+        });
+        return;
+      }
+      handlers.onError(new Error(`[gateway stderr] ${text}`));
     });
 
     this.child.on("error", (err) => handlers.onError(err));

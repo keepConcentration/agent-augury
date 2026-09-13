@@ -429,8 +429,8 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
 
     calls = []
 
-    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False, **kwargs):
-        calls.append({"cfg_path": cfg_path, "initial_prompt": initial_prompt, "quiet": quiet})
+    def fake_ink(**kwargs):
+        calls.append(dict(kwargs))
         return 0
 
     # Mock the listing function to return models
@@ -444,15 +444,12 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
             "OPENAI_API_KEY",  # api_key_env
             "1",            # select model #1 from list (gpt-4o)
             "n",            # no more agents
-            "test task",    # task description (multi-line: first line)
-            "",             # empty line terminates the task block
         ])
         with patch("builtins.input", side_effect=lambda *args: next(inputs)), \
              patch("agent_augury.cli.check_tty", return_value=True), \
              patch("agent_augury.cli.model_config_exists", return_value=False), \
              patch("agent_augury.wizard.save_model_config"), \
-             patch("agent_augury.cli._run_repl", fake_run), \
-             patch("agent_augury.cli._prompt_multiline", return_value="test task"):
+             patch("agent_augury.cli._run_ink_surface", fake_ink):
             rc = main(["--output", str(output_path)])
 
     assert rc == 0
@@ -461,10 +458,10 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
     loaded = load_config(output_path)
     assert loaded["agents"][0]["backend"]["model"] == "gpt-4o"
     assert loaded["agents"][0]["backend"]["base_url"] == "https://api.openai.com/v1"
-    # The session was launched against the saved config with the task.
+    # The session was launched against the saved config via Ink.
     assert len(calls) == 1
-    assert calls[0]["cfg_path"] == str(output_path)
-    assert calls[0]["initial_prompt"] == "test task"
+    assert calls[0]["config"] == str(output_path)
+    assert calls[0]["mode"] == "session"
     assert calls[0]["quiet"] is False
 
 

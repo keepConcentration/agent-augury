@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..backend.base import Completion, ModelBackend
+from ..protocol.signals import is_ready_message
 from ..server import MessageServer
 from .policy import ToolPolicy
 from .system_prompt import render_system_prompt, render_tool_instructions
@@ -220,14 +221,14 @@ class AgentLoop:
                 # is explicitly bound.
                 if self.gate_thread_id is None:
                     content = args.get("content", "")
-                    if content != "READY:":
+                    if not is_ready_message(content):
                         return json.dumps(
                             {
                                 "error": "gate_closed",
                                 "phase": self.current_phase or "?",
                                 "message": (
                                     f"Gate is CLOSED. Work-share on thread '{thread_id}' is blocked. "
-                                    f"Send READY: to finish P1 exploration first."
+                                    f"Send READY: (optional text after the colon) to finish P1."
                                 ),
                             },
                             ensure_ascii=False,

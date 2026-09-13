@@ -10,8 +10,8 @@ Extends the v0.1b consensus gate with the complete five-phase protocol:
    posted to a shared thread.
 4. **P4 REVIEW** — agents broadcast results with evidence. Reviewers flag
    conflicts, insufficient evidence, or omissions.
-5. **P5 SUBMIT** — the assembler composes the final answer, broadcasts it for
-   final approval, and submits.
+5. **P5 SUBMIT** — the team elects who drafts the final answer (no fixed
+   assembler), broadcasts it for final approval, and submits.
 
 The ``CollaborationProtocol`` class drives the phase transitions using a
 ``PhaseManager`` and one ``ConsensusGate`` per approval point. It exposes
@@ -44,6 +44,7 @@ from .phases import (
     Phase,
     PhaseManager,
 )
+from .signals import is_ready_message
 
 # Callback fired on any phase change
 PhaseCallback = Callable[[Phase, Phase], None]
@@ -121,14 +122,15 @@ class CollaborationProtocol:
     def _on_message(self, message: dict[str, Any]) -> None:
         """Track READY messages from participants for P1 finish policy.
 
-        Only exact ``READY:`` prefix is recognized (``READYFOO`` is ignored).
+        ``READY:`` with optional trailing text is recognized (case/whitespace
+        tolerant). ``READYFOO`` / bare ``READY`` are ignored.
         When all participants have sent READY, automatically finish P1.
         """
         if self.phase != P1_EXPLORE:
             return
         author = message.get("author", "")
         content = message.get("content", "")
-        if author in self.participants and content == "READY:":
+        if author in self.participants and is_ready_message(content):
             self._ready_states.add(author)
             if self.all_ready:
                 self.finish_p1()
@@ -137,6 +139,10 @@ class CollaborationProtocol:
     def all_ready(self) -> bool:
         """True if all participants have sent READY."""
         return set(self.participants) <= self._ready_states
+
+    def has_ready(self, agent_id: str) -> bool:
+        """True if this participant has already sent a READY signal."""
+        return agent_id in self._ready_states
 
     def finish_p1(self) -> None:
         """Explicitly finish P1 exploration and advance to P2.

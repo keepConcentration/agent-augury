@@ -1,6 +1,8 @@
 """Wiring — YAML config loading, session assembly, run loop, CLI entry."""
 
 
+from unittest.mock import patch
+
 import pytest
 import yaml
 
@@ -216,25 +218,16 @@ async def test_session_mirror_disabled_without_env(tmp_path, monkeypatch):
     assert session.mirror is None  # observation silently off — core unaffected
 
 
-def test_cli_accepts_gate_config(tmp_path, capsys, monkeypatch):
-    from unittest.mock import patch
-
+def test_cli_accepts_gate_config(tmp_path):
     from agent_augury.cli import main
 
-    # Mock load_config to return a config with fake backends
-    # (fake is no longer valid in production configs after removal from _VALID_BACKEND_TYPES)
-    with patch("agent_augury.cli.load_config") as mock_load:
-        mock_load.return_value = GATE_CFG
-        # Mock the backend to avoid real API calls
-        # Mock the TUI adapter to avoid TTY issues
-        with patch("agent_augury.backends_factory.build_backend") as mock_build, \
-             patch("builtins.input", side_effect=EOFError):
-            from agent_augury.backend.fake import FakeModelBackend
-            mock_build.return_value = FakeModelBackend(script=["hello"])
-            rc = main(["--config", str(write_cfg(tmp_path, {}))])
-    out = capsys.readouterr().out
+    cfg_path = write_cfg(tmp_path, GATE_CFG)
+    with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
+        rc = main(["--config", str(cfg_path), "--demo"])
     assert rc == 0
-    assert "gate=OPEN" in out
+    ink.assert_called_once()
+    assert ink.call_args.kwargs["config"] == str(cfg_path)
+    assert ink.call_args.kwargs["demo"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -324,25 +317,18 @@ async def test_gate_blocks_work_share_until_open(tmp_path):
     assert work_msgs[0]["seq"] > session.gate.opened_at_seq
 
 
-def test_cli_runs_fake_session_and_prints_log(tmp_path, capsys, monkeypatch):
-    from unittest.mock import patch
-
+def test_cli_runs_fake_session_and_prints_log(tmp_path):
+    """--config --demo launches Ink (session UI owns logging)."""
     from agent_augury.cli import main
 
-    # Mock load_config to return a config with fake backends
-    with patch("agent_augury.cli.load_config") as mock_load:
-        mock_load.return_value = FAKE_CFG
-        # Mock the backend to avoid real API calls
-        # Mock the TUI adapter to avoid TTY issues
-        with patch("agent_augury.backends_factory.build_backend") as mock_build, \
-             patch("builtins.input", side_effect=EOFError):
-            from agent_augury.backend.fake import FakeModelBackend
-            mock_build.return_value = FakeModelBackend(script=["hello"])
-            rc = main(["--config", str(write_cfg(tmp_path, {}))])
-    out = capsys.readouterr().out
+    cfg_path = write_cfg(tmp_path, FAKE_CFG)
+    with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
+        rc = main(["--config", str(cfg_path), "--demo"])
     assert rc == 0
-    assert "💭 agent-1:" in out and "💭 agent-2:" in out
-    assert "steps=" in out
+    ink.assert_called_once()
+    assert ink.call_args.kwargs["mode"] == "session"
+    assert ink.call_args.kwargs["demo"] is True
+    assert ink.call_args.kwargs["config"] == str(cfg_path)
 
 
 # ---------------------------------------------------------------------------

@@ -162,6 +162,125 @@ class ConfigError(Exception):
     pass
 
 
+_SURFACES_KEYS = frozenset({"ink", "discord", "slack"})
+
+
+def normalize_surfaces(data: dict[str, Any]) -> None:
+    """Expand optional ``surfaces:`` into legacy ``mirror`` / ``bots`` / ``slack``.
+
+    Design: MULTI_FRONT_DESIGN.md §4. Legacy top-level keys remain valid when
+    ``surfaces:`` is omitted. Mixing the same family in both places raises
+    ``ConfigError``.
+    """
+    surfaces = data.get("surfaces")
+    if surfaces is None:
+        return
+    if not isinstance(surfaces, dict):
+        raise ConfigError("'surfaces' must be a mapping")
+    unknown = set(surfaces) - _SURFACES_KEYS
+    if unknown:
+        raise ConfigError(
+            f"'surfaces' contains unknown key(s) {sorted(unknown)} — "
+            f"allowed: {sorted(_SURFACES_KEYS)}"
+        )
+
+    ink = surfaces.get("ink")
+    if ink is not None:
+        if not isinstance(ink, dict):
+            raise ConfigError("surfaces.ink must be a mapping")
+        if "enabled" in ink and not isinstance(ink["enabled"], bool):
+            raise ConfigError("surfaces.ink.enabled must be a boolean")
+
+    discord = surfaces.get("discord")
+    if discord is not None:
+        _expand_discord_surface(data, discord)
+
+    slack = surfaces.get("slack")
+    if slack is not None:
+        _expand_slack_surface(data, slack)
+
+
+def _expand_discord_surface(data: dict[str, Any], discord: Any) -> None:
+    if not isinstance(discord, dict):
+        raise ConfigError("surfaces.discord must be a mapping")
+    if discord.get("enabled") is False:
+        return
+
+    if data.get("mirror") is not None or data.get("bots") is not None:
+        raise ConfigError(
+            "surfaces.discord conflicts with top-level 'mirror'/'bots' — "
+            "use surfaces.discord or the legacy keys, not both"
+        )
+
+    mode = discord.get("mode", "observe")
+    if mode not in ("observe", "interact"):
+        raise ConfigError(
+            f"surfaces.discord.mode must be 'observe' or 'interact', got {mode!r}"
+        )
+
+    mirror = discord.get("mirror")
+    if mirror is None and isinstance(discord.get("webhook"), dict):
+        mirror = discord["webhook"]
+    if mirror is not None:
+        if not isinstance(mirror, dict):
+            raise ConfigError("surfaces.discord.mirror must be a mapping")
+        if "type" not in mirror and "url_env" in mirror:
+            mirror = {"type": "discord_webhook", "url_env": mirror["url_env"]}
+        data["mirror"] = mirror
+
+    bots = discord.get("bots")
+    if bots is None:
+        return
+    if not isinstance(bots, list):
+        raise ConfigError("surfaces.discord.bots must be a list")
+
+    agents_filter = discord.get("agents")
+    if agents_filter is not None:
+        if not isinstance(agents_filter, list) or not all(
+            isinstance(a, str) for a in agents_filter
+        ):
+            raise ConfigError("surfaces.discord.agents must be a list of strings")
+        allow = set(agents_filter)
+        bots = [
+            b
+            for b in bots
+            if isinstance(b, dict) and str(b.get("agent_id", "")) in allow
+        ]
+
+    expanded: list[dict[str, Any]] = []
+    for bot in bots:
+        if not isinstance(bot, dict):
+            raise ConfigError("surfaces.discord.bots entries must be mappings")
+        entry = dict(bot)
+        if mode == "interact" and "inbound" not in entry:
+            entry["inbound"] = True
+        expanded.append(entry)
+    data["bots"] = expanded
+
+
+def _expand_slack_surface(data: dict[str, Any], slack: Any) -> None:
+    if not isinstance(slack, dict):
+        raise ConfigError("surfaces.slack must be a mapping")
+    if slack.get("enabled") is False:
+        return
+
+    if data.get("slack") is not None:
+        raise ConfigError(
+            "surfaces.slack conflicts with top-level 'slack' — "
+            "use surfaces.slack or the legacy key, not both"
+        )
+
+    mode = slack.get("mode", "observe")
+    if mode not in ("observe",):
+        raise ConfigError(
+            f"surfaces.slack.mode must be 'observe' (inbound not yet supported), "
+            f"got {mode!r}"
+        )
+
+    spec = {k: v for k, v in slack.items() if k != "enabled"}
+    data["slack"] = spec
+
+
 def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     raw = Path(path).read_text(encoding="utf-8")
     try:
@@ -180,6 +299,7 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     agents = data.get("agents")
     if not isinstance(agents, list) or not agents:
         raise ConfigError("'agents' must be a non-empty list")
+    seen_ids: set[str] = set()
     for i, agent in enumerate(agents):
         if not isinstance(agent, dict) or "id" not in agent:
             raise ConfigError(f"agents[{i}] must be a mapping with an 'id'")
@@ -191,6 +311,11 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
                 f"agents[{i}].id {agent_id!r} is reserved for the human participant; "
                 f"rename the agent (e.g. 'human-relay')"
             )
+        if agent_id.lower() in seen_ids:
+            raise ConfigError(
+                f"agents[{i}].id {agent_id!r} is duplicated — agent ids must be unique"
+            )
+        seen_ids.add(agent_id.lower())
         if not isinstance(agent.get("backend"), dict):
             raise ConfigError(f"agents[{i}].backend must be a mapping")
         backend = agent["backend"]
@@ -200,7 +325,7 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
             if not allow_fake:
                 raise ConfigError(
                     f"agents[{i}].backend.type 'fake' requires --demo flag "
-                    f"(offline demo/benchmark only)"
+                    f"(offline examples / tests only)"
                 )
             continue
         if btype not in _VALID_BACKEND_TYPES:
@@ -262,14 +387,7 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
         if agent_tools is not None:
             _validate_tools_section(agent_tools, where=f"agents[{i}].tools")
 
-    # mirror.url_env 검증
-    mirror = data.get("mirror")
-    if mirror is not None and isinstance(mirror, dict) and "url_env" not in mirror:
-        raise ConfigError("mirror requires 'url_env' key")
-
     # human 섹션은 v1.0+ 코드에 내장 — config 키는 무시 (옵트인 폐기).
-    # REPL/TUI always-on: human 참가 + 상시 입력은 Session.from_config에서 항상 활성.
-    # (SESSION_TUI_REDESIGN v2.5 이후 human.tui / human.interface 키 검증 없음)
     human = data.get("human")
     if human is not None and isinstance(human, dict):
         pass  # accepted but ignored — no warning
@@ -279,7 +397,15 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     if tools is not None:
         _validate_tools_section(tools, where="tools")
 
-# bots 섹션 검증 (N개 봇 통합)
+    # A2: surfaces: → legacy mirror/bots/slack (before validating those keys)
+    normalize_surfaces(data)
+
+    # mirror.url_env 검증
+    mirror = data.get("mirror")
+    if mirror is not None and isinstance(mirror, dict) and "url_env" not in mirror:
+        raise ConfigError("mirror requires 'url_env' key")
+
+    # bots 섹션 검증 (N개 봇 통합)
     bots = data.get("bots")
     if bots is not None:
         if not isinstance(bots, list):

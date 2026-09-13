@@ -111,6 +111,13 @@ def test_wizard_openai_backend_produces_valid_config(tmp_path):
         cfg = run_wizard()
 
     assert cfg["max_steps"] == 0
+    assert cfg["protocol"]["gates"] == {
+        "P2_SPLIT": "plan",
+        "P3_EXECUTE": "execution",
+        "P4_REVIEW": "review",
+        "P5_SUBMIT": "submission",
+    }
+    assert "assembler_id" not in cfg["protocol"]
     assert len(cfg["agents"]) == 1
     assert cfg["agents"][0]["id"] == "agent-1"
     assert cfg["agents"][0]["backend"]["type"] == "openai"
@@ -324,11 +331,9 @@ def test_cli_without_config_non_tty_returns_error(capsys):
     assert "TTY" in err or "tty" in err
 
 
-def test_cli_with_config_still_works(tmp_path, capsys, monkeypatch):
-    """Existing --config mode must be unaffected by wizard changes."""
+def test_cli_with_config_still_works(tmp_path, monkeypatch):
+    """--config launches Ink session (Surface owns the TTY)."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    from unittest.mock import patch
-
     from agent_augury.cli import main
 
     cfg = {
@@ -341,16 +346,12 @@ def test_cli_with_config_still_works(tmp_path, capsys, monkeypatch):
     cfg_path = tmp_path / "test.yaml"
     cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-    # Mock the backend to avoid real API calls
-    # Mock the TUI adapter to avoid TTY issues
-    with patch("agent_augury.backends_factory.build_backend") as mock_build, \
-         patch("builtins.input", side_effect=EOFError):
-        from agent_augury.backend.fake import FakeModelBackend
-        mock_build.return_value = FakeModelBackend(script=["hello"])
+    with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
         rc = main(["--config", str(cfg_path)])
-    out = capsys.readouterr().out
     assert rc == 0
-    assert "💭 a1:" in out
+    ink.assert_called_once()
+    assert ink.call_args.kwargs["mode"] == "session"
+    assert ink.call_args.kwargs["config"] == str(cfg_path)
 
 
 def test_cli_output_without_config_errors(tmp_path, capsys):
@@ -372,19 +373,14 @@ def test_cli_wizard_generates_valid_yaml(tmp_path, monkeypatch):
     inputs = iter([
         "a1", "1", "", "OPENAI_API_KEY", "gpt-4o-mini",  # agent-1 (openai)
         "n",                 # no more agents
-        "e2e task",          # initial task (multi-line: first line)
-        "",                  # empty line terminates the task block
     ])
     # Patch check_tty in the module that imported it (cli), not the origin.
     # Also ensure no existing model config is loaded.
-    # Mock asyncio.run to prevent actual agent execution (would loop forever
-    # with max_steps=0 and a fake API key).
     with patch("builtins.input", side_effect=lambda *args: next(inputs)), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.cli.model_config_exists", return_value=False), \
-         patch("agent_augury.cli.asyncio.run", return_value=0), \
-         patch("agent_augury.cli._prompt_multiline", return_value="e2e task"):
+         patch("agent_augury.cli._run_ink_surface", return_value=0):
         rc = main(["--output", str(output)])
 
     assert rc == 0
@@ -422,12 +418,11 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
                 {"id": "a1", "backend": {"type": "openai", "base_url": "https://api.openai.com/v1", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"}},
             ],
         }
-        with patch("agent_augury.cli._prompt_multiline", return_value="e2e task"), \
-             patch("agent_augury.cli.check_tty", return_value=True), \
+        with patch("agent_augury.cli.check_tty", return_value=True), \
              patch("agent_augury.cli.model_config_exists", return_value=True), \
              patch("agent_augury.cli.load_model_config", return_value=existing), \
              patch("agent_augury.wizard.save_model_config"), \
-             patch("agent_augury.cli.asyncio.run", return_value=0):
+             patch("agent_augury.cli._run_ink_surface", return_value=0):
             rc = main([])
 
         assert rc == 0
@@ -800,3 +795,66 @@ def test_find_existing_provider_config_empty_list():
     """_find_existing_provider_config with empty list returns None."""
     from agent_augury.wizard import _find_existing_provider_config
     assert _find_existing_provider_config([], "openai") is None
+
+
+def test_wizard_rejects_duplicate_agent_ids(tmp_path):
+    """Second agent cannot reuse the first agent's id (case-insensitive)."""
+    inputs = iter([
+        "agent-1",       # agent 1 id
+        "1",             # openai
+        "",              # base_url default
+        "OPENAI_API_KEY",
+        "gpt-4o-mini",
+        "y",             # add another
+        "Agent-1",       # duplicate (different case) → re-prompt
+        "agent-2",       # unique
+        "1",
+        "",
+        "y",             # reuse api key env
+        "gpt-4o-mini",
+        "n",
+    ])
+    with (
+        patch("builtins.input", side_effect=lambda _: next(inputs)),
+        patch("builtins.print"),
+        patch("agent_augury.wizard.save_model_config"),
+        patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None),
+    ):
+        cfg = run_wizard()
+
+    assert [a["id"] for a in cfg["agents"]] == ["agent-1", "agent-2"]
+
+
+def test_load_config_rejects_duplicate_agent_ids(tmp_path):
+    from agent_augury.config import ConfigError, load_config
+
+    path = tmp_path / "dup.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "agents": [
+                    {
+                        "id": "agent-1",
+                        "backend": {
+                            "type": "openai",
+                            "base_url": "http://x",
+                            "api_key_env": "K",
+                            "model": "m",
+                        },
+                    },
+                    {
+                        "id": "Agent-1",
+                        "backend": {
+                            "type": "openai",
+                            "base_url": "http://x",
+                            "api_key_env": "K",
+                            "model": "m",
+                        },
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicated"):
+        load_config(path)

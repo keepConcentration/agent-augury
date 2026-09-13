@@ -90,48 +90,42 @@ async def test_server_subscribe_events_isolates_from_subscribers():
 
 
 # ---------------------------------------------------------------------------
-# CLI --quiet flag
+# CLI --quiet / --demo → Ink Surface
 # ---------------------------------------------------------------------------
 
 
-def _make_run_recorder():
-    """Build an async stand-in for cli._run_repl that records its arguments.
+def _make_ink_recorder():
+    """Stand-in for cli._run_ink_surface that records kwargs."""
+    calls: list[dict] = []
 
-    ``main()`` / ``_run_wizard_flow()`` call ``asyncio.run(_run_repl(...))``;
-    substituting ``_run_repl`` with this coroutine function lets us assert that
-    ``quiet`` (and the config path / initial task) actually reach the run
-    layer instead of only checking that ``asyncio.run`` was invoked.
-    """
-    calls = []
-
-    async def fake_run(cfg_path, initial_prompt=None, *, quiet=False, allow_fake=False):
-        calls.append({"cfg_path": cfg_path, "initial_prompt": initial_prompt, "quiet": quiet, "allow_fake": allow_fake})
+    def fake_ink(**kwargs):
+        calls.append(dict(kwargs))
         return 0
 
-    return calls, fake_run
+    return calls, fake_ink
 
 
 def test_cli_quiet_flag_parsing():
-    """--quiet must reach _run_repl(quiet=True) when --config is used (T1)."""
+    """--quiet must reach _run_ink_surface(quiet=True) when --config is used."""
     from agent_augury.cli import main
 
-    calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run_repl", fake_run):
+    calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink):
         result = main(["--config", "fake.yaml", "--quiet"])
 
     assert result == 0
     assert len(calls) == 1
-    assert calls[0]["cfg_path"] == "fake.yaml"
+    assert calls[0]["config"] == "fake.yaml"
     assert calls[0]["quiet"] is True
-    assert calls[0]["initial_prompt"] is None
+    assert calls[0]["mode"] == "session"
 
 
 def test_cli_quiet_flag_default_false():
-    """Without --quiet, _run_repl must receive quiet=False (T1 default)."""
+    """Without --quiet, _run_ink_surface must receive quiet=False."""
     from agent_augury.cli import main
 
-    calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run_repl", fake_run):
+    calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink):
         result = main(["--config", "fake.yaml"])
 
     assert result == 0
@@ -140,30 +134,30 @@ def test_cli_quiet_flag_default_false():
 
 
 def test_cli_demo_flag_passed():
-    """--demo must reach _run_repl(allow_fake=True) when --config is used."""
+    """--demo must reach _run_ink_surface(demo=True) when --config is used."""
     from agent_augury.cli import main
 
-    calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run_repl", fake_run):
+    calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink):
         result = main(["--config", "fake.yaml", "--demo"])
 
     assert result == 0
     assert len(calls) == 1
-    assert calls[0]["allow_fake"] is True
-    assert calls[0]["cfg_path"] == "fake.yaml"
+    assert calls[0]["demo"] is True
+    assert calls[0]["config"] == "fake.yaml"
 
 
 def test_cli_demo_flag_default_false():
-    """Without --demo, _run_repl must receive allow_fake=False (default)."""
+    """Without --demo, _run_ink_surface must receive demo=False."""
     from agent_augury.cli import main
 
-    calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run_repl", fake_run):
+    calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink):
         result = main(["--config", "fake.yaml"])
 
     assert result == 0
     assert len(calls) == 1
-    assert calls[0]["allow_fake"] is False
+    assert calls[0]["demo"] is False
 
 
 VALID_MODEL_CONFIG = {
@@ -176,41 +170,34 @@ VALID_MODEL_CONFIG = {
 
 
 def test_wizard_flow_quiet_flag_passed(tmp_path):
-    """--quiet in wizard flow must reach _run_repl(quiet=True) (T2/T8).
-
-    Uses a *valid* saved model config (non-empty agents) so the reuse
-    branch is exercised with a config that would actually load — the old
-    ``{"agents": []}`` mock masked the real ConfigError edge (T8).
-    """
+    """--quiet in wizard flow must reach _run_ink_surface(quiet=True)."""
     from agent_augury.cli import _run_wizard_flow
 
     out_path = tmp_path / "wizard_out.yaml"
-    calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run_repl", fake_run), \
+    calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
-         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
-         patch("agent_augury.cli._prompt_multiline", return_value="test task"):
+         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG):
         result = _run_wizard_flow(output_path=out_path, quiet=True)
 
     assert result == 0
     assert len(calls) == 1
     assert calls[0]["quiet"] is True
-    assert calls[0]["cfg_path"] == str(out_path)
-    assert calls[0]["initial_prompt"] == "test task"
+    assert calls[0]["config"] == str(out_path)
+    assert calls[0]["mode"] == "session"
 
 
 def test_wizard_flow_quiet_false_by_default(tmp_path):
-    """Wizard flow without --quiet must pass quiet=False to _run_repl (T2)."""
+    """Wizard flow without --quiet must pass quiet=False to Ink."""
     from agent_augury.cli import _run_wizard_flow
 
     out_path = tmp_path / "wizard_out.yaml"
-    calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run_repl", fake_run), \
+    calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
-         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
-         patch("agent_augury.cli._prompt_multiline", return_value="test task"):
+         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG):
         result = _run_wizard_flow(output_path=out_path)
 
     assert result == 0
@@ -238,8 +225,8 @@ def test_wizard_flow_stops_when_api_key_env_missing(tmp_path, monkeypatch):
         ],
     }
     out_path = tmp_path / "wizard_out.yaml"
-    calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run_repl", fake_run), \
+    calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
          patch("agent_augury.cli.load_model_config", return_value=cfg), \
@@ -271,10 +258,9 @@ def test_wizard_flow_prompts_for_missing_api_key(tmp_path, monkeypatch):
         ],
     }
     out_path = tmp_path / "wizard_out.yaml"
-    calls, fake_run = _make_run_recorder()
-    with patch("agent_augury.cli._run_repl", fake_run), \
+    calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink), \
          patch("agent_augury.cli.check_tty", return_value=True), \
-         patch("agent_augury.cli._want_fullscreen_tui", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
          patch("agent_augury.cli.load_model_config", return_value=cfg), \
          patch("getpass.getpass", return_value="sk-or-test-key"):

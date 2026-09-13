@@ -52,8 +52,8 @@ def test_dispatch_human_send_when_no_pending():
     gw = SessionGateway()
     sent: list[tuple] = []
 
-    def send_fn(thread_id: str, content: str, *, mentions=None):
-        sent.append((thread_id, content, mentions))
+    def send_fn(thread_id: str, content: str, *, mentions=None, source=None):
+        sent.append((thread_id, content, mentions, source))
         return "ok"
 
     bridge = SessionBridge(gateway=gw, send_fn=send_fn)
@@ -78,7 +78,14 @@ def test_dispatch_human_send_when_no_pending():
         channel_id=42,
     )
     assert result["ok"] is True
-    assert sent == [("thr-1", "go ahead", ["agent-1"])]
+    assert len(sent) == 1
+    assert sent[0][0] == "thr-1"
+    assert sent[0][1] == "go ahead"
+    assert sent[0][2] == ["agent-1"]
+    assert sent[0][3] is not None
+    assert sent[0][3]["surface"] == "discord"
+    assert sent[0][3]["user"] == "u9"
+    assert sent[0][3]["channel"] == "42"
 
 
 def test_dispatch_human_answer_when_pending():
@@ -86,8 +93,8 @@ def test_dispatch_human_answer_when_pending():
     sent: list[tuple] = []
     bridge = SessionBridge(
         gateway=gw,
-        send_fn=lambda tid, content, *, mentions=None: sent.append(
-            (tid, content, mentions)
+        send_fn=lambda tid, content, *, mentions=None, source=None: sent.append(
+            (tid, content, mentions, source)
         )
         or "ok",
     )
@@ -108,7 +115,8 @@ def test_dispatch_human_answer_when_pending():
         gw, bridge, "2", agent_id="agent-1", user_id="u", channel_id=1
     )
     assert result["ok"] is True
-    assert sent == [("t-ask", "B", ["agent-1"])]
+    assert len(sent) == 1
+    assert sent[0][:3] == ("t-ask", "B", ["agent-1"])
     assert bridge.pending is None
 
 

@@ -18,10 +18,20 @@ from .types import make_event
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .secrets import load_gateway_secrets
+
+    load_gateway_secrets()
     _ = argv
     gateway = SessionGateway()
 
-    def send_fn(thread_id: str, content: str, *, mentions: list[str] | None = None) -> str:
+    def send_fn(
+        thread_id: str,
+        content: str,
+        *,
+        mentions: list[str] | None = None,
+        source: dict | None = None,
+    ) -> str:
+        _ = source
         who = ",".join(mentions) if mentions else "*"
         gateway.publish(
             make_event("log", text=f"human->{thread_id} [{who}]: {content}")
@@ -39,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
             "session.started",
             surface="ink",
             note="augury gateway hello (M3 HITL)",
+            agents=["demo-agent"],
         )
     )
     gateway.publish(

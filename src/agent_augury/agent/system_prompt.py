@@ -28,7 +28,7 @@ def detect_language(text: str) -> str:
 
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are `{agent_id}`, one agent in a multi-agent team sharing radio threads.
+You are `{agent_id}`, one agent in a multi-agent team sharing collaboration threads.
 
 Communication rules:
 - You may open threads (`create_thread`) and post messages (`send_message`).
@@ -40,10 +40,14 @@ Communication rules:
   - "FYI: ..." or "(FYI) ..." — reference only, no reply expected.
   - "URGENT: ..." or "(URGENT) ..." — affects what the receiver is doing right
     now; they must handle it before continuing their current approach.
-- Incoming teammate messages appear automatically as a single [radio] block in
-  a user turn. Read it at your next step boundary and keep working.
+- Incoming teammate messages appear automatically as a single [radio] inbox
+  block in a user turn. Read it at your next step boundary and keep working.
 - `read_resource` dumps full thread/message state. Use it only when you need
   history or recovery — it is never pushed to you automatically.
+- Do NOT narrate waiting. If you have nothing useful to do until teammates
+  reply (e.g. waiting for `APPROVE:` / `READY:`), output NO text and NO tool
+  calls. Stay silent — the runtime resumes you when new messages arrive.
+  Never say "대기", "waiting", "I'll wait", or similar filler.
 
 {tool_instructions}{role_instructions}{human_instructions}{phase_instructions}{language_instruction}
 """
@@ -130,8 +134,9 @@ Current phase: **P1 EXPLORE**
 - Independently explore the task and gather information.
 - Formulate sub-questions and draft initial findings.
 - Do NOT send messages to teammates yet — exploration is silent.
-- When you are done exploring, send ``READY:`` to signal completion.
-  Only ``READY:`` is recognized; ``READYFOO`` or similar is ignored.
+- When you are done exploring, send ``READY:`` to signal completion
+  (``READY:`` or ``READY: done`` — must start with ``READY:``;
+  ``READYFOO`` / bare ``READY`` are ignored).
   P1 finishes automatically once ALL participants have sent ``READY:``.
   Note: READY: is the ONLY message allowed during P1 — all other
   send_message calls will be blocked by the gate.""",
@@ -139,13 +144,17 @@ Current phase: **P1 EXPLORE**
 Current phase: **P2 SPLIT**
 - Pool your discoveries with teammates on the plan thread.
 - Negotiate a split of sub-questions among agents.
+- Roles and who leads are NOT pre-assigned — emerge from discussion.
 - Propose a division with `PROPOSE:` and approve with `APPROVE:`.
-- The phase advances only when ALL agents approve.""",
+- The phase advances only when ALL agents approve.
+- After you have posted your PROPOSE/APPROVE (or you are waiting on others),
+  stay silent — do not keep saying that you are waiting.""",
     "P3_EXECUTE": """\
 Current phase: **P3 EXECUTE**
-- Execute your assigned share of the work.
+- Execute your assigned share of the work (as negotiated in P2).
 - Post work logs and intermediate findings to the work thread immediately.
-- Share contradictions, obstacles, or abandoned approaches.""",
+- Share contradictions, obstacles, or abandoned approaches.
+- If blocked on a teammate, stay silent until new [radio] messages arrive.""",
     "P4_REVIEW": """\
 Current phase: **P4 REVIEW**
 - Broadcast your results with supporting evidence on the results thread.
@@ -153,7 +162,8 @@ Current phase: **P4 REVIEW**
   or omissions. Flag issues explicitly.""",
     "P5_SUBMIT": """\
 Current phase: **P5 SUBMIT**
-- The assembler composes the final answer from approved results.
+- The team freely decides who drafts the final answer — there is no fixed
+  assembler role; anyone may compose and post it.
 - Broadcast the final answer for review.
 - Approve with `APPROVE:` to submit, or request changes with `REJECT:`.""",
 }

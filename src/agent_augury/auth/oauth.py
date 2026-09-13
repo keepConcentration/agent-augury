@@ -13,6 +13,7 @@ import base64
 import hashlib
 import logging
 import secrets
+import sys
 import time
 import webbrowser
 from collections.abc import Callable
@@ -190,8 +191,17 @@ class DeviceCodeFlow:
         if on_user_code:
             on_user_code(device.user_code, device.verification_uri)
         else:
-            print(f"\nTo authenticate, enter code: {device.user_code}")
-            print(f"Verification URL: {device.verification_uri}")
+            # stderr: stdout may be JSONL Wire (Ink session_stdio child).
+            print(
+                f"\nTo authenticate, enter code: {device.user_code}",
+                file=sys.stderr,
+                flush=True,
+            )
+            print(
+                f"Verification URL: {device.verification_uri}",
+                file=sys.stderr,
+                flush=True,
+            )
         if open_browser:
             try:
                 webbrowser.open(device.verification_uri_complete)
@@ -273,7 +283,7 @@ class PKCEFlow:
         if on_auth_url:
             on_auth_url(auth_url)
         else:
-            print(f"\nAuthorize at: {auth_url}")
+            print(f"\nAuthorize at: {auth_url}", file=sys.stderr, flush=True)
         if open_browser:
             try:
                 webbrowser.open(auth_url)

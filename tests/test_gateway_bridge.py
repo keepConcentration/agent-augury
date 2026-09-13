@@ -52,8 +52,8 @@ def test_bridge_publishes_question_and_answers():
     )
     sent: list[tuple] = []
 
-    def send_fn(thread_id: str, content: str, *, mentions=None):
-        sent.append((thread_id, content, mentions))
+    def send_fn(thread_id: str, content: str, *, mentions=None, source=None):
+        sent.append((thread_id, content, mentions, source))
         return "ok"
 
     bridge = SessionBridge(gateway=gw, send_fn=send_fn)
@@ -73,7 +73,7 @@ def test_bridge_publishes_question_and_answers():
         surface="ink",
     )
     assert result["ok"] is True
-    assert sent == [("thr", "B", ["agent-1"])]
+    assert sent == [("thr", "B", ["agent-1"], None)]
     assert bridge.pending is None
 
 
@@ -128,7 +128,48 @@ def test_bridge_quit_publishes_ended():
     result = gw.dispatch(make_command("session.quit", id="9"), surface="ink")
     assert result["ok"] is True
     assert quit_hit["v"] is True
-    assert any(e.get("type") == "session.ended" for e in inbox)
+    ended = [e for e in inbox if e.get("type") == "session.ended"]
+    assert len(ended) == 1
+    assert ended[0].get("reason") == "quit"
+
+
+def test_recent_thread_updates_only_on_thread_created():
+    """D3: message events with thread_id must not overwrite _recent_thread."""
+    gw = SessionGateway()
+    bridge = SessionBridge(gateway=gw, send_fn=lambda *_a, **_k: "ok")
+    bridge.install()
+
+    bridge.publish_core_event(
+        {
+            "type": "create_thread",
+            "thread_id": "thr-new",
+            "name": "plan",
+            "participants": ["a"],
+        }
+    )
+    assert bridge._recent_thread == "thr-new"
+
+    # A later message on another thread must not change recent (operator-precedence bug).
+    bridge.publish_core_event(
+        {
+            "type": "send_message",
+            "thread_id": "thr-other",
+            "author": "a",
+            "content": "hi",
+            "message_id": "m1",
+        }
+    )
+    assert bridge._recent_thread == "thr-new"
+
+    bridge.publish_core_event(
+        {
+            "type": "create_thread",
+            "thread_id": "thr-created",
+            "name": "work",
+            "participants": ["a"],
+        }
+    )
+    assert bridge._recent_thread == "thr-created"
 
 
 def test_human_send_requires_thread():

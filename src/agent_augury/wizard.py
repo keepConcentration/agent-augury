@@ -25,6 +25,8 @@ from .model_config import (
     save_model_config,
 )
 from .model_listing import ModelInfo, format_aligned_labels
+from .protocol.defaults import DEFAULT_PROTOCOL
+from .server import RESERVED_NAMES
 
 # -- constants ---------------------------------------------------------------
 
@@ -387,7 +389,24 @@ def _build_agent(
     """
     print(f"\n--- Agent {agent_index + 1} ---")
 
-    agent_id = _input("Agent ID", f"agent-{agent_index + 1}")
+    taken = {str(a.get("id", "")).lower() for a in (existing_agents or [])}
+    while True:
+        agent_id = _input("Agent ID", f"agent-{agent_index + 1}")
+        key = agent_id.lower()
+        if not agent_id:
+            print("  (agent id is required)")
+            continue
+        if key in RESERVED_NAMES:
+            print(
+                f"  ('{agent_id}' is reserved for the human participant — "
+                "choose another id)"
+            )
+            continue
+        if key in taken:
+            print(f"  (agent id '{agent_id}' is already used — choose another)")
+            continue
+        break
+
     backend_type = _select_backend()
 
     existing = (
@@ -530,5 +549,6 @@ def run_wizard(
     return {
         "max_steps": max_steps,
         "human": {"id": "human"},
+        "protocol": dict(DEFAULT_PROTOCOL),
         "agents": agents,
     }

@@ -348,6 +348,7 @@ class MessageServer:
         author: str,
         content: str,
         mentions: list[str] | None = None,
+        source: dict[str, Any] | None = None,
     ) -> str:
         """Inject a message from a human participant into the server.
 
@@ -356,6 +357,10 @@ class MessageServer:
         as ``send_message`` (empty mentions → all participants; non-empty →
         participants ∩ mentions). Only a registered human id may author here,
         so a user message can never be mistaken for an agent message (§3.2).
+
+        Optional ``source`` (e.g. Discord surface/user/channel) is kept on the
+        in-memory message and broadcast event for audit; it is not required
+        for delivery.
         """
         await self._ensure_db()
         thread = self._threads.get(thread_id)
@@ -370,7 +375,7 @@ class MessageServer:
         else:
             targets = list(participants)
 
-        message = {
+        message: dict[str, Any] = {
             "message_id": f"msg-{next(self._message_ids)}",
             "thread_id": thread_id,
             "author": author,
@@ -380,6 +385,8 @@ class MessageServer:
             "created_at": int(time.time()),
             "seq": len(self._messages),
         }
+        if source:
+            message["source"] = dict(source)
         self._messages.append(message)
         self._message_index[message["message_id"]] = message
 
@@ -392,7 +399,7 @@ class MessageServer:
         for subscriber in self._subscribers:
             subscriber(message)
 
-        self._emit_event({
+        event: dict[str, Any] = {
             "type": "send_message",
             "message_id": message["message_id"],
             "thread_id": thread_id,
@@ -401,7 +408,10 @@ class MessageServer:
             "mentions": list(mentions or []),
             "delivered_to": targets,
             "timestamp": int(time.time()),
-        })
+        }
+        if source:
+            event["source"] = dict(source)
+        self._emit_event(event)
         return message["message_id"]
 
     # -- subscriptions (gate / mirrors) --------------------------------------

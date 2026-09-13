@@ -251,6 +251,38 @@ async def test_ready_allowed_when_gate_thread_not_bound():
     assert msgs_in_thread[0]["content"] == "READY:"
 
 
+async def test_ready_with_suffix_allowed_when_gate_thread_not_bound():
+    """``READY: done`` is allowed when gate_thread_id is None (P1)."""
+    server = MessageServer()
+    server.register_agent("agent-1")
+    server.register_agent("agent-2")
+
+    tid = await server.create_thread("explore", participants=["agent-1", "agent-2"])
+
+    agent = make_agent(
+        server,
+        "agent-1",
+        [
+            Completion(
+                tool_calls=[
+                    ToolCall(id="c1", name="send_message", arguments={
+                        "thread": tid, "content": "READY: done", "mentions": []
+                    }),
+                ]
+            ),
+        ],
+    )
+    agent.gate_open = False
+    agent.gate_thread_id = None
+
+    await agent.step()
+
+    snap = server.snapshot()
+    msgs_in_thread = [m for m in snap["messages"] if m["thread_id"] == tid]
+    assert len(msgs_in_thread) == 1
+    assert msgs_in_thread[0]["content"] == "READY: done"
+
+
 async def test_gate_binding_messages_allowed_after_gate_bound():
     """PROPOSE/APPROVE are allowed once gate_thread_id is explicitly bound."""
     server = MessageServer()
@@ -423,22 +455,30 @@ class TestReadyBasedP1Finish:
         # All READY: received → protocol auto-advances to P2
         assert p.phase == P2_SPLIT
 
-    def test_ready_requires_exact_prefix(self):
-        """Only exact ``READY:`` is recognized; ``READYFOO`` is ignored."""
+    def test_ready_rejects_lookalikes_accepts_suffix(self):
+        """READYFOO ignored; ``READY: done`` / case variants count."""
+        import asyncio
+
+        asyncio.run(self._ready_prefix_scenario())
+
+    async def _ready_prefix_scenario(self):
         server = MessageServer()
         for a in ("a1", "a2"):
             server.register_agent(a)
         p = CollaborationProtocol(server, participants=["a1", "a2"])
         p.start()
+        tid = await server.create_thread("explore", participants=["a1", "a2"])
 
-        # READYFOO should NOT count
-        p._ready_states.add("a1")
-        assert not p.all_ready  # a2 still missing
+        await server.send_message(tid, author="a1", content="READYFOO", mentions=[])
+        await server.send_message(tid, author="a1", content="READY", mentions=[])
+        assert not p.has_ready("a1")
 
-        # Manually simulate: only "READY:" should be tracked
-        # (The protocol's _on_message checks content == "READY:")
-        # So READYFOO would not be added to _ready_states
-        assert "a2" not in p._ready_states
+        await server.send_message(tid, author="a1", content="READY: done", mentions=[])
+        assert p.has_ready("a1")
+        assert p.phase == P1_EXPLORE
+
+        await server.send_message(tid, author="a2", content="  ready:  ", mentions=[])
+        assert p.phase == P2_SPLIT
 
     def test_ready_only_counts_participants(self):
         """READY from non-participants is ignored."""

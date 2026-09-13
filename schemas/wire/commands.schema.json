@@ -70,6 +70,11 @@
         "type": { "const": "human.answer" },
         "content": { "type": "string" },
         "thread_id": { "type": ["string", "null"] },
+        "question_id": { "type": "string" },
+        "mentions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "source": { "type": "object" }
       },
       "additionalProperties": true
@@ -81,6 +86,7 @@
         "dir": { "const": "cmd" },
         "id": { "type": "string" },
         "type": { "const": "human.skip" },
+        "question_id": { "type": "string" },
         "source": { "type": "object" }
       },
       "additionalProperties": true

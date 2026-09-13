@@ -15,9 +15,12 @@ v0.7 (AGENT_TOOLS_EXPANSION_DESIGN.md v4.1):
 - web_search is injected as a LocalTool (track B) backed by
   ``build_search_provider``; provider clients are aclosed at session end.
 
-v1.1 (TUI_UX_FIX_DESIGN.md ①): ``on_user_code`` is forwarded to backends so
-OAuth device-code notices can be routed to the TUI log instead of printing
-over the alternate screen.
+v1.1: ``on_user_code`` is forwarded to backends so OAuth device-code notices
+can be routed to stderr / Surface logs instead of printing over the UI.
+
+Gate-wait park (PROTOCOL_GATE_WAIT_PARK_DESIGN.md): under an active P1–P5
+gate wait, idle agents (no tools, empty inbox) park instead of exiting or
+re-calling the model; they wake on inbox or phase/gate change.
 """
 
 from __future__ import annotations
@@ -62,6 +65,7 @@ from .protocol.phases import (
     P3_EXECUTE,
     P4_REVIEW,
     P5_SUBMIT,
+    REJECTED,
     Phase,
 )
 from .server import MessageServer
@@ -162,6 +166,8 @@ class Session:
         # Ctrl+C interrupt: cooperative stop + cancel in-flight agent tasks
         self._interrupt = asyncio.Event()
         self._agent_tasks: list[asyncio.Task[None]] = []
+        # P1: one READY reminder per agent before gate-wait park
+        self._ready_nudged: set[str] = set()
 
     # -- assembly ------------------------------------------------------------
 
@@ -283,6 +289,10 @@ class Session:
             session.protocol.on_gate_open(
                 lambda phase: _on_protocol_gate_open(session, phase)
             )
+            # B1: expose phase transitions on the Wire bus for surfaces.
+            session.protocol.on_phase_change(
+                lambda _frm, to: _publish_session_phase(session, to)
+            )
         session.mirror = mirror_from_config(cfg.get("mirror"))
         if session.mirror is not None:
             # M4: Gateway observe surface (replaces server.subscribe(mirror.on_message))
@@ -353,6 +363,7 @@ class Session:
         content: str,
         *,
         mentions: list[str] | None = None,
+        source: dict[str, Any] | None = None,
     ) -> str:
         """Inject a message from the human participant into the session.
 
@@ -364,7 +375,11 @@ class Session:
         if not self.has_human:
             raise RuntimeError("human-in-the-loop is not enabled (no 'human:' section in config)")
         return await self.server.human_send(
-            thread_id, author="human", content=content, mentions=mentions
+            thread_id,
+            author="human",
+            content=content,
+            mentions=mentions,
+            source=source,
         )
 
     def request_interrupt(self) -> None:
@@ -435,18 +450,18 @@ class Session:
 
         # Global step counter. asyncio is single-threaded, so += is atomic;
         # the cap is checked at the top of each agent loop iteration.
-        total_steps = 0
+        # Use a one-element list so park wakeup closures see live updates (B023).
+        total_steps = [0]
 
         async def run_agent(agent: AgentLoop) -> None:
             """Run one agent's step loop as long as it makes progress and the
             global budget allows."""
-            nonlocal total_steps
             while True:
                 if self._interrupt.is_set():
                     break
 
                 # Global budget gate — checked before every step.
-                if self.max_steps and total_steps >= self.max_steps:
+                if self.max_steps and total_steps[0] >= self.max_steps:
                     break
 
                 # Inject current gate state before each step.
@@ -474,10 +489,15 @@ class Session:
                         f"  [{agent.agent_id}] step failed: {exc}",
                         flush=True,
                     )
+                    _publish_session_error(
+                        self,
+                        f"[{agent.agent_id}] step failed: {exc}",
+                        agent_id=agent.agent_id,
+                    )
                     break
 
                 # Increment step counter only after a successful step.
-                total_steps += 1
+                total_steps[0] += 1
 
                 # Step summary queued for display.
                 await self._output_queue.put({
@@ -487,17 +507,32 @@ class Session:
                     "timestamp": __import__("time").time(),
                 })
 
-                # An agent is finished only when it produces no output AND
-                # has no pending messages to process. If it sent messages,
-                # it should stay alive to read responses in future steps.
                 has_pending = self.server.inbox_size(agent.agent_id) > 0
-                if not result.tool_calls and result.text is None and not has_pending:
+
+                if result.tool_calls:
+                    await asyncio.sleep(0)
+                    continue
+
+                if has_pending:
+                    await asyncio.sleep(0)
+                    continue
+
+                # Gate-wait park: stay silent until inbox / phase / gate opens.
+                if self._is_gate_waiting():
+                    # P1: remind once if this agent forgot READY: before parking.
+                    if self._maybe_nudge_ready(agent):
+                        await asyncio.sleep(0)
+                        continue
+                    woke = await self._wait_for_gate_wakeup(
+                        agent, steps_done=lambda: total_steps[0]
+                    )
+                    if woke:
+                        continue
                     break
 
-                # Yield control so other agents can make progress.
-                # Without this, a single agent whose backend completes
-                # synchronously (e.g. cached/fake backends) could monopolize
-                # the event loop and starve the others.
+                # Legacy finish (no protocol gate wait).
+                if result.text is None:
+                    break
                 await asyncio.sleep(0)
 
         # Launch all agents as parallel asyncio tasks.
@@ -508,7 +543,90 @@ class Session:
         finally:
             self._agent_tasks = []
 
-        return total_steps
+        return total_steps[0]
+
+    def _is_gate_waiting(self) -> bool:
+        """True while protocol is blocked on READY (P1) or a closed phase gate."""
+        protocol = self.protocol
+        if protocol is None:
+            return False
+        phase = protocol.phase
+        if phase in (COMPLETED, REJECTED):
+            return False
+        if phase == P1_EXPLORE:
+            return True
+        gate = protocol.gate_for(phase)
+        if gate is None:
+            return False
+        return not gate.is_open
+
+    def _maybe_nudge_ready(self, agent: AgentLoop) -> bool:
+        """Inject a one-shot READY reminder for P1 agents that forgot to signal.
+
+        Returns True if a nudge was injected (caller should step again).
+        """
+        protocol = self.protocol
+        if protocol is None or protocol.phase != P1_EXPLORE:
+            return False
+        if protocol.has_ready(agent.agent_id):
+            return False
+        if agent.agent_id in self._ready_nudged:
+            return False
+        self._ready_nudged.add(agent.agent_id)
+        agent.conversation.append(
+            {
+                "role": "user",
+                "content": (
+                    "[protocol] You have not sent READY: yet. "
+                    "Call send_message with content starting with READY: "
+                    "(e.g. READY: or READY: done) to finish P1 exploration."
+                ),
+            }
+        )
+        return True
+
+    async def _wait_for_gate_wakeup(
+        self,
+        agent: AgentLoop,
+        *,
+        steps_done: Callable[[], int] | None = None,
+    ) -> bool:
+        """Park until inbox, phase/gate change, interrupt, or step budget.
+
+        Returns True to step again; False to exit the agent loop.
+        Does **not** end the turn merely because every agent is idle.
+        """
+        protocol = self.protocol
+        phase0 = protocol.phase if protocol is not None else None
+        gate0_open = False
+        if protocol is not None:
+            gate = protocol.gate_for(protocol.phase)
+            gate0_open = bool(gate and gate.is_open)
+
+        while True:
+            if self._interrupt.is_set() or self._closed:
+                return False
+            if (
+                self.max_steps
+                and steps_done is not None
+                and steps_done() >= self.max_steps
+            ):
+                return False
+            if self.server.inbox_size(agent.agent_id) > 0:
+                return True
+            if protocol is not None:
+                if protocol.phase != phase0:
+                    return True
+                gate = protocol.gate_for(protocol.phase)
+                now_open = bool(gate and gate.is_open)
+                if now_open and not gate0_open:
+                    return True
+                if not self._is_gate_waiting():
+                    return True
+            try:
+                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                return False
 
     async def close(self) -> None:
         """Release resources: stop bots, close mirror, close backends.
@@ -689,6 +807,30 @@ def _on_protocol_gate_open(session: Session, phase: Phase) -> None:
     next_phase = transitions.get(phase)
     if next_phase and session.protocol:
         session.protocol.advance(next_phase)
+
+
+def _publish_session_phase(session: Session, phase: Phase) -> None:
+    """B1: emit Wire ``session.phase`` when the collaboration protocol advances."""
+    try:
+        session.bridge.publish_core_event({"type": "session.phase", "phase": phase})
+    except Exception:  # noqa: BLE001, S110 — never break Core for Wire
+        pass
+
+
+def _publish_session_error(
+    session: Session,
+    message: str,
+    *,
+    agent_id: str | None = None,
+) -> None:
+    """B2: emit Wire ``error`` for Core step / session failures."""
+    event: dict[str, Any] = {"type": "error", "message": message}
+    if agent_id:
+        event["agent_id"] = agent_id
+    try:
+        session.bridge.publish_core_event(event)
+    except Exception:  # noqa: BLE001, S110 — never break Core for Wire
+        pass
 
 
 def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:

@@ -26,7 +26,12 @@ WriteFn = Callable[[str], None]
 
 def encode_line(message: WireMessage) -> str:
     """Serialize a wire message as one JSONL line (no trailing spaces)."""
-    return json.dumps(message, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(
+        message,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
 
 
 def decode_line(line: str) -> WireMessage:

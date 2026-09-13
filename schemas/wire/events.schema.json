@@ -58,6 +58,7 @@
         "agent_id": { "type": "string" },
         "thread_id": { "type": "string" },
         "question": { "type": "string" },
+        "question_id": { "type": "string" },
         "options": {
           "type": "array",
           "items": { "type": "string" }
@@ -103,7 +104,8 @@
       "properties": {
         "dir": { "const": "event" },
         "type": { "const": "session.ended" },
-        "steps": { "type": "integer" }
+        "steps": { "type": "integer" },
+        "reason": { "type": "string" }
       },
       "additionalProperties": true
     },

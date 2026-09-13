@@ -32,9 +32,11 @@ def translate_core_event(event: dict[str, Any]) -> WireEvent | None:
             if text is not None:
                 payload["text"] = text
             if tools is not None:
-                payload["tool_calls"] = list(tools) if tools else []
+                payload["tool_calls"] = _serialize_tool_calls(tools)
             if not payload and isinstance(result, dict):
                 payload = dict(result)
+                if "tool_calls" in payload:
+                    payload["tool_calls"] = _serialize_tool_calls(payload["tool_calls"])
         return make_event(
             "agent.step",
             agent_id=str(event.get("agent_id", "")),
@@ -50,15 +52,18 @@ def translate_core_event(event: dict[str, Any]) -> WireEvent | None:
         )
     if etype in ("send_message", "message"):
         author = event.get("author") or event.get("agent_id")
-        return make_event(
-            "message",
-            thread_id=event.get("thread_id"),
-            agent_id=author,
-            author=author,
-            content=event.get("content"),
-            message_id=event.get("message_id"),
-            mentions=list(event.get("mentions") or []),
-        )
+        fields: dict[str, Any] = {
+            "thread_id": event.get("thread_id"),
+            "agent_id": author,
+            "author": author,
+            "content": event.get("content"),
+            "message_id": event.get("message_id"),
+            "mentions": list(event.get("mentions") or []),
+        }
+        source = event.get("source")
+        if isinstance(source, dict) and source:
+            fields["source"] = dict(source)
+        return make_event("message", **fields)
     if etype == "read_resource":
         return make_event(
             "read_resource",
@@ -88,3 +93,20 @@ def _ask_user_to_question(event: dict[str, Any]) -> WireEvent:
         question=str(args.get("question") or event.get("question") or ""),
         options=list(args.get("options") or event.get("options") or []),
     )
+
+
+def _serialize_tool_calls(tools: Any) -> list[dict[str, Any]]:
+    """Convert ToolCall objects / mappings into JSON-safe dicts."""
+    out: list[dict[str, Any]] = []
+    for call in tools or []:
+        if isinstance(call, dict):
+            out.append(dict(call))
+            continue
+        out.append(
+            {
+                "id": getattr(call, "id", None),
+                "name": getattr(call, "name", None),
+                "arguments": getattr(call, "arguments", None),
+            }
+        )
+    return out

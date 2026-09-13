@@ -30,6 +30,7 @@ class SessionLike(Protocol):
         content: str,
         *,
         mentions: list[str] | None = None,
+        source: dict[str, Any] | None = None,
     ) -> str: ...
 
 
@@ -104,7 +105,7 @@ class SessionBridge:
             return None
         if wire["type"] == "human.question":
             self._track_question(wire)
-        elif wire["type"] == "thread.created" and wire.get("thread_id") or wire.get("thread_id"):
+        elif wire["type"] == "thread.created" and wire.get("thread_id"):
             self._recent_thread = str(wire["thread_id"])
         self.gateway.publish(wire)
         return wire
@@ -181,8 +182,14 @@ class SessionBridge:
         if not thread_id:
             return {"queued": False, "error": "no thread_id"}
 
+        source = cmd.get("source")
+        if source is not None and not isinstance(source, dict):
+            source = None
+
         self._recent_thread = str(thread_id)
-        self._dispatch_send(str(thread_id), content, mentions or None)
+        self._dispatch_send(
+            str(thread_id), content, mentions or None, source=source
+        )
         return {"queued": True, "thread_id": thread_id}
 
     def _dispatch_send(
@@ -190,15 +197,21 @@ class SessionBridge:
         thread_id: str,
         content: str,
         mentions: list[str] | None,
+        *,
+        source: dict[str, Any] | None = None,
     ) -> None:
         if self.send_fn is not None:
-            result = self.send_fn(thread_id, content, mentions=mentions)
+            result = self.send_fn(
+                thread_id, content, mentions=mentions, source=source
+            )
             self._maybe_schedule(result)
             return
         if self.session is None:
             raise RuntimeError("no session/send_fn installed on SessionBridge")
         self._maybe_schedule(
-            self.session.human_send(thread_id, content, mentions=mentions)
+            self.session.human_send(
+                thread_id, content, mentions=mentions, source=source
+            )
         )
 
     def _maybe_schedule(self, result: Any) -> None:

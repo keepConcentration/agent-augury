@@ -42,6 +42,9 @@ def attach_discord_mirror(
         try:
             if event.get("type") != "message":
                 return
+            # D7: ask_user also emits human.question — skip the radio duplicate.
+            if str(event.get("content") or "").startswith("[ask-user]"):
+                return
             mirror.enqueue(_wire_to_mirror_message(event))
         except Exception as exc:  # noqa: BLE001 — observation must not kill sessions
             mirror.errors.append(exc)
@@ -108,11 +111,15 @@ def format_wire_for_bot(event: WireEvent) -> str | None:
             }
         )
     if etype == "message":
+        content = event.get("content") or ""
+        # D7: structured human.question is the channel-facing form.
+        if str(content).startswith("[ask-user]"):
+            return None
         return _format_event(
             {
                 "type": "send_message",
                 "author": event.get("author") or event.get("agent_id") or "?",
-                "content": event.get("content") or "",
+                "content": content,
             }
         )
     if etype == "tool":

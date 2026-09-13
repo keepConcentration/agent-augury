@@ -12,6 +12,9 @@ from typing import Any
 
 import httpx
 
+# Discord webhook content limit is 2000; leave headroom for formatting.
+_MAX_CONTENT = 1800
+
 
 class DiscordWebhookMirror:
     """Enqueue-on-message, flush-to-webhook. Observation must never raise."""
@@ -56,7 +59,15 @@ class DiscordWebhookMirror:
 
     @staticmethod
     def format_line(message: dict[str, Any]) -> str:
-        return f"`[{message['thread_id']}]` **{message['author']}**: {message['content']}"
+        content = str(message.get("content", ""))
+        prefix = f"`[{message['thread_id']}]` **{message['author']}**: "
+        budget = max(32, _MAX_CONTENT - len(prefix) - 1)
+        if len(content) > budget:
+            content = content[:budget] + "…"
+        line = f"{prefix}{content}"
+        if len(line) > _MAX_CONTENT:
+            line = line[: _MAX_CONTENT - 1] + "…"
+        return line
 
     @classmethod
     def from_env(cls, url_env: str) -> DiscordWebhookMirror | None:

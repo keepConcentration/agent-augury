@@ -84,6 +84,17 @@ async def test_format_line_contains_thread_author_content():
     assert "agent-2" in line and "hello" in line
 
 
+async def test_format_line_truncates_long_content():
+    from agent_augury.channel.discord_mirror import _MAX_CONTENT
+
+    long = "x" * (_MAX_CONTENT + 500)
+    line = DiscordWebhookMirror.format_line(
+        {"thread_id": "t1", "author": "a1", "content": long}
+    )
+    assert len(line) <= _MAX_CONTENT
+    assert line.endswith("…")
+
+
 async def test_flush_success_returns_sent_count():
     """When a real URL is provided and the webhook responds 204, flush succeeds."""
     posts = []

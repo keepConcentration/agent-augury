@@ -48,6 +48,8 @@ def attach_slack_mirror(
 
 def _format_slack_event(event: WireEvent) -> str | None:
     if event.get("type") == "message":
+        if str(event.get("content") or "").startswith("[ask-user]"):
+            return None
         return SlackWebhookMirror.format_message_line(event)
     # Reuse Discord wire→text mapping for tool/step/thread (plain text ok for Slack).
     return format_wire_for_bot(event)

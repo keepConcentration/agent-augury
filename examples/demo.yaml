@@ -2,6 +2,7 @@
 #
 # Fake backends only — runs fully offline:
 #   agent-augury --demo --config examples/demo.yaml
+#   agent-augury --ink --demo --config examples/demo.yaml   # M7 Ink Surface
 #
 # Flow: agent-2 opens a thread and pushes an URGENT correction; agent-1 is
 # mid-work, absorbs it passively as a [radio] turn at the next step boundary,

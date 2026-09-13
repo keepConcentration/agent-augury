@@ -1,18 +1,19 @@
 [project]
 name = "agent-augury"
 version = "0.6.5"
-description = "Model-agnostic passive awareness multi-agent runtime — concept inherited from AgentRadio (Coral-Protocol), re-implemented standalone."
+description = "Local multi-agent collaboration runtime — shared threads, roles, HITL, model-agnostic backends."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "agent-augury contributors" }]
-keywords = ["multi-agent", "passive-awareness", "llm", "asyncio"]
+keywords = ["multi-agent", "llm", "collaboration", "asyncio", "hitl"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
     "Topic :: Communications :: Chat",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
     "httpx>=0.27",
@@ -21,7 +22,6 @@ dependencies = [
     "py-cord>=2.6",
     "python-dotenv>=1.0",
     "rich>=13.0",
-    "prompt-toolkit>=3.0.53",
 ]
 
 [project.urls]

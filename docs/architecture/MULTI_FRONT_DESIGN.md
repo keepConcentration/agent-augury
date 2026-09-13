@@ -1,15 +1,15 @@
 # Multi-front architecture — Python Core + UI & Chat surfaces
 
-> **Status:** **M0–M6 landed** · v0.2.6 (primary=UI, chat=observe-only default)  
-> **Date:** 2026-09-11  
+> **Status:** **M0–M7 landed** · v0.2.7 (primary=UI, chat=observe-only default)  
+> **Date:** 2026-09-13  
 > **Goal:** Python **core 유지**. Surface = Ink/Desktop/Web **+** Discord/Slack/…  
 > **Not:** 전면 Node화(엔진 TS 재작성).  
 > **Related:** `USER_INTERVENTION_DESIGN.md`, `channel/discord_*`, `channel/slack_*`  
 > **Schemas:** `schemas/wire/` · **Code:** `src/agent_augury/gateway/`  
 > **Ink hello+HITL:** `fronts/ink/` (`agent-augury --ink-hello`)  
+> **Ink real session (M7):** `agent-augury --ink --demo --config examples/demo.yaml`  
 > **Discord:** observe (M4); inbound opt-in `bots[].inbound` (M5)  
-> **Slack:** Incoming Webhook observe `slack.url_env` (M6 spike)  
-> **Archived pt-TUI designs:** `docs/archive/tui/`
+> **Slack:** Incoming Webhook observe `slack.url_env` (M6 spike)
 
 ---
 
@@ -153,12 +153,23 @@ surfaces:
   ink: { enabled: true }          # primary — 입력 허용
   discord:
     enabled: true
-    mode: observe                 # 기본: observe | interact(opt-in)
-    agents: [agent-1]
+    mode: observe                 # 기본: observe | interact(opt-in inbound)
+    agents: [agent-1]             # optional: filter bots list
+    mirror:
+      type: discord_webhook
+      url_env: AUGURY_MIRROR_URL
+    bots:
+      - agent_id: agent-1
+        token_env: DISCORD_BOT_TOKEN
+        channel_id: 123
   slack:
-    enabled: false
+    enabled: true
     mode: observe
+    url_env: AUGURY_SLACK_WEBHOOK_URL
 ```
+
+`load_config`는 `surfaces:`를 legacy `mirror` / `bots` / `slack`로 정규화한다.
+기존 top-level 키만 쓰는 설정도 그대로 유효하다 (둘을 같은 패밀리에 섞으면 `ConfigError`).
 
 - Interactive UI는 보통 **전체 이벤트** + **human.* 커맨드 허용**
 - Chat 기본은 **outbound만** (요약/봇 채널). `mode: interact`일 때만 inbound
@@ -270,7 +281,7 @@ agent-augury/
       discord/            # bot + mirror (현 discord_bot/mirror)
       slack/              # 신규
       base.py             # ChannelAdapter protocol
-    # tui/                # legacy pt (과도기)
+    # (pt TUI + plain REPL removed — Interactive Surface is Ink only)
   fronts/
     ink/
     desktop/              # 나중
@@ -306,10 +317,10 @@ Slack은 Discord와 **동일 Protocol**, 다른 API 클라이언트.
 | **M4** | Discord adapter를 Gateway 구독으로 이전 (동작 동등) — **done** |
 | **M5** | Discord inbound (HITL) — **done** (`bots[].inbound: true` → `human.*`) |
 | **M6** | Slack observe 스파이크 — **done** (`slack.url_env` Incoming Webhook) |
-| **M7** | Desktop 또는 Web 스파이크 · 또는 CLI Ink 실세션 연결 |
-| **M7** | Desktop 또는 Web 스파이크 |
+| **M7** | CLI Ink 실세션 연결 — **done** (`--ink --config`, `gateway.session_stdio`) |
+| **M8** | Desktop 또는 Web 스파이크 |
 
-pt TUI는 M3까지 legacy 유지 가능.
+~~pt TUI / plain REPL~~ — **removed**; Interactive Surface is **Ink only**.
 
 ---
 
@@ -331,7 +342,9 @@ pt TUI는 M3까지 legacy 유지 가능.
 2. Interactive UI와 **동일 Wire/Gateway**; fan-out이 기본.  
 3. 두꺼운 BFF는 **Web만**; Chat은 Python Channel Adapter가 본진.  
 4. **Primary = Interactive UI(Ink 등). Chat 기본 = observe-only** (inbound는 opt-in).  
-5. ~~다음 착수: M0…M6~~ → **다음: M7** (Desktop/Web 스파이크) 또는 **CLI Ink 실세션** 연결.
+5. ~~다음 착수: M0…M6~~ → ~~M7 Ink 실세션~~ → **다음: M8** (Desktop/Web 스파이크)
+   또는 deferred (Slack inbound/Block Kit, chat-only CLI).
+   `surfaces:` YAML 통합은 `config.normalize_surfaces`로 landed.
    Slack은 observe-only Incoming Webhook 스파이크; Block Kit / inbound는 후속.
 
 ---
@@ -340,7 +353,7 @@ pt TUI는 M3까지 legacy 유지 가능.
 
 | # | 결정 | 내용 |
 |---|------|------|
-| D1 | **Primary surface = Interactive UI** | v1 기본: Ink(또는 pt legacy)만 입력·선택·interrupt·quit |
+| D1 | **Primary surface = Interactive UI** | v1 기본: Ink만 입력·선택·interrupt·quit |
 | D2 | **Chat = observe-only 기본** | Discord/Slack은 outbound 관찰(미러/봇 send)만. inbound HITL은 **명시 opt-in** |
 | D3 | 전면 Node화 아님 | Core Python 유지 |
 
@@ -365,4 +378,4 @@ pt TUI는 M3까지 legacy 유지 가능.
 1. Slack 우선순위: observe-only 스파이크 먼저 vs 나중?  
 2. Chat Adapter를 항상 in-proc로 둘지, 부하 시 worker 분리할지?  
 3. Desktop 스택 후보 (Electron / Tauri)? → 해당 Surface 착수 시 결정.  
-4. pt TUI 지원 기간? → Ink GA 후 1 메이저 동안 legacy 권장.
+4. ~~pt TUI / plain REPL?~~ → **removed** (Ink only).

@@ -1,24 +1,22 @@
-# agent-augury NOTICE (초안 — 배포 Phase 1에서 LICENSE와 함께 배포)
+# agent-augury NOTICE
 
-agent-augury is an independent re-implementation of the *passive awareness*
-multi-agent concept, inheriting ideas from the following upstream works.
-This project contains no copied source code from these projects; attribution
-is provided per their licenses and academic practice.
+agent-augury is an independent open-source multi-agent collaboration runtime.
+It contains no copied source code from the works below; attribution is provided
+for related ideas and academic practice.
 
-## AgentRadio (Coral-Protocol)
+## Related work — AgentRadio
 
 - Repository: https://github.com/Coral-Protocol/AgentRadio
 - License: Apache License 2.0
 - Paper: *AgentRadio: Passive Awareness for Long-Horizon Multi-Agent
   Collaboration* — arXiv:2607.28430
   https://arxiv.org/abs/2607.28430
-- Relationship: agent-augury re-implements the passive-awareness protocol
-  (threads / fire-and-forget messages / inbox push with step-boundary drain)
-  as a model-agnostic, channel-agnostic, runtime-agnostic pip package.
-  AgentRadio remains the research reference implementation.
+- Relationship: agent-augury independently implements non-blocking teammate
+  messaging (threads / fire-and-forget / inbox drain at step boundaries) as a
+  local, model-agnostic Python package. It is not affiliated with the
+  AgentRadio authors.
 
 ## This project
 
 - License: Apache License 2.0 (see LICENSE)
-- Origin: independent open-source project — not affiliated with
-  Nous Research, Coral AI Labs, or the AgentRadio authors.
+- Not affiliated with Nous Research or the AgentRadio authors.

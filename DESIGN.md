@@ -1,8 +1,13 @@
-# agent-augury — 독립 오픈소스 설계 문서
+# agent-augury — 설계 문서
 
-> 상태: v0.3 구현 완료 · 2026-08-27 · 프로젝트명 `agent-augury` (D1 확정)
-> 범위: "패시브 어웨어니스(Passive Awareness) 멀티에이전트" 개념을 담은, Hermes와 독립된 오픈소스 프로젝트
-> 이 문서는 Coral-Protocol [AgentRadio](https://github.com/Coral-Protocol/AgentRadio)의 **개념을 계승**하되 독립 재구현한다. 원본 레포명 `AgentRadio`는 상단의 링크·참고에서만 그대로 쓰고, **이 프로젝트 자기 이름은 `agent-augury`다.**
+> 상태: 로컬 멀티에이전트 협업 런타임 · 프로젝트명 `agent-augury`
+> 범위: 공유 스레드, non-blocking 동료 메시지, 역할, HITL, 선택적 P1~P5 프로토콜을 갖춘
+> model-agnostic Python 패키지.
+>
+> 관련 아이디어(비차단 inbox / fire-and-forget)의 학술·오픈소스 선례는
+> [AgentRadio](https://github.com/Coral-Protocol/AgentRadio)에 있다. **이 문서는 제품
+> 런타임의 설계 SSOT**이며, 원본 실험 코드의 재현 가이드가 아니다. 선례 프로젝트명은
+> 참고·고지에서만 쓰고, **이 프로젝트 자기 이름은 `agent-augury`다.**
 
 ---
 
@@ -10,40 +15,41 @@
 
 ### 1.1 이 프로젝트가 뭘 하는가
 
-Coral-Protocol의 [AgentRadio](https://github.com/Coral-Protocol/AgentRadio) (논문: [arXiv:2607.28430](https://arxiv.org/abs/2607.28430))는 "네 명의 코딩 에이전트가 공유 라디오 채널을 쓰면서, 일하는 **동안** 듣는다(패시브 어웨어니스)"는 아이디어를 제안했다. 핵심 통찰은 다음 하나로 요약된다:
+agent-augury는 **여러 LLM 에이전트를 한 팀으로 돌리는 로컬 런타임**이다. 핵심은
+다음이다:
 
-> 메시지를 듣는 걸 **전경(blocking)** 이 아니라 **배경(background) 태스크**로 돌리면, 에이전트가 일을 멈추지 않고도 동료의 발견을 다음 스텝 경계에서 자연스럽게 흡수한다. 통신이 더 이상 일을 방해하지 않는다.
+> 동료 메시지를 **전경(blocking wait)** 이 아니라 **inbox push → 다음 `step()`에서
+> 흡수**로 처리하면, 에이전트가 일을 멈추지 않고도 팀의 발견을 다음 경계에서
+> 자연스럽게 반영한다.
 
-원본(AgentRadio)은 이 아이디어를 **Claude Code CLI 4개 + Coral 메시지 서버(JAR) + Harbor/Modal 클라우드**로 재현하는 논문 실험 코드다. 즉, 아래 셋에 묶여 있다:
-
-1. **모델 고정** — Claude Code(Anthropic Messages API)만 말함. 다른 모델은 LiteLLM 번역 프록시를 거쳐야 함.
-2. **채널 고정** — 에이전트 간 통신이 전용 메시지 서버(JAR)로 닫혀 있음.
-3. **런타임 고정** — Harbor/Modal/Docker 컨테이너 위에서만 돌도록 설계됨.
+이 메커니즘은 논문/벤치마크 가설 검증용이 아니라, **실제 멀티에이전트 도구**의
+통신 기반으로 쓴다. Ink HITL, Discord/Slack 미러, 역할, 파일/셸/웹 도구, P1~P5
+게이트가 그 위에 얹힌다.
 
 ### 1.2 우리가 만드는 것
 
-이 프로젝트(`agent-augury`)는 **AgentRadio의 "개념(패시브 어웨어니스 + 협업 프로토콜)"을 계승**하되, 모델·채널·런타임 어느 것에도 묶이지 않는 독립 오픈소스로 재구현한다. 협업 프로토콜 전체(P1~P5)는 장기 목표로 계승하고, **구현은 v0.3에서** 다룬다 (§6).
+| 차원 | 목표 |
+|------|------|
+| 에이전트 모델 | **모델 무관** (OpenAI-compatible, Nous API/OAuth 등) |
+| 통신 | **내부 메시지 서버(SSOT)** — 채널(Discord 등)은 읽기/상호작용 표면 |
+| 런타임 | **로컬 Python 프로세스** (asyncio) |
+| 구성 | **사용자가 에이전트 수·역할·백엔드를 YAML/위저드로 구성** |
+| 배포 | **pip 설치 가능한 오픈소스 패키지** |
 
-| 차원 | 원본 AgentRadio | 이 프로젝트 |
-|------|----------------|-------------|
-| 에이전트 모델 | Claude Code 전용 (프록시 경유 다른 모델) | **모델 무관** (OpenAI-compatible 1순위, Nous Portal 2순위) |
-| 라디오 채널 | 전용 메시지 서버(JAR) | **내부 메시지 서버(경량 in-process)가 SSOT**, 채널은 읽기 전용 미러 |
-| 런타임 | Harbor + Modal + Docker | **로컬 Python 프로세스** (self-host, asyncio) |
-| 에이전트 생성 | 고정 4개 | **사용자가 동적으로 생성/구성** |
-| 배포 | 논문 재현 아티팩트 | **pip 설치 가능한 오픈소스 패키지** |
+선례와의 상세 비교·계보 메모는 [`NOTICE`](NOTICE)와 아래 아카이브 절을 참고한다.
+(구버전 문서의 “논문 실험 코드 대비표”는 역사적 맥락용이다.)
 
-### 1.3 비목표 (첫 릴리스에서 하지 않음)
+### 1.3 비목표 (현재 제품 범위 밖)
 
-- 코딩 도구(파일 읽기/쓰기/셸 실행)를 갖춘 완전한 코딩 에이전트 — **1단계는 협업/대화 중심**, 코딩 도구는 이후 플러그인.
-- Harbor/Modal/Docker 연동.
-- coral-server.jar 재사용 — 경량 **in-process** 서버(SQLite 또는 메모리)로 직접 재구현함 (D5, §3.3~§3.4 참고).
-- multi-agent 자동 스케줄링·오케스트레이션 플랫폼(Hermes 칸반류).
+- Harbor/Modal/Docker 전용 오케스트레이션 플랫폼.
+- 외부 메시지 서버 JAR 재사용 — in-process SSOT만 사용.
+- Hermes식 칸반 자동 스케줄러를 대체하는 범용 오케스트레이션 SaaS.
 
 ---
 
-## 2. 핵심 개념 (이 프로젝트가 계승하는 것)
+## 2. 핵심 개념
 
-원본에서 우리가 **가져오는 것**은 코드가 아니라 다음의 "프로토콜"이다.
+제품 런타임이 제공하는 통신·협업 규칙이다.
 
 ### 2.1 세 가지 통신 프리미티브
 
@@ -54,16 +60,16 @@ Coral-Protocol의 [AgentRadio](https://github.com/Coral-Protocol/AgentRadio) (�
 
 > (v0.3부터 `wait_for_mention`(L2 foreground blocking)은 완전히 제거되었다. inbox push + step() drain이 유일한 수신 경로이며, 이 프로젝트의 목표인 패시브 어웨어니스(L3)만 제공한다.)
 
-### 2.2 패시브 어웨어니스 (핵심 차별점)
+### 2.2 Non-blocking teammate inbox (핵심)
 
 - **전경(blocking receive)** = 과거 L2 대조 모드. v0.3에서 `wait_for_mention`과 함께 제거되었다.
-- **배경(passive awareness)** = 수신을 전경에서 기다리지 않는다. 서버가 메시지를 inbox에 push하고, `step()`이 다음 경계에서 자동 흡수 → 에이전트는 계속 일한다. (원본 L3 = 이 프로젝트의 목표, §3.5.2)
+- **배경(inbox push)** = 수신을 전경에서 기다리지 않는다. 서버가 메시지를 inbox에 push하고, `step()`이 다음 경계에서 자동 흡수 → 에이전트는 계속 일한다. (§3.5.2)
 
-### 2.3 5단계 협업 프로토콜 (P1~P5) — 장기 목표
+### 2.3 5단계 협업 프로토콜 (P1~P5) — 선택적 모드
 
-원본의 전체 협업 프로토콜. **v0.1 범위가 아니며, 구현은 v0.2에서 다룬다** (§6 로드맵). 여기서는 계승할 최종 형태를 정의한다.
+구조화된 팀 협업이 필요할 때 쓰는 **옵션**. 자유 형식 세션에서는 생략 가능하다.
 
-네 에이전트(수는 사용자 구성)가 고정 프로토콜을 돈다. 에이전트-1이 **어셈블러**가 되어 스레드를 개설하고 페이즈 전이를 게이트한다(모든 에이전트의 명시적 승인을 모아야 다음 페이즈로).
+네 에이전트(수는 사용자 구성)가 고정 프로토콜을 돈다. 어셈블러가 스레드를 개설하고 페이즈 전이를 게이트한다(모든 에이전트의 명시적 승인을 모아야 다음 페이즈로).
 
 1. **P1 탐색** — 각자 [원본: 백그라운드 워처]를 켜고, 독립적으로 대상(질문/컨텍스트)을 탐색, 하위 질문 초안. (아무것도 안 보냄)
    > "백그라운드 워처"는 원본 L3의 표현이며, **이 구현(v0.1)은 A 모델(워처 없음, push+inbox)** 을 쓴다 (§3.5.2). v0.2에서 P1~P5를 얹을 때 A 모델에 맞게 재구현한다.
@@ -135,7 +141,8 @@ Coral-Protocol의 [AgentRadio](https://github.com/Coral-Protocol/AgentRadio) (�
 
 **대가(단점, 인지하고 수용):**
 
-- 내부 서버를 하나 더 구현·운용해야 한다 (단, 원본의 106MB coral-server.jar를 재사용하지 않고 요구에 맞게 경량 재구현).
+- 내부 서버를 하나 더 구현·운용해야 한다 (단, 선례의 대용량 외부 메시지 서버 JAR를
+  재사용하지 않고 요구에 맞게 경량 재구현).
 - Discord 미러는 "내부 상태 → 채널 표시" 동기화가 추가 작업이며, 사람이 Discord에서 개입해도 에이전트 코어는 기본적으로 그걸 듣지 않는다 (사람 개입 경로는 별도 설계 — v0.1 범위 밖).
 
 ### 3.4 내부 메시지 서버 (SSOT) — 스키마와 프리미티브
@@ -207,7 +214,8 @@ L3에서 수신은 "도구 호출"이 아니라 **inbox에 push → step()이 �
 - **글로벌 스텝 예산**: 모든 에이전트의 step 합을 `max_steps`로 제한한다. asyncio 단일 루프상에서 +=는 atomic하므로 락 없이 동작한다.
 - **게이트/프로토콜 상태 주입**: `_inject_protocol_gate_state(agent, protocol)` / `agent.gate_open` 갱신을 step 앞에 그대로 둔다. `MessageServer`가 단일 이벤트 루프+협력 스케줄링이라 메시지/게이트 상태 접근은 원자적이므로 race 없다.
 - **도구 로그 실시간 스트리밍**: 병렬화로 도구 호출이 발생 즉시 큐에 밀려 출력된다. `_output_consumer` / `_log_tool_event`(cli.py)는 이미 flush=True이므로 변경 불필요.
-- **서버 상태**: v0.1a는 **메모리**(dict + asyncio 큐). 영속화가 필요해지면 aiosqlite로 전환(단일 writer 태스크가 lock).
+- **서버 상태**: 런타임 primary는 **메모리**(dict + asyncio 큐). 선택적 영속화는
+  ``MessageServer(db_path=…)`` → **aiosqlite**로 이미 지원 (`tests/test_persistence.py`).
 - **inbox**: 에이전트별 `asyncio.Queue`.
 - **프로세스/스레드 격리는 v0.1에서 쓰지 않는다.** 에이전트 = 동일 루프 내 코루틴. (모델 호출은 어댑터가 비동기 HTTP로 띄움.)
 
@@ -239,7 +247,7 @@ from agent-3: (FYI) 내 몫은 DB 쪽이야.
 - **패키징:** `pyproject.toml` (uv 또는 pip)
 - **설정:** YAML + CLI (둘 다 지원)
 - **모델 SDK:** 백엔드별 어댑터. **1순위 OpenAI-compatible, 2순위 Nous Portal.** 최소 의존(표준 라이브러리 + `httpx`/`aiohttp` 정도).
-- **서버 상태:** v0.1a 메모리(dict + asyncio 큐), 필요 시 aiosqlite.
+- **서버 상태:** 메모리(dict + asyncio 큐) + 선택적 aiosqlite 영속화 (구현됨).
 
 ### 4.2 디렉터리 (초안)
 
@@ -292,7 +300,7 @@ agent-augury/
 | D2 | 라이선스 | Apache-2.0 (예정) — §4.3 |
 | D3 | Discord 위치 | v0.1a는 CLI 로그 미러만, Discord는 v0.1b 이후 — **확정** |
 | D4 | Nous Portal API 스펙 | 2순위 어댑터라 v0.1a 블로커 아님 — 확인 시점 유동 |
-| D5 | 서버 상태 저장 | v0.1a 메모리, 필요 시 aiosqlite — **확정** |
+| D5 | 서버 상태 저장 | 메모리 primary + 선택적 aiosqlite — **구현됨** |
 | D6 | 배경 워처 | **해당 없음** (A 모델: 워처 없음, §3.5.2) |
 
 > 리뷰 반영으로 D1(이름)·D3·D5·D6이 v0.1a 기준으로 확정. D4(Nous Portal API 스펙)는 1순위 OpenAI-compatible 어댑터로 시작하므로 v0.1a 블로커가 아니다.
@@ -360,9 +368,10 @@ agent-augury/
 
 ---
 
-### 마일스톤 정리 (가설 검증 순서로 재배치)
+### 마일스톤 정리 (제품 기능 순)
 
-핵심 가설(패시브 어웨어니스)에 가깝게 순서를 잡았다. 백엔드·채널 추상화를 M1에 몰아넣지 않는다.
+공개 제품면(런타임·HITL·표면)을 먼저 굳히고, 벤치마크/회귀는 `examples/benchmark/`에 둔다.
+백엔드·채널 추상화를 한 마일스톤에 몰아넣지 않는다.
 
 | 단계 | 내용 | 통과 기준 |
 |------|------|-----------|
@@ -377,6 +386,5 @@ agent-augury/
 
 ## 7. 참고
 
-- 원본 저장소: <https://github.com/Coral-Protocol/AgentRadio> (Apache-2.0)
-- 논문: <https://arxiv.org/abs/2607.28430>
-- 상품: <https://coralcode.dev/> (참고용 — 이 프로젝트는 이와 무관한 독립 오픈소스)
+- AgentRadio: <https://github.com/Coral-Protocol/AgentRadio> (Apache-2.0)
+- Paper: <https://arxiv.org/abs/2607.28430>

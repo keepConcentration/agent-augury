@@ -1,32 +1,27 @@
-# L3 Passive Awareness Benchmark (agent-3)
+# Inbox absorption benchmark (examples)
 
-> DESIGN.md §6 (v0.1a)의 "L2 vs L3 대조 토이 시나리오"를 **L3 전용 수치 검증**으로
-> 승격한 벤치마크. agent-3(벤치마크 트랙) 산출물.
+> Offline, deterministic check that non-blocking inbox delivery works:
+> agents keep calling tools while a correction is pushed, then absorb it on
+> the next `step()` and reflect it in the final answer.
 >
-> ⚠️ v0.3에서 L2 모드(`wait_for_mention`, 전경 blocking receive)가 제거되어
-> "L2 vs L3 대조"는 런타임 차원에서는 더 이상 실행 불가. 따라서 이 벤치마크는
-> **"L3가 일을 멈추지 않고 정정을 흡수한다"는 사실을 숫자로 단언**하는 방식으로
-> 재정의했다. 논문의 +10.5pt 수치는 arXiv:2607.28430 인용으로 제공한다
-> (README 퀵스타트 초안의 AgentRadio 표 참고).
+> Historical name: “L3 passive awareness”. L2 (`wait_for_mention`) was removed
+> in v0.3 — this suite only asserts the current inbox path.
+> Related paper citation (optional context): arXiv:2607.28430.
 >
-> **구현 상태 (2026-09): `run_l3_passive_awareness.py` + `test_l3_passive_awareness.py`
-> 구현 완료.** 오프라인·결정적(FakeModelBackend). OSS_STRATEGY §10 D1(벤치마크
-> 형태)을 (a) "L3-only 재정의"로 해소하고, CI(`pytest tests/ examples/benchmark/ -q`)에
-> 통합됨.
+> **Status:** `run_l3_passive_awareness.py` + `test_l3_passive_awareness.py`
+> (FakeModelBackend). Included in CI via `pytest tests/ examples/benchmark/ -q`.
 
 ---
 
-## 왜 이 벤치마크인가
+## What it asserts
 
-패시브 어웨어니스(L3)의 핵심 주장은 두 가지다:
+1. **Work is not blocked** — after a correction arrives, the agent continues exploring.
+2. **Corrections are absorbed** — at the next step boundary, into context and the final answer.
 
-1. **작업이 방해받지 않는다** — 정정이 도착해도 에이전트는 탐색을 계속한다.
-2. **정정은 흡수된다** — 다음 스텝 경계에서 자동으로 들어오고 최종 답에 반영된다.
+The suite fixes tool sequences with `FakeModelBackend` and checks **search call
+count** and **final answer**.
 
-이 벤치마크는 `FakeModelBackend`로 에이전트의 tool 시퀀스를 고정해
-**search 호출 횟수**와 **최종 답**이라는 숫자로 위 둘을 단언한다.
-
-## 시나리오 (DESIGN §6 그대로)
+## Scenario
 
 ```
 agent-a: 숫자 탐색 중 (search tool을 N회 반복)

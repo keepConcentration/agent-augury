@@ -63,11 +63,14 @@ def is_general_purpose_model_id(model_id: str) -> bool:
         if suffix.casefold() not in _ALLOWED_COLON_SUFFIXES:
             return False
     low = model_id.casefold()
-    if _ISO_DATE.search(low) or _COMPACT_DATE.search(low) or _SHORT_DATE_PIN.search(low):
-        return False
-    if _SPECIALTY_NAME.search(low) or _EXP_SUFFIX.search(low) or _IMAGE_MODEL.search(low):
-        return False
-    return True
+    return not (
+        _ISO_DATE.search(low)
+        or _COMPACT_DATE.search(low)
+        or _SHORT_DATE_PIN.search(low)
+        or _SPECIALTY_NAME.search(low)
+        or _EXP_SUFFIX.search(low)
+        or _IMAGE_MODEL.search(low)
+    )
 
 
 def _is_text_output_model(item: dict[str, Any]) -> bool:

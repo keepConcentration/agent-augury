@@ -77,6 +77,20 @@ jobs:
           python-version: "3.11"
       - name: Build package
         run: uv build
+      - name: Verify Ink front is bundled in the wheel
+        run: |
+          python - <<'PY'
+          import glob, zipfile, sys
+          wheels = glob.glob("dist/*.whl")
+          assert wheels, "no wheel built"
+          names = zipfile.ZipFile(wheels[0]).namelist()
+          needed = "agent_augury/fronts/ink/package.json"
+          if needed not in names:
+              print("missing", needed, file=sys.stderr)
+              print("\n".join(n for n in names if "fronts" in n), file=sys.stderr)
+              raise SystemExit(1)
+          print("ok:", needed)
+          PY
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

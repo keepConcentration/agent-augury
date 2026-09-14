@@ -22,13 +22,15 @@ from pathlib import Path
 from typing import Any
 
 from agent_augury.config import load_config
+from agent_augury.ink_front import resolve_project_root
 from agent_augury.session import Session
 
 from .bridge import SessionBridge
 from .stdio import JsonlStdioBridge
 from .types import WireCommand, WireResult, make_event
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# Checkout root when known; otherwise CWD (pip install has no repo tree).
+PROJECT_ROOT = resolve_project_root() or Path.cwd()
 
 
 class _WireAuthNoticeRelay:

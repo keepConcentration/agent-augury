@@ -138,13 +138,22 @@ Secrets stay in environment variables; YAML stores env **names** only.
 pip install agent-augury
 ```
 
+**Ink Surface (required for the interactive TUI):**
+
+1. Install **Node.js >= 22** so `npm` is on your `PATH` ([nodejs.org](https://nodejs.org/)).
+2. Run `agent-augury` — the wheel bundles `fronts/ink` sources; on first launch they are copied to a user cache and `npm install` runs there.
+3. Optional overrides:
+   - `AUGURY_INK_DIR` — use a specific Ink front directory (e.g. a git checkout of `fronts/ink`)
+   - `AUGURY_PROJECT_ROOT` — repo root when developing from a clone
+   - `AUGURY_CACHE_DIR` — base directory for the Ink cache (default: platform cache)
+
+Developers working from this repository can use an editable install (`uv sync` / `pip install -e .`); the checkout’s `fronts/ink` is picked up automatically.
+
 ### Wizard
 
 ```bash
 agent-augury
 ```
-
-Requires Node.js >= 22 for the Ink Surface (`npm` must be on `PATH`).
 
 ### Run a session
 

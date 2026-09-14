@@ -1,6 +1,6 @@
 [project]
 name = "agent-augury"
-version = "0.6.6"
+version = "0.6.7"
 description = "Local multi-agent collaboration runtime — shared threads, roles, HITL, model-agnostic backends."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,6 +45,22 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_augury"]
+
+# B: ship Ink front sources in the wheel (no node_modules — first run caches + npm install).
+[tool.hatch.build.targets.wheel.force-include]
+"fronts/ink/package.json" = "agent_augury/fronts/ink/package.json"
+"fronts/ink/package-lock.json" = "agent_augury/fronts/ink/package-lock.json"
+"fronts/ink/tsconfig.json" = "agent_augury/fronts/ink/tsconfig.json"
+"fronts/ink/README.md" = "agent_augury/fronts/ink/README.md"
+"fronts/ink/src" = "agent_augury/fronts/ink/src"
+
+# Ensure sdist retains fronts/ink so wheel force-include can resolve after sdist→wheel.
+[tool.hatch.build.targets.sdist.force-include]
+"fronts/ink/package.json" = "fronts/ink/package.json"
+"fronts/ink/package-lock.json" = "fronts/ink/package-lock.json"
+"fronts/ink/tsconfig.json" = "fronts/ink/tsconfig.json"
+"fronts/ink/README.md" = "fronts/ink/README.md"
+"fronts/ink/src" = "fronts/ink/src"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

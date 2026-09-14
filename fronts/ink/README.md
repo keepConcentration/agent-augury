@@ -14,7 +14,11 @@ npm start  (this package, owns TTY)
 
 ## Setup
 
-From repo root (venv active). **Ink is the default session UI** when Node is available:
+**End users (`pip install agent-augury`):** install Node.js >= 22, then run
+`agent-augury`. The wheel ships these sources; the CLI copies them to a user
+cache and runs `npm install` on first launch. Override with `AUGURY_INK_DIR`.
+
+**From this repo** (venv active). **Ink is the default session UI** when Node is available:
 
 ```bash
 agent-augury --config examples/consensus_openai.yaml
@@ -38,6 +42,8 @@ Env (set by CLI, or manually for `npm start`):
 | `AUGURY_DEMO` | `1` to allow `type: fake` backends |
 | `AUGURY_PYTHON` | Python binary if `.venv` is not found |
 | `AUGURY_NO_AUTO_START` | `1` to wait for first `human.send` instead of config task |
+| `AUGURY_INK_DIR` | Override Ink front directory (CLI) |
+| `AUGURY_PROJECT_ROOT` | Repo root override (CLI / Gateway) |
 
 ## Keys (HITL)
 

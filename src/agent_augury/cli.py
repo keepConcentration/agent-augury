@@ -1,9 +1,12 @@
 """CLI entrypoint: wizard + Ink Interactive Surface.
 
 Modes:
-  - ``agent-augury --config PATH`` — Ink session (requires Node + fronts/ink).
+  - ``agent-augury --config PATH`` — Ink session (requires Node.js >= 22).
   - ``agent-augury`` (no args) — interactive wizard, then Ink session.
   - ``agent-augury --ink-hello`` — Ink hello Gateway demo (M2/M3).
+
+The Ink front is resolved via ``agent_augury.ink_front`` (env override, repo
+``fronts/ink``, or wheel-bundled sources materialized into a user cache).
 
 Flags:
   - ``--reconfigure`` — discard saved model settings and re-run the wizard.
@@ -28,6 +31,11 @@ from typing import Any
 import yaml
 
 from .display import mask_sensitive, render_event
+from .ink_front import (
+    ensure_ink_front,
+    pythonpath_src_entry,
+    resolve_project_root,
+)
 from .model_config import (
     load_model_config,
     model_config_exists,
@@ -39,8 +47,8 @@ _DEFAULT_OUTPUT_PATH = Path.home() / ".agent-augury" / "agent-augury-session.yam
 _INVALID_PATH_CHARS = set('<>"|?*')
 _INVISIBLE_CODEPOINTS = frozenset({0x3164, 0x200B, 0x200C, 0x200D, 0xFEFF, 0x00A0})
 
-# P9: 프로젝트 루트 — cli.py → 프로젝트 루트 (agent_augury/ 하위의 cli.py 기준 parents[2])
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Back-compat: checkout root when editable, else CWD (pip installs have no repo root).
+PROJECT_ROOT = resolve_project_root() or Path.cwd()
 
 
 def _mask_sensitive(text: str) -> str:
@@ -276,35 +284,34 @@ def _run_ink_surface(
     import shutil
     import subprocess
 
-    ink_dir = PROJECT_ROOT / "fronts" / "ink"
-    if not ink_dir.is_dir():
-        print(
-            f"error: Ink Surface required — missing front at {ink_dir}",
-            file=sys.stderr,
-        )
+    ink_dir, ink_err = ensure_ink_front()
+    if ink_dir is None:
+        print(f"error: {ink_err}", file=sys.stderr)
         return 1
     npm = shutil.which("npm")
     if npm is None:
         print(
-            "error: Ink Surface required — npm not found. "
-            "Install Node.js >= 22, then re-run.",
+            "error: Ink Surface requires Node.js >= 22 (`npm` on PATH).\n"
+            "Install from https://nodejs.org/ then re-run `agent-augury`.\n"
+            "Or set AUGURY_INK_DIR to a fronts/ink tree that already has "
+            "node_modules.",
             file=sys.stderr,
         )
         return 1
-    if not (ink_dir / "node_modules").is_dir():
-        print("Installing fronts/ink dependencies…", flush=True)
-        install = subprocess.run([npm, "install"], cwd=ink_dir, check=False)
-        if install.returncode != 0:
-            return install.returncode
     from .gateway.secrets import scrub_env_for_ink
 
     # D1: do not pass API tokens / bot secrets into the Node Ink process.
     # Secrets ride a short-lived file that only the Python Gateway child loads.
     env = scrub_env_for_ink()
     env.setdefault("AUGURY_PYTHON", sys.executable)
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(PROJECT_ROOT / "src"), env.get("PYTHONPATH", "")]
-    ).rstrip(os.pathsep)
+    src_entry = pythonpath_src_entry()
+    if src_entry is not None:
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(src_entry), env.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep)
+    root = resolve_project_root()
+    if root is not None:
+        env.setdefault("AUGURY_PROJECT_ROOT", str(root))
     env["AUGURY_GATEWAY_MODE"] = mode
     if mode == "session":
         if not config:

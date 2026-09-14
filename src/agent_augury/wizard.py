@@ -10,17 +10,23 @@ the available model list from the provider's ``/models`` endpoint.  If
 succeeds, the user can pick from the list; otherwise they fall back to
 manual model-ID entry.
 
-Secrets are never requested or stored — only the environment-variable name
-(``api_key_env``) is saved.
+API key env *names* stay in YAML; Discord bot tokens may be entered in the
+wizard and written to ``~/.agent-augury/.env`` (never into the session YAML).
 """
 
 from __future__ import annotations
 
+import getpass
 import os
 import sys
 from datetime import UTC
 from typing import Any
 
+from .bot_token_env import (
+    DEFAULT_SECRETS_ENV_PATH,
+    store_bot_token,
+    validate_token_env_name,
+)
 from .model_config import (
     save_model_config,
 )
@@ -510,6 +516,128 @@ def _collect_model_settings(force_reconfigure: bool = False) -> tuple[int, list[
     return max_steps, agents
 
 
+def _default_bot_token_env(agent_id: str) -> str:
+    """Suggest ``BOT_TOKEN_<AGENT>`` from an agent id."""
+    slug = "".join(ch if ch.isalnum() else "_" for ch in agent_id.upper())
+    slug = "_".join(p for p in slug.split("_") if p)
+    return f"BOT_TOKEN_{slug}" if slug else "BOT_TOKEN_AGENT"
+
+
+def _prompt_and_store_bot_token(token_env: str) -> None:
+    """Ask for the Discord bot token; write ``~/.agent-augury/.env`` + process env."""
+    existing = (os.environ.get(token_env) or "").strip()
+    if existing:
+        keep = _input(
+            f"{token_env} is already set. Keep existing value? (y/n)", "y"
+        )
+        if keep.lower() in ("y", "yes", ""):
+            print(f"  (reusing existing {token_env})")
+            return
+
+    print(
+        f"\nPaste the Discord Bot Token for {token_env}.\n"
+        f"  Saved to {DEFAULT_SECRETS_ENV_PATH} (not YAML).\n"
+        "  Input is hidden — paste then Enter. Blank skips."
+    )
+    try:
+        token = getpass.getpass(f"  {token_env}: ").strip()
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise WizardCancelled("interrupted") from exc
+    if not token:
+        print(
+            f"  (skipped — set {token_env} in {DEFAULT_SECRETS_ENV_PATH} "
+            "or the shell before start)"
+        )
+        return
+    dest = store_bot_token(token_env, token, path=DEFAULT_SECRETS_ENV_PATH)
+    print(f"  ({token_env} saved to {dest})")
+
+
+def _collect_discord_bots(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-agent Discord bot binding (token env name + channel id)."""
+    print("\n--- Discord ---")
+    print("YAML stores the env var *name* only.")
+    print(
+        f"You can paste the bot token here — it goes to {DEFAULT_SECRETS_ENV_PATH}."
+    )
+    print("Enable Message Content Intent in the Discord Developer Portal for inbound.")
+
+    bots: list[dict[str, Any]] = []
+    for agent in agents:
+        agent_id = str(agent.get("id") or "")
+        if not agent_id:
+            continue
+        connect = _input(
+            f"\nConnect a Discord bot for '{agent_id}'? (y/n)", "y"
+        )
+        if connect.lower() not in ("y", "yes"):
+            continue
+
+        default_env = _default_bot_token_env(agent_id)
+        token_env = default_env
+        while True:
+            raw = _input(
+                "Bot token env var name (Enter = default)",
+                default_env,
+            )
+            token_env = (raw or default_env).strip()
+            err = validate_token_env_name(token_env)
+            if err:
+                print(f"  Invalid: {err}")
+                continue
+            break
+
+        _prompt_and_store_bot_token(token_env)
+
+        while True:
+            raw_channel = _input_required("Discord channel ID (snowflake number)")
+            if raw_channel.isdigit():
+                channel_id = int(raw_channel)
+                break
+            print("  (channel ID must be digits only)")
+
+        inbound_raw = _input(
+            "Enable inbound (reply / approve from Discord)? (y/n)", "y"
+        )
+        entry: dict[str, Any] = {
+            "agent_id": agent_id,
+            "token_env": token_env,
+            "channel_id": channel_id,
+        }
+        if inbound_raw.lower() in ("y", "yes"):
+            entry["inbound"] = True
+        bots.append(entry)
+        print(f"  → {agent_id}: channel={channel_id}, token_env={token_env}")
+
+    if not bots:
+        print("  (no Discord bots configured)")
+    return bots
+
+
+def _collect_messaging_apps(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Optional messaging surfaces after agents are configured.
+
+    Currently Discord only; returns a ``bots`` list (possibly empty).
+    """
+    print("\n--- Messaging apps ---")
+    add = _input("Add a messaging app (Discord, …)? (y/n)", "n")
+    if add.lower() not in ("y", "yes"):
+        return []
+
+    while True:
+        print("\nAvailable messaging apps:")
+        print("  1) Discord  — per-agent bot mirror (+ optional inbound HITL)")
+        print("  0) Done")
+        choice = _input("Choose", "0")
+        if choice in ("0", ""):
+            break
+        if choice == "1":
+            return _collect_discord_bots(agents)
+        print(f"  (unknown choice {choice!r} — pick 1 or 0)")
+
+    return []
+
+
 def run_wizard(
     existing_model_config: dict[str, Any] | None = None,
     force_reconfigure: bool = False,
@@ -518,6 +646,7 @@ def run_wizard(
 
     Collects model settings from the user (or loads from
     *existing_model_config* when provided), then persists them to disk.
+    Optionally collects Discord (messaging) bot bindings for the session YAML.
 
     Args:
         existing_model_config: If provided, the model-settings phase is
@@ -530,10 +659,10 @@ def run_wizard(
     print("=" * 50)
     print()
     print("This wizard generates a YAML config file for agent-augury.")
-    print("No API keys are stored — only environment variable names.")
+    print("No API keys or bot tokens are stored — only environment variable names.")
 
     if existing_model_config is not None:
-        # Reuse saved model settings — skip directly to config generation.
+        # Reuse saved model settings — skip directly to messaging + config generation.
         max_steps = existing_model_config.get("max_steps", 0)
         agents = existing_model_config["agents"]
         print(
@@ -546,9 +675,15 @@ def run_wizard(
         # Persist model settings immediately (path is internal to save_model_config).
         save_model_config(max_steps, agents)
 
-    return {
+    # Phase 2: optional messaging apps (session YAML only; not model_config.json).
+    bots = _collect_messaging_apps(agents)
+
+    cfg: dict[str, Any] = {
         "max_steps": max_steps,
         "human": {"id": "human"},
         "protocol": dict(DEFAULT_PROTOCOL),
         "agents": agents,
     }
+    if bots:
+        cfg["bots"] = bots
+    return cfg

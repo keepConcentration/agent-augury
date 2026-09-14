@@ -261,7 +261,7 @@ class AgentLoop:
             return None
         if tool_approval_class(name) is None:
             return None
-        if not self.policy.requires_approval(name):
+        if not self.policy.requires_approval(name, args=args):
             return None
 
         has_interact = False

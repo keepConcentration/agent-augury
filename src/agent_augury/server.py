@@ -490,6 +490,20 @@ class MessageServer:
             raise KeyError(f"no such thread: {thread_id}")
         return dict(thread)
 
+    def resolve_thread_id(self, ref: str | None) -> str | None:
+        """Return a known thread id for *ref* (id or name), or None."""
+        if not ref:
+            return None
+        key = str(ref).strip()
+        if not key:
+            return None
+        if key in self._threads:
+            return key
+        for thread in self._threads.values():
+            if thread["name"] == key:
+                return str(thread["thread_id"])
+        return None
+
     def snapshot(self) -> dict[str, Any]:
         """Read-only-ish view of full state (read_resource tool backing)."""
         return {

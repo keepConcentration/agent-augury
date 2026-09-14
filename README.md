@@ -173,6 +173,23 @@ Protocol example:
 agent-augury --demo --config examples/p1_to_p5_protocol.yaml
 ```
 
+### Headless (no Ink)
+
+Boot Core without the Ink TUI — useful when Discord/Slack is the human window
+(or for CI). This is a **launcher**, not another chat Surface:
+
+```bash
+agent-augury --headless
+agent-augury --headless --reconfigure   # re-run wizard, then headless
+agent-augury --headless --config session.yaml   # explicit path
+```
+
+With no `--config`, uses the wizard default
+(`~/.agent-augury/agent-augury-session.yaml`). With `bots[].inbound: true`,
+channel messages start the next turn after idle. Stop with Ctrl+C.
+Use `--no-auto-start` to wait for the first inbound message instead of running
+the config `task` immediately.
+
 ---
 
 ## Tool approval (shell / file write)
@@ -184,22 +201,25 @@ Defaults (override under `tools.approval` in YAML):
 
 | Class | Tools | Default |
 |-------|--------|---------|
-| `shell` | `run_command` | `require` |
-| `file_write` | `write_file` / `edit_file` / `append_file` | `require` |
+| `shell` | `run_command` | `dangerous` (Hermes-like: only destructive patterns) |
+| `file_write` | `write_file` / `edit_file` / `append_file` | `off` (`allowed_roots` still applies) |
 | `web` | `web_search` / `fetch_url` | `off` |
 
 ```yaml
 tools:
   approval:
-    shell: require          # require | off
-    file_write: require
+    shell: dangerous        # require | dangerous | off
+    file_write: off         # require | off  (dangerous ≡ require for file_write)
     web: off
     ttl_seconds: 600
     # bypass: true          # tests only — never in production
 ```
 
+- **`require`**: every call in that class needs Approve/Deny
+- **`dangerous`** (shell): only patterns like `rm -rf /`, `curl|sh`, `dd of=/dev/…`, force-push, etc.
+- **`off`**: no approval prompts (still subject to shell allow/block and `allowed_roots`)
 - **Ink**: approval card → type `1`/`approve` or `2`/`deny`
-- **Discord inbound** (`bots[].inbound: true`): same tokens in the channel
+- **Discord inbound** (`bots[].inbound: true`): Approve/Deny **buttons** per request (preferred); text `1`/`2` = oldest pending only
 - **`--demo`**: bypasses approval (scripted / CI runs)
 - Observe-only mirrors are **not** an approval channel; with no interact surface, gated tools are denied (`no_approval_channel`)
 
@@ -213,11 +233,13 @@ Design notes: [`docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`](docs/architect
 |------|-------------|
 | `--config <yaml>` | Run from YAML (skips wizard) |
 | `--demo` | Allow `type: fake` backends (offline / tests) |
-| `--reconfigure` | Discard saved model settings and re-run the wizard |
+| `--reconfigure` | Re-run wizard (with `--headless`: then boot Core without Ink) |
 | `--output <path>` | Wizard output path (only without `--config`) |
 | `--quiet` | Suppress live event noise |
 | `--ink` | Ink Surface (default when available) |
 | `--ink-hello` | Ink hello against the Gateway (no full session) |
+| `--headless` | Boot Core without Ink (default: wizard session YAML) |
+| `--no-auto-start` | With `--headless`: wait for `human.send` before first run |
 
 ---
 
@@ -231,15 +253,6 @@ Design notes: [`docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`](docs/architect
 6. **Stay observable** — tools, steps, and messages stream on the Wire bus for UIs and mirrors.
 
 See [`DESIGN.md`](DESIGN.md) for implementation history and protocol details.
-
----
-
-## Attribution
-
-Non-blocking teammate-inbox messaging is related to ideas explored by
-[AgentRadio](https://github.com/Coral-Protocol/AgentRadio)
-(Apache-2.0; arXiv:2607.28430). agent-augury is an independent implementation.
-See [`NOTICE`](NOTICE).
 
 ---
 

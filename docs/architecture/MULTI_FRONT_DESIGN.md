@@ -304,6 +304,20 @@ agent-augury/
 
 Slack은 Discord와 **동일 Protocol**, 다른 API 클라이언트.
 
+### Outbound formatting (Chat vs Interactive UI)
+
+Core/Gateway publish **structured Wire events** (`agent.step`, `message`, `tool`, …).
+Each Surface owns presentation:
+
+| Surface | Formatter | Notes |
+|---------|-----------|--------|
+| **Ink** | `fronts/ink` (Markdown panels, cards) | May use log lines like `💭 agent:` in the *log* view only |
+| **Discord bot / Slack webhook** | `channel/chat_surface_format.py` | Plain chat text; no Ink log emoji |
+| **Per-agent Discord bot** | same + `recipient_agent_id` | Bot display name ⇒ omit redundant `agent_id` on prose |
+
+Do **not** stringify events once in Core for all fronts. Channel adapters call
+`format_wire_for_chat_surface(event, recipient_agent_id=…)` at send time.
+
 ---
 
 ## 10. 로드맵 (갱신)

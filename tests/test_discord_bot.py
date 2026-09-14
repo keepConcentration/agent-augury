@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from agent_augury.channel.discord_bot import (
     BotManager,
     DiscordBotAdapter,
+    DiscordBotError,
     _format_event,
 )
 from tests.conftest import build_cfg
@@ -24,6 +26,7 @@ def mock_client():
     client = MagicMock()
     client.event = lambda func: func  # pass-through decorator
     client.user = MagicMock(name="TestBot#1234")
+    client.close = AsyncMock()
     return client
 
 
@@ -35,8 +38,107 @@ def adapter(mock_client):
             agent_id="agent-1",
             token="fake-token",
             channel_id=123456789,
+            token_env="BOT_TOKEN_AGENT_1",
         )
         return adapter
+
+
+@pytest.mark.asyncio
+async def test_start_empty_token_raises_clear_error(mock_client):
+    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+        bot = DiscordBotAdapter(
+            agent_id="coder",
+            token="  ",
+            channel_id=1,
+            token_env="BOT_TOKEN_CODER",
+        )
+    with pytest.raises(DiscordBotError, match="BOT_TOKEN_CODER"):
+        await bot.start()
+
+
+@pytest.mark.asyncio
+async def test_start_token_env_is_literal_token_raises_yaml_hint(mock_client):
+    pasted = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
+    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+        bot = DiscordBotAdapter(
+            agent_id="agent-1",
+            token="",
+            channel_id=1,
+            token_env=pasted,
+        )
+    with pytest.raises(DiscordBotError, match="looks like a bot token"):
+        await bot.start()
+
+
+@pytest.mark.asyncio
+async def test_start_returns_after_ready_while_gateway_keeps_running(mock_client):
+    """Regression: await client.start() forever blocked headless turn loop."""
+
+    async def long_gateway(_token: str) -> None:
+        await asyncio.sleep(3600)
+
+    mock_client.start = long_gateway
+    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+        bot = DiscordBotAdapter(
+            agent_id="agent-1",
+            token="fake-token",
+            channel_id=1,
+            token_env="BOT_TOKEN_AGENT_1",
+        )
+        start_task = asyncio.create_task(bot.start())
+        await asyncio.sleep(0)
+        bot._ready.set()
+        await asyncio.wait_for(start_task, timeout=1.0)
+        assert bot._gateway_task is not None
+        assert not bot._gateway_task.done()
+        await bot.close()
+
+
+@pytest.mark.asyncio
+async def test_bot_manager_start_all_does_not_block_on_gateway(mock_client):
+    async def long_gateway(_token: str) -> None:
+        await asyncio.sleep(3600)
+
+    mock_client.start = long_gateway
+    manager = BotManager()
+    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+        for i in (1, 2):
+            manager.register(
+                DiscordBotAdapter(
+                    agent_id=f"agent-{i}",
+                    token="tok",
+                    channel_id=99,
+                    token_env=f"BOT_{i}",
+                )
+            )
+        start_all = asyncio.create_task(manager.start_all())
+        for _ in range(20):
+            await asyncio.sleep(0)
+            for bot in manager.adapters():
+                if not bot._ready.is_set():
+                    bot._ready.set()
+        await asyncio.wait_for(start_all, timeout=2.0)
+        for bot in manager.adapters():
+            await bot.close()
+
+
+@pytest.mark.asyncio
+async def test_start_login_failure_wraps_message(mock_client):
+    import discord
+
+    mock_client.start = AsyncMock(
+        side_effect=discord.LoginFailure("Improper token has been passed.")
+    )
+    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+        bot = DiscordBotAdapter(
+            agent_id="agent-1",
+            token="not-a-real-token",
+            channel_id=1,
+            token_env="BOT_TOKEN_AGENT_1",
+        )
+    with pytest.raises(DiscordBotError, match="BOT_TOKEN_AGENT_1") as ei:
+        await bot.start()
+    assert "Improper token" in str(ei.value)
 
 
 # ---------------------------------------------------------------------------
@@ -49,18 +151,22 @@ class TestDiscordBotAdapter:
         assert adapter.agent_id == "agent-1"
         assert adapter.channel_id == 123456789
 
-    def test_enqueue_truncates_long_content(self, adapter):
+    def test_enqueue_splits_long_content(self, adapter):
         long_text = "x" * 2000
         adapter.enqueue(long_text)
-        # Should be truncated to _MAX_CONTENT + "…"
-        item = adapter._outbox.get_nowait()
-        assert len(item) == 1801  # 1800 + "…"
-        assert item.endswith("…")
+        parts = []
+        while not adapter._outbox.empty():
+            item = adapter._outbox.get_nowait()
+            parts.append(item.content if hasattr(item, "content") else item)
+        assert len(parts) >= 2
+        assert all(len(p) <= 1800 for p in parts)
+        assert "".join(parts) == long_text
 
     def test_enqueue_short_content_unchanged(self, adapter):
         adapter.enqueue("hello")
         item = adapter._outbox.get_nowait()
-        assert item == "hello"
+        text = item.content if hasattr(item, "content") else item
+        assert text == "hello"
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +364,21 @@ class TestBotsConfigValidation:
         path = tmp_path / "test.yaml"
         path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         with pytest.raises(ConfigError, match="token_env"):
+            load_config(str(path))
+
+    def test_bots_section_token_env_looks_like_bot_token(self, tmp_path):
+        import yaml
+
+        from agent_augury.config import ConfigError, load_config
+
+        pasted = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
+        cfg = build_cfg(
+            agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}}],
+            bots=[{"agent_id": "a1", "token_env": pasted, "channel_id": 123}],
+        )
+        path = tmp_path / "test.yaml"
+        path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        with pytest.raises(ConfigError, match="bot token"):
             load_config(str(path))
 
     def test_bots_section_missing_channel_id(self, tmp_path):

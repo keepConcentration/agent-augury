@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,12 +13,24 @@ from agent_augury.wizard import (
     NOUS_DEFAULT_BASE_URL,
     OPENAI_DEFAULT_BASE_URL,
     WizardCancelled,
+    _default_bot_token_env,
     _input,
     _input_int,
     _input_required,
     check_tty,
     run_wizard,
 )
+
+
+def _feed(responses):
+    """Drive wizard prompts; exhausted inputs → '' so optional defaults apply."""
+    it = iter(responses)
+    def fake(_prompt=""):
+        try:
+            return next(it)
+        except StopIteration:
+            return ""
+    return fake
 
 # ---------------------------------------------------------------------------
 # TTY detection
@@ -105,7 +118,7 @@ def test_wizard_openai_backend_produces_valid_config(tmp_path):
         "gpt-4o-mini",  # model (manual entry when listing fails)
         "n",            # no more agents
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config") as mock_save, \
          patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
@@ -150,7 +163,7 @@ def test_wizard_openai_backend_uses_default_base_url(tmp_path):
         "gpt-4o-mini",  # model (manual entry when listing fails)
         "n",            # no more agents
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
@@ -176,7 +189,7 @@ def test_wizard_nous_backend_uses_default_base_url(tmp_path):
         "Hermes-4",     # model (manual entry when listing fails)
         "n",            # no more agents
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_models_nous_portal", return_value=None):
         cfg = run_wizard()
@@ -201,7 +214,7 @@ def test_wizard_openrouter_emits_openai_with_defaults(tmp_path):
         "anthropic/claude-sonnet-4",  # model (listing mocked None → manual)
         "n",
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_openrouter_models", return_value=None):
         cfg = run_wizard()
@@ -227,7 +240,7 @@ def test_wizard_openrouter_lists_models_without_env_key(tmp_path):
         ModelInfo(id="anthropic/claude-sonnet-4", prompt_per_token=3e-6, completion_per_token=1.5e-5),
         ModelInfo(id="openai/gpt-4o-mini", prompt_per_token=0.0, completion_per_token=0.0),
     ]
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch(
              "agent_augury.backends_factory.list_openrouter_models",
@@ -260,7 +273,7 @@ def test_wizard_multiple_agents(tmp_path):
         "gpt-4o-mini",  # model
         "n",            # no more
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
@@ -303,7 +316,7 @@ def test_wizard_reuses_existing_model_config_skips_model_settings(tmp_path):
         ],
     }
     inputs = iter([])  # No inputs needed — model settings are reused.
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config") as mock_save:
         cfg = run_wizard(existing_model_config=existing)
 
@@ -376,7 +389,7 @@ def test_cli_wizard_generates_valid_yaml(tmp_path, monkeypatch):
     ])
     # Patch check_tty in the module that imported it (cli), not the origin.
     # Also ensure no existing model config is loaded.
-    with patch("builtins.input", side_effect=lambda *args: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.cli.model_config_exists", return_value=False), \
@@ -422,6 +435,7 @@ def test_cli_wizard_reuses_model_config_skips_save_prompt(tmp_path, monkeypatch)
              patch("agent_augury.cli.model_config_exists", return_value=True), \
              patch("agent_augury.cli.load_model_config", return_value=existing), \
              patch("agent_augury.wizard.save_model_config"), \
+             patch("builtins.input", side_effect=_feed([])), \
              patch("agent_augury.cli._run_ink_surface", return_value=0):
             rc = main([])
 
@@ -527,7 +541,7 @@ def test_wizard_second_agent_reuses_oauth_no_reauthentication():
         "Hermes-4",     # model for agent-2 (manual entry)
         "n",            # no more agents
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_models_nous_oauth", return_value=None), \
          patch("agent_augury.wizard._has_valid_oauth_token", return_value=True):
@@ -564,7 +578,7 @@ def test_wizard_second_agent_reuses_oauth_real_token_store(tmp_path):
         "Hermes-4",     # model for agent-2 (manual entry)
         "n",            # no more agents
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_models_nous_oauth", return_value=None), \
          patch("agent_augury.auth.token_store.TokenStore", return_value=store):
@@ -591,7 +605,7 @@ def test_wizard_second_agent_oauth_no_token_triggers_auth():
         "Hermes-4",     # model for agent-2 (manual entry)
         "n",            # no more agents
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_models_nous_oauth", return_value=None), \
          patch("agent_augury.wizard._has_valid_oauth_token", return_value=False), \
@@ -676,7 +690,7 @@ def test_wizard_second_agent_reuses_api_key_env_var():
         "gpt-4o-mini",  # model for agent-2
         "n",            # no more agents
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
@@ -704,7 +718,7 @@ def test_wizard_second_agent_chooses_different_api_key_env():
         "gpt-4o-mini",  # model for agent-2
         "n",            # no more agents
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
@@ -728,7 +742,7 @@ def test_wizard_different_provider_triggers_new_auth():
         "anthropic/claude-sonnet-4",
         "n",            # no more agents
     ])
-    with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+    with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config"), \
          patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None), \
          patch("agent_augury.backends_factory.list_openrouter_models", return_value=None):
@@ -815,7 +829,7 @@ def test_wizard_rejects_duplicate_agent_ids(tmp_path):
         "n",
     ])
     with (
-        patch("builtins.input", side_effect=lambda _: next(inputs)),
+        patch("builtins.input", side_effect=_feed(inputs)),
         patch("builtins.print"),
         patch("agent_augury.wizard.save_model_config"),
         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None),
@@ -858,3 +872,177 @@ def test_load_config_rejects_duplicate_agent_ids(tmp_path):
     )
     with pytest.raises(ConfigError, match="duplicated"):
         load_config(path)
+
+
+# ---------------------------------------------------------------------------
+# Messaging apps (Discord)
+# ---------------------------------------------------------------------------
+
+
+def test_default_bot_token_env():
+    assert _default_bot_token_env("agent-1") == "BOT_TOKEN_AGENT_1"
+    assert _default_bot_token_env("coder") == "BOT_TOKEN_CODER"
+
+
+def test_wizard_skips_messaging_by_default(tmp_path):
+    inputs = iter([
+        "agent-1",
+        "1",
+        "",
+        "OPENAI_API_KEY",
+        "gpt-4o-mini",
+        "n",  # no more agents
+        # messaging: empty → default n
+    ])
+    with patch("builtins.input", side_effect=_feed(inputs)), \
+         patch("agent_augury.wizard.save_model_config"), \
+         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
+        cfg = run_wizard()
+    assert "bots" not in cfg
+
+
+def test_wizard_discord_bots_per_agent(tmp_path, monkeypatch):
+    monkeypatch.delenv("BOT_TOKEN_AGENT_1", raising=False)
+    monkeypatch.delenv("BOT_TOKEN_CUSTOM", raising=False)
+    inputs = iter([
+        "agent-1",
+        "1",
+        "",
+        "OPENAI_API_KEY",
+        "gpt-4o-mini",
+        "y",            # another agent
+        "agent-2",
+        "1",
+        "",
+        "y",            # reuse api key
+        "gpt-4o-mini",
+        "n",            # no more agents
+        "y",            # add messaging app
+        "1",            # Discord
+        "y",            # connect agent-1
+        "",             # default token env
+        "111111111111111111",
+        "y",            # inbound
+        "y",            # connect agent-2
+        "BOT_TOKEN_CUSTOM",
+        "222222222222222222",
+        "n",            # no inbound
+    ])
+    with patch("builtins.input", side_effect=_feed(inputs)), \
+         patch("agent_augury.wizard.save_model_config"), \
+         patch("agent_augury.wizard.getpass.getpass", return_value=""), \
+         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
+        cfg = run_wizard()
+
+    assert "bots" in cfg
+    assert len(cfg["bots"]) == 2
+    assert cfg["bots"][0] == {
+        "agent_id": "agent-1",
+        "token_env": "BOT_TOKEN_AGENT_1",
+        "channel_id": 111111111111111111,
+        "inbound": True,
+    }
+    assert cfg["bots"][1] == {
+        "agent_id": "agent-2",
+        "token_env": "BOT_TOKEN_CUSTOM",
+        "channel_id": 222222222222222222,
+    }
+
+    path = tmp_path / "with_bots.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    loaded = load_config(path)
+    assert loaded["bots"][0]["inbound"] is True
+    assert loaded["bots"][1]["channel_id"] == 222222222222222222
+
+
+def test_wizard_rejects_pasted_bot_token_as_env_name(monkeypatch):
+    monkeypatch.delenv("BOT_TOKEN_SOLO", raising=False)
+    pasted = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
+    inputs = iter([
+        "solo",
+        "1",
+        "",
+        "OPENAI_API_KEY",
+        "gpt-4o-mini",
+        "n",
+        "y",
+        "1",
+        "y",
+        pasted,
+        "",
+        "555555555555555555",
+        "n",
+    ])
+    with patch("builtins.input", side_effect=_feed(inputs)), \
+         patch("agent_augury.wizard.save_model_config"), \
+         patch("agent_augury.wizard.getpass.getpass", return_value=""), \
+         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
+        cfg = run_wizard()
+    assert cfg["bots"][0]["token_env"] == "BOT_TOKEN_SOLO"
+
+
+def test_wizard_stores_discord_bot_token_in_dotenv(tmp_path, monkeypatch):
+    secrets = tmp_path / ".env"
+    token = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
+    monkeypatch.delenv("BOT_TOKEN_SOLO", raising=False)
+    inputs = iter([
+        "solo",
+        "1",
+        "",
+        "OPENAI_API_KEY",
+        "gpt-4o-mini",
+        "n",
+        "y",
+        "1",
+        "y",
+        "",
+        "555555555555555555",
+        "n",
+    ])
+    with patch("builtins.input", side_effect=_feed(inputs)), \
+         patch("agent_augury.wizard.save_model_config"), \
+         patch("agent_augury.wizard.getpass.getpass", return_value=token), \
+         patch("agent_augury.wizard.DEFAULT_SECRETS_ENV_PATH", secrets), \
+         patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
+        cfg = run_wizard()
+
+    assert cfg["bots"][0]["token_env"] == "BOT_TOKEN_SOLO"
+    assert "MTU0" not in yaml.safe_dump(cfg)
+    assert secrets.exists()
+    assert "BOT_TOKEN_SOLO=" in secrets.read_text(encoding="utf-8")
+    assert os.environ.get("BOT_TOKEN_SOLO") == token
+
+
+def test_wizard_messaging_reuse_model_config_still_asks(tmp_path, monkeypatch):
+    monkeypatch.delenv("BOT_TOKEN_A1", raising=False)
+    existing = {
+        "max_steps": 10,
+        "agents": [
+            {
+                "id": "a1",
+                "backend": {
+                    "type": "openai",
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "model": "gpt-4o-mini",
+                },
+            },
+        ],
+    }
+    inputs = iter([
+        "y",  # add messaging
+        "1",  # Discord
+        "y",  # connect a1
+        "BOT_TOKEN_A1",
+        "999",
+        "y",  # inbound
+    ])
+    with patch("builtins.input", side_effect=_feed(inputs)), \
+         patch("agent_augury.wizard.save_model_config") as mock_save, \
+         patch("agent_augury.wizard.getpass.getpass", return_value=""):
+        cfg = run_wizard(existing_model_config=existing)
+
+    mock_save.assert_not_called()
+    assert cfg["bots"][0]["agent_id"] == "a1"
+    assert cfg["bots"][0]["token_env"] == "BOT_TOKEN_A1"
+    assert cfg["bots"][0]["inbound"] is True

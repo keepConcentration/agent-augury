@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from .bot_token_env import validate_token_env_name
 from .server import RESERVED_NAMES
 
 _VALID_BACKEND_TYPES = {"openai", "nous", "nous_oauth"}
@@ -26,7 +27,7 @@ _TOOLS_TOP_KEYS = frozenset({"shell", "web", "file", "approval"})
 _TOOLS_APPROVAL_KEYS = frozenset(
     {"shell", "file_write", "web", "bypass", "ttl_seconds"}
 )
-_VALID_APPROVAL_MODES = frozenset({"require", "off"})
+_VALID_APPROVAL_MODES = frozenset({"require", "off", "dangerous"})
 
 # tools.shell 허용 키
 _TOOLS_SHELL_KEYS = frozenset(
@@ -461,6 +462,14 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
                 raise ConfigError(f"bots[{i}] requires 'agent_id'")
             if "token_env" not in bot:
                 raise ConfigError(f"bots[{i}] requires 'token_env'")
+            te = bot["token_env"]
+            if not isinstance(te, str):
+                raise ConfigError(
+                    f"bots[{i}].token_env must be a string, got {te!r}"
+                )
+            te_err = validate_token_env_name(te)
+            if te_err:
+                raise ConfigError(f"bots[{i}].token_env invalid: {te_err}")
             if "channel_id" not in bot:
                 raise ConfigError(f"bots[{i}] requires 'channel_id'")
             # channel_id는 int 변환 가능해야 함

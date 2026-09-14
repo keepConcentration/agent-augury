@@ -69,9 +69,9 @@ class ToolPolicy:
     # file
     allowed_roots: tuple[str, ...] = ()
     edit_enabled: bool = True  # edit_file / append_file
-    # approval (TOOL_HUMAN_APPROVAL_DESIGN — T5: shell/file_write default require)
-    approval_shell: str = "require"  # require | off
-    approval_file_write: str = "require"
+    # approval — Hermes-like defaults: shell only when dangerous; writes rely on allowed_roots
+    approval_shell: str = "dangerous"  # require | dangerous | off
+    approval_file_write: str = "off"
     approval_web: str = "off"
     approval_bypass: bool = False
     approval_ttl_seconds: float = 600.0
@@ -115,8 +115,8 @@ class ToolPolicy:
             web_search_provider=_as_str(web.get("search_provider"), "duckduckgo"),
             allowed_roots=roots,
             edit_enabled=_as_bool(file_cfg.get("edit_enabled"), True),
-            approval_shell=_as_approval_mode(approval.get("shell"), "require"),
-            approval_file_write=_as_approval_mode(approval.get("file_write"), "require"),
+            approval_shell=_as_approval_mode(approval.get("shell"), "dangerous"),
+            approval_file_write=_as_approval_mode(approval.get("file_write"), "off"),
             approval_web=_as_approval_mode(approval.get("web"), "off"),
             approval_bypass=_as_bool(approval.get("bypass"), False),
             approval_ttl_seconds=_as_float(approval.get("ttl_seconds"), 600.0),
@@ -187,7 +187,7 @@ class ToolPolicy:
         return None
 
     def approval_mode_for(self, tool: str) -> str:
-        """Return ``require`` / ``off`` for *tool* (ungated tools → ``off``)."""
+        """Return ``require`` / ``dangerous`` / ``off`` for *tool* (ungated → ``off``)."""
         from .approval import tool_approval_class
 
         kind = tool_approval_class(tool)
@@ -199,8 +199,27 @@ class ToolPolicy:
             return self.approval_web
         return "off"
 
-    def requires_approval(self, tool: str) -> bool:
-        return self.approval_mode_for(tool) == "require" and not self.approval_bypass
+    def requires_approval(
+        self, tool: str, *, args: dict[str, Any] | None = None
+    ) -> bool:
+        """True when this tool call should go through human approval."""
+        if self.approval_bypass:
+            return False
+        mode = self.approval_mode_for(tool)
+        if mode == "off":
+            return False
+        if mode == "require":
+            return True
+        if mode == "dangerous":
+            from .approval import detect_dangerous_shell_command, tool_approval_class
+
+            kind = tool_approval_class(tool)
+            if kind == "shell":
+                cmd = str((args or {}).get("command") or "")
+                return detect_dangerous_shell_command(cmd) is not None
+            # file_write/web: ``dangerous`` treated as ``require``
+            return True
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +265,6 @@ def _as_approval_mode(value: Any, default: str) -> str:
     if value is True:
         return default
     text = str(value).strip().lower()
-    if text in ("require", "off"):
+    if text in ("require", "off", "dangerous"):
         return text
     return default

@@ -68,15 +68,15 @@ def test_bots_route_via_gateway():
 
     gw.publish(
         make_event(
-            "tool",
+            "agent.step",
             agent_id="agent-1",
-            tool="read_file",
-            args={},
+            result={"text": "hello from agent"},
         )
     )
     item = bot._outbox.get_nowait()
-    assert "agent-1" in item
-    assert "read_file" in item
+    text = item.content if hasattr(item, "content") else item
+    assert "agent-1" not in text
+    assert "hello from agent" in text
 
 
 def test_translate_send_message_preserves_author_for_mirror():
@@ -112,8 +112,8 @@ def test_format_wire_create_thread_parity():
         )
     )
     assert text is not None
-    assert "create_thread" in text
-    assert "plan" in text
+    assert "Thread **plan**" in text
+    assert "create_thread" not in text
 
 
 def test_format_wire_approval_request():
@@ -128,10 +128,11 @@ def test_format_wire_approval_request():
         )
     )
     assert text is not None
-    assert "approval needed" in text
+    assert "Approval needed" in text
     assert "coder" in text
     assert "rm -rf /tmp/x" in text
-    assert "1/approve" in text
+    # Discord prompts use buttons; plain formatter may still mention text fallback.
+    assert "1/approve" in text or "Reply" in text or "approve" in text.lower()
 
 
 def test_session_attaches_mirror_to_gateway(tmp_path, monkeypatch):

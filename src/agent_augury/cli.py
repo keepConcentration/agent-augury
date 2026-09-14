@@ -1,7 +1,10 @@
-"""CLI entrypoint: wizard + Ink Interactive Surface.
+"""CLI entrypoint: wizard + Ink Interactive Surface + headless Core.
 
 Modes:
   - ``agent-augury --config PATH`` — Ink session (requires Node.js >= 22).
+  - ``agent-augury --headless`` — Core only (wizard default YAML; optional ``--config``).
+  - ``agent-augury --headless --reconfigure`` — re-run wizard, then headless Core.
+  - ``agent-augury --headless --config PATH`` — Core only with an explicit YAML.
   - ``agent-augury`` (no args) — interactive wizard, then Ink session.
   - ``agent-augury --ink-hello`` — Ink hello Gateway demo (M2/M3).
 
@@ -10,14 +13,16 @@ The Ink front is resolved via ``agent_augury.ink_front`` (env override, repo
 
 Flags:
   - ``--reconfigure`` — discard saved model settings and re-run the wizard.
-  - ``--quiet`` — suppress live event output in the Surface.
+  - ``--quiet`` — suppress live event output in the Surface / headless stderr.
   - ``--demo`` — allow ``type: fake`` backends.
+  - ``--headless`` — boot Core without Ink (daemon / chat-channel mode).
+  - ``--no-auto-start`` — with ``--headless``, wait for human.send before first run.
 
-Design: ``docs/architecture/MULTI_FRONT_DESIGN.md`` (M7) — Ink is the only
-Interactive Surface. Headless automation uses Gateway ``session_stdio``.
+Design: ``docs/architecture/MULTI_FRONT_DESIGN.md`` (M7) — Ink is the primary
+Interactive Surface; headless is a launcher, not another messenger Surface.
 
 v0.7 (AGENT_TOOLS_EXPANSION_DESIGN.md v4.1, P9): ``allowed_roots`` 배선은
-Gateway session child (``session_stdio``)에서 프로젝트 루트를 전달한다.
+Gateway session child (``session_stdio``) / headless runner에서 프로젝트 루트를 전달한다.
 """
 
 from __future__ import annotations
@@ -40,7 +45,6 @@ from .model_config import (
     load_model_config,
     model_config_exists,
 )
-from .protocol.defaults import DEFAULT_PROTOCOL
 from .wizard import WizardCancelled, check_tty, run_wizard
 
 _DEFAULT_OUTPUT_PATH = Path.home() / ".agent-augury" / "agent-augury-session.yaml"
@@ -116,9 +120,20 @@ def _launch_session(
     quiet: bool = False,
     allow_fake: bool = False,
     force_ink: bool = False,
+    headless: bool = False,
+    auto_start: bool = True,
 ) -> int:
-    """Start the Ink Interactive Surface for a session config."""
-    del force_ink  # always Ink; flag kept for CLI compat
+    """Start Ink or headless Core for a session config."""
+    del force_ink  # Ink is the default non-headless path
+    if headless:
+        from .gateway.headless import run_headless_session
+
+        return run_headless_session(
+            cfg_path,
+            demo=allow_fake,
+            quiet=quiet,
+            auto_start=auto_start,
+        )
     return _run_ink_surface(
         mode="session",
         config=cfg_path,
@@ -187,9 +202,11 @@ def _run_wizard_flow(
     *,
     force_ink: bool = False,
     allow_fake: bool = False,
+    headless: bool = False,
+    auto_start: bool = True,
 ) -> int:
-    """Run the interactive wizard, save the YAML, then start Ink."""
-    del force_ink  # always Ink
+    """Run the interactive wizard, save the YAML, then start Ink or headless."""
+    del force_ink  # Ink is the default non-headless path
     if not check_tty():
         print(
             "error: interactive wizard requires a TTY. "
@@ -206,29 +223,18 @@ def _run_wizard_flow(
             if existing is None:
                 existing = None
 
-        if existing is not None and not force_reconfigure:
-            cfg = {
-                "max_steps": existing.get("max_steps", 0),
-                "human": {"id": "human"},
-                "protocol": dict(DEFAULT_PROTOCOL),
-                "agents": existing["agents"],
-            }
-            if output_path is None:
-                output_path = _DEFAULT_OUTPUT_PATH
-            else:
-                output_path = _resolve_output_path(str(output_path))
-            _save_config(cfg, output_path)
-            print(f"\nUsing saved model config. Config saved to: {output_path}")
+        # Always go through run_wizard so messaging-app prompts run even when
+        # model settings are reused from disk.
+        cfg = run_wizard(
+            existing_model_config=existing if not force_reconfigure else None,
+            force_reconfigure=force_reconfigure,
+        )
+        if output_path is None:
+            output_path = _DEFAULT_OUTPUT_PATH
         else:
-            cfg = run_wizard(
-                existing_model_config=existing, force_reconfigure=force_reconfigure
-            )
-            if output_path is None:
-                output_path = _DEFAULT_OUTPUT_PATH
-            else:
-                output_path = _resolve_output_path(str(output_path))
-            _save_config(cfg, output_path)
-            print(f"\nConfig saved to: {output_path}")
+            output_path = _resolve_output_path(str(output_path))
+        _save_config(cfg, output_path)
+        print(f"\nConfig saved to: {output_path}")
     except WizardCancelled:
         print("\nWizard cancelled.")
         return 130
@@ -261,6 +267,16 @@ def _run_wizard_flow(
                 file=sys.stderr,
             )
         return 1
+
+    if headless:
+        from .gateway.headless import run_headless_session
+
+        return run_headless_session(
+            str(output_path),
+            demo=allow_fake,
+            quiet=quiet,
+            auto_start=auto_start,
+        )
 
     return _run_ink_surface(
         mode="session",
@@ -351,7 +367,10 @@ def main(argv: list[str] | None = None) -> int:
         "--reconfigure",
         action="store_true",
         default=False,
-        help="discard saved model settings and re-run the wizard from scratch",
+        help=(
+            "discard saved model settings and re-run the wizard "
+            "(with --headless: then boot Core without Ink)"
+        ),
     )
     parser.add_argument(
         "--quiet",
@@ -377,7 +396,35 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="Ink Surface (default; kept for explicit scripts)",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        default=False,
+        help="boot Core without Ink (default config: ~/.agent-augury/agent-augury-session.yaml)",
+    )
+    parser.add_argument(
+        "--no-auto-start",
+        action="store_true",
+        default=False,
+        help="with --headless: do not auto-run config task; wait for human.send",
+    )
     args = parser.parse_args(argv)
+
+    if args.headless and args.ink:
+        print("error: --headless cannot be combined with --ink", file=sys.stderr)
+        return 1
+    if args.headless and args.ink_hello:
+        print(
+            "error: --headless cannot be combined with --ink-hello",
+            file=sys.stderr,
+        )
+        return 1
+    if args.no_auto_start and not args.headless:
+        print(
+            "error: --no-auto-start is only valid with --headless",
+            file=sys.stderr,
+        )
+        return 1
 
     if args.ink_hello and args.ink:
         print("error: --ink-hello cannot be combined with --ink", file=sys.stderr)
@@ -389,6 +436,42 @@ def main(argv: list[str] | None = None) -> int:
     if args.output is not None and args.config is not None:
         print("error: --output is only valid without --config", file=sys.stderr)
         return 1
+
+    # --headless --reconfigure → wizard first, then headless (no prior --config).
+    if args.headless and args.reconfigure:
+        if args.config is not None:
+            print(
+                "error: --reconfigure cannot be combined with --config "
+                "(omit --config to rewrite the wizard session YAML)",
+                file=sys.stderr,
+            )
+            return 1
+        output_path = Path(args.output) if args.output else None
+        try:
+            return _run_wizard_flow(
+                output_path,
+                force_reconfigure=True,
+                quiet=args.quiet,
+                allow_fake=args.demo,
+                headless=True,
+                auto_start=not args.no_auto_start,
+            )
+        except Exception as exc:  # noqa: BLE001 — CLI boundary
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    # --headless with no --config → wizard default session YAML
+    if args.headless and args.config is None:
+        default_cfg = _DEFAULT_OUTPUT_PATH
+        if not default_cfg.is_file():
+            print(
+                f"error: no config at {default_cfg}\n"
+                "Run `agent-augury` or `agent-augury --headless --reconfigure` "
+                "to create it, or pass --config PATH.",
+                file=sys.stderr,
+            )
+            return 1
+        args.config = str(default_cfg)
 
     if args.config is not None:
         if args.reconfigure:
@@ -402,6 +485,8 @@ def main(argv: list[str] | None = None) -> int:
             quiet=args.quiet,
             allow_fake=args.demo,
             force_ink=args.ink,
+            headless=args.headless,
+            auto_start=not args.no_auto_start,
         )
 
     output_path = Path(args.output) if args.output else None
@@ -412,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
             quiet=args.quiet,
             force_ink=args.ink,
             allow_fake=args.demo,
+            headless=False,
         )
     except Exception as exc:  # noqa: BLE001 — CLI boundary
         print(f"error: {exc}", file=sys.stderr)

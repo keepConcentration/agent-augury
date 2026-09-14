@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -21,6 +22,44 @@ GateDecision = Literal["execute", "bypass", "deny_no_channel", "require_approval
 _SHELL_TOOLS = frozenset({"run_command"})
 _FILE_WRITE_TOOLS = frozenset({"write_file", "edit_file", "append_file"})
 _WEB_TOOLS = frozenset({"web_search", "fetch_url"})
+
+# Hermes-adjacent: only escalate these shell patterns (not every run_command).
+# Case-insensitive; matched against a lightly normalized command string.
+_DANGEROUS_SHELL_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\brm\s+(-[a-zA-Z]*f[a-zA-Z]*|--force)\b",
+        r"\brmdir\s+/s\b",
+        r"\b(del|erase)\s+/[sq]\b",
+        r"\bformat\s+[a-z]:",
+        r"\bmkfs\b",
+        r"\bdd\s+.*\bof=/dev/",
+        r">\s*/dev/sd",
+        r"\b(shutdown|reboot|poweroff|halt)\b",
+        r":\(\)\s*\{\s*:\|:&\s*\}\s*;?",  # fork bomb
+        r"\bcurl\b.*\|\s*(ba)?sh\b",
+        r"\bwget\b.*\|\s*(ba)?sh\b",
+        r"\|\s*(ba)?sh\s*$",
+        r"\bchmod\s+-R\s+777\s+/",
+        r"\bchown\s+-R\b.*/",
+        r"\b(drop|truncate)\s+(database|table)\b",
+        r"\bgit\s+push\s+.*--force",
+        r"\bInvoke-Expression\b",
+        r"\biex\s*\(",
+        r"\bRemove-Item\s+.*-Recurse\b.*-Force\b.*[C-Z]:\\",
+    )
+)
+
+
+def detect_dangerous_shell_command(command: str) -> str | None:
+    """Return a short reason if *command* looks destructive; else None."""
+    text = " ".join((command or "").split())
+    if not text:
+        return None
+    for pat in _DANGEROUS_SHELL_PATTERNS:
+        if pat.search(text):
+            return f"matched dangerous pattern: {pat.pattern!r}"
+    return None
 
 
 def tool_approval_class(tool: str) -> ApprovalClass | None:

@@ -9,6 +9,8 @@ Surfaces speak Wire; this bridge:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -17,6 +19,8 @@ from typing import Any, Protocol
 from .bus import SessionGateway
 from .translate import translate_core_event
 from .types import WireCommand, WireEvent, make_event
+
+log = logging.getLogger(__name__)
 
 
 class SessionLike(Protocol):
@@ -222,18 +226,50 @@ class SessionBridge:
             content = _resolve_option_content(pq, content)
 
         thread_id = thread_id or self._recent_thread
-        if not thread_id:
+        known = self._coerce_known_thread(thread_id) if thread_id else None
+        if known:
+            use_id = known
+            self._recent_thread = known
+        elif thread_id and self.session is not None:
+            # Unknown id — Session.human_send falls back to durable ``human`` thread.
+            use_id = str(thread_id)
+        elif thread_id:
+            use_id = str(thread_id)
+            self._recent_thread = use_id
+        else:
             return {"queued": False, "error": "no thread_id"}
 
         source = cmd.get("source")
         if source is not None and not isinstance(source, dict):
             source = None
 
-        self._recent_thread = str(thread_id)
         self._dispatch_send(
-            str(thread_id), content, mentions or None, source=source
+            use_id, content, mentions or None, source=source
         )
-        return {"queued": True, "thread_id": thread_id}
+        return {"queued": True, "thread_id": use_id}
+
+    def _coerce_known_thread(self, thread_id: Any) -> str | None:
+        """Return a MessageServer-known thread id, or None if unknown/unset."""
+        if not thread_id:
+            return None
+        ref = str(thread_id).strip()
+        if not ref:
+            return None
+        session = self.session
+        server = getattr(session, "server", None) if session is not None else None
+        if server is None:
+            return ref
+        resolve = getattr(server, "resolve_thread_id", None)
+        if not callable(resolve):
+            return ref
+        known = resolve(ref)
+        if known:
+            return known
+        if self._recent_thread:
+            recent = resolve(self._recent_thread)
+            if recent:
+                return recent
+        return None
 
     def _dispatch_send(
         self,
@@ -268,7 +304,15 @@ class SessionBridge:
                 asyncio.run(result)  # type: ignore[arg-type]
                 return
         if loop.is_running():
-            loop.create_task(result)  # type: ignore[arg-type]
+            task = loop.create_task(result)  # type: ignore[arg-type]
+
+            def _log_task_error(done: asyncio.Task[Any]) -> None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    exc = done.exception()
+                    if exc is not None:
+                        log.exception("bridge async command failed: %s", exc)
+
+            task.add_done_callback(_log_task_error)
         else:
             loop.run_until_complete(result)  # type: ignore[arg-type]
 
@@ -328,8 +372,11 @@ class SessionBridge:
             question=str(wire.get("question") or ""),
             options=list(wire.get("options") or []),
         )
-        if pq.thread_id:
-            self._recent_thread = pq.thread_id
+        known = self._coerce_known_thread(pq.thread_id) if pq.thread_id else None
+        if known:
+            pq.thread_id = known
+            self._recent_thread = known
+        # Do not poison recent_thread with agent-hallucinated ids (e.g. "c-user-test").
         self._pending.append(pq)
 
     def _pop_pending(self, question_id: Any | None) -> PendingQuestion | None:

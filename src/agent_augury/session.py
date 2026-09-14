@@ -28,19 +28,13 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
-# .env 자동 로딩 — cwd → 프로젝트 루트 순서로 탐색
+# .env 자동 로딩 — 셸 export 최우선; 파일끼리는 ~/.agent-augury/.env 가 cwd/프로젝트보다 우선
 try:
-    from dotenv import load_dotenv
-    _cwd_env = Path.cwd() / ".env"
-    if _cwd_env.exists():
-        load_dotenv(_cwd_env, override=False)
-    else:
-        _root_env = Path(__file__).resolve().parents[2] / ".env"
-        if _root_env.exists():
-            load_dotenv(_root_env, override=False)
+    from .bot_token_env import load_merged_dotenv_into_environ
+
+    load_merged_dotenv_into_environ()
 except ImportError:
     pass
 
@@ -73,6 +67,9 @@ from .server import MessageServer
 
 OnStep = Callable[[str, Any], None]
 OnToolEvent = Callable[[dict[str, Any]], None]
+
+# HITL / Discord mid-run replies land here when agents invent bad thread ids.
+HUMAN_CHAT_THREAD_NAME = "human"
 
 # LocalTool 트랙 B로 주입하는 web_search tool spec (AGENT_TOOLS §3.2/§4.3.2).
 _WEB_SEARCH_TOOL_SPEC = {
@@ -416,12 +413,16 @@ class Session:
         if bots_spec:
             bot_manager = BotManager()
             for bot_entry in bots_spec:
-                token = os.environ.get(bot_entry["token_env"], "")
+                token_env = bot_entry["token_env"]
+                from .bot_token_env import normalize_discord_token
+
+                token = normalize_discord_token(os.environ.get(token_env, ""))
                 adapter = DiscordBotAdapter(
                     agent_id=bot_entry["agent_id"],
                     token=token,
                     channel_id=int(bot_entry["channel_id"]),
                     inbound=bool(bot_entry.get("inbound", False)),
+                    token_env=str(token_env),
                 )
                 bot_manager.register(adapter)
 
@@ -537,6 +538,18 @@ class Session:
                 agent.current_phase = self.protocol.phase
                 _inject_protocol_gate_state(agent, self.protocol)
 
+        # Always have a durable chat thread for human.send (Discord / Ink mid-run).
+        human_tid = await self.ensure_human_thread()
+        if self.bridge is not None and not self.bridge.recent_thread:
+            self.bridge._recent_thread = human_tid
+
+    async def ensure_human_thread(self) -> str:
+        """Create or reuse the ``human`` collaboration thread (all agents)."""
+        participants = [a.agent_id for a in self.agents]
+        return await self.server.create_thread(
+            HUMAN_CHAT_THREAD_NAME, participants=participants
+        )
+
     async def human_send(
         self,
         thread_id: str,
@@ -551,11 +564,19 @@ class Session:
         Raises if no human is configured (``has_human`` is False). The reply is
         pushed to agent inboxes and absorbed as a ``[radio]`` block on their
         next ``step()``.
+
+        If *thread_id* is unknown (agents often invent ids for ``ask_user``),
+        resolve by name or fall back to the durable ``human`` chat thread.
         """
         if not self.has_human:
             raise RuntimeError("human-in-the-loop is not enabled (no 'human:' section in config)")
+        resolved = self.server.resolve_thread_id(thread_id)
+        if resolved is None:
+            resolved = await self.ensure_human_thread()
+            if self.bridge is not None:
+                self.bridge._recent_thread = resolved
         return await self.server.human_send(
-            thread_id,
+            resolved,
             author="human",
             content=content,
             mentions=mentions,
@@ -580,6 +601,10 @@ class Session:
 
     async def flush_observers(self) -> None:
         """Flush Discord/Slack observe outboxes (best-effort)."""
+        if self.bot_manager is not None:
+            flush = getattr(self.bot_manager, "flush", None)
+            if flush is not None:
+                await flush()
         if self.mirror is not None:
             await self.mirror.flush()
         if self.slack_mirror is not None:

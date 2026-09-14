@@ -1,22 +1,11 @@
 # agent-augury NOTICE
 
 agent-augury is an independent open-source multi-agent collaboration runtime.
-It contains no copied source code from the works below; attribution is provided
-for related ideas and academic practice.
+License: Apache License 2.0 (see LICENSE).
 
-## Related work — AgentRadio
+## Academic related work
 
-- Repository: https://github.com/Coral-Protocol/AgentRadio
-- License: Apache License 2.0
-- Paper: *AgentRadio: Passive Awareness for Long-Horizon Multi-Agent
-  Collaboration* — arXiv:2607.28430
-  https://arxiv.org/abs/2607.28430
-- Relationship: agent-augury independently implements non-blocking teammate
-  messaging (threads / fire-and-forget / inbox drain at step boundaries) as a
-  local, model-agnostic Python package. It is not affiliated with the
-  AgentRadio authors.
-
-## This project
-
-- License: Apache License 2.0 (see LICENSE)
-- Not affiliated with Nous Research or the AgentRadio authors.
+Ideas around non-blocking teammate messaging and passive inbox absorption also
+appear in the multi-agent collaboration literature (e.g. arXiv:2607.28430).
+This repository does not copy source code from that work and is not affiliated
+with its authors.

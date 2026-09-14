@@ -106,26 +106,23 @@ Hermes `smart` LLM 분류·orchestrator `gate.sh` 전면 워커 게이트는 P0�
 ```yaml
 tools:
   approval:
-    shell: require          # require | off
-    file_write: require     # write_file / edit_file / append_file
-    web: off                # P0 기본 off (부작용 상대적 약함)
+    shell: dangerous        # require | dangerous | off  (기본: Hermes-like)
+    file_write: off         # require | off  (dangerous ≡ require; 경로는 allowed_roots)
+    web: off
     bypass: false           # true 또는 --demo → 자동 GRANTED
     ttl_seconds: 600        # pending 만료
 ```
 
 - 글로벌 `tools.approval` + (선택) 에이전트별 deep-merge는 기존 `ToolPolicy` 병합 패턴을 따른다.
 - CLI `--demo`는 `bypass: true`와 동치로 취급한다.
-- **기본값 제안 (P0 도입 시):**  
-  - 호환을 위해 첫 릴리스는 `shell`/`file_write` 기본 `off` + README에서 `require` 권장,  
-    **또는** 브레이킹으로 기본 `require` (제품 신뢰 우선).  
-  - **권장 결정:** 첫 구현은 기본 `require`, `--demo`/테스트만 bypass.  
-    (기존 실사용 YAML은 릴리스 노트에 마이그레이션 한 줄.)
+- **기본값 (현행):** `shell: dangerous` (파괴적 패턴만 승인), `file_write: off`, `web: off`.
+  엄격 모드는 YAML에서 `shell`/`file_write: require`로 되돌린다.
 
-`ToolPolicy` 확장 필드 초안:
+`ToolPolicy` 확장 필드:
 
 ```text
-approval_shell: "require" | "off"
-approval_file_write: "require" | "off"
+approval_shell: "require" | "dangerous" | "off"
+approval_file_write: "require" | "off"   # dangerous 허용 시 require와 동일
 approval_web: "require" | "off"
 approval_bypass: bool
 approval_ttl_seconds: float
@@ -133,10 +130,10 @@ approval_ttl_seconds: float
 
 ### 4.2 승인 대상 도구 클래스
 
-| 클래스 | 도구 | P0 |
-|--------|------|-----|
-| `shell` | `run_command` | require 권장 |
-| `file_write` | `write_file`, `edit_file`, `append_file` | require 권장 |
+| 클래스 | 도구 | 현행 기본 |
+|--------|------|-----------|
+| `shell` | `run_command` | `dangerous` (패턴 게이트) |
+| `file_write` | `write_file`, `edit_file`, `append_file` | `off` (`allowed_roots` 유지) |
 | `web` | `web_search`, `fetch_url` | 기본 off |
 | (비대상) | `create_thread`, `send_message`, `read_resource`, `ask_user`, `read_file`, … | 승인 불필요 |
 

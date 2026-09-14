@@ -6,7 +6,6 @@
 >
 > Historical name: “L3 passive awareness”. L2 (`wait_for_mention`) was removed
 > in v0.3 — this suite only asserts the current inbox path.
-> Related paper citation (optional context): arXiv:2607.28430.
 >
 > **Status:** `run_l3_passive_awareness.py` + `test_l3_passive_awareness.py`
 > (FakeModelBackend). Included in CI via `pytest tests/ examples/benchmark/ -q`.

@@ -4,6 +4,9 @@ When ``bots[].inbound: true``, channel messages become Wire ``human.*``
 commands on an interact Gateway surface. Default remains observe-only (D2).
 
 Pending tool approvals take priority over ``ask_user`` answers (same as Ink).
+Prefer Discord Approve/Deny **buttons** (``discord_approval``) so each
+``approval_id`` is resolved independently; text ``1``/``2`` still works for
+the oldest pending item only (and is de-duplicated across N inbound bots).
 """
 
 from __future__ import annotations
@@ -12,10 +15,16 @@ from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
+import discord
+
 from agent_augury.gateway.bridge import SessionBridge
 from agent_augury.gateway.bus import SessionGateway, SurfaceSubscription
 from agent_augury.gateway.types import make_command
 
+from .discord_approval import (
+    handle_approval_interaction,
+    parse_approval_custom_id,
+)
 from .discord_bot import BotManager
 
 INBOUND_SURFACE = "discord-inbound"
@@ -57,6 +66,26 @@ def attach_discord_inbound(
             )
         )
 
+    async def _on_interaction(interaction: discord.Interaction) -> None:
+        if interaction.type is not discord.InteractionType.component:
+            return
+        data = interaction.data or {}
+        custom_id = str(data.get("custom_id") or "")
+        parsed = parse_approval_custom_id(custom_id)
+        if parsed is None:
+            return
+        approval_id, decision = parsed
+        await handle_approval_interaction(
+            interaction,
+            gateway=gateway,
+            approval_id=approval_id,
+            decision=decision,
+        )
+
+    for bot in bot_manager.adapters():
+        # Any bot that can post approval buttons must handle clicks.
+        bot.set_interaction_handler(_on_interaction)
+
     for bot in inbound_bots:
         agent_id = bot.agent_id
 
@@ -65,8 +94,10 @@ def attach_discord_inbound(
             *,
             user_id: str,
             channel_id: int,
+            message_id: str = "",
             _agent_id: str = agent_id,
         ) -> None:
+            del message_id  # consumed earlier for cross-bot dedupe
             dispatch_discord_inbound(
                 gateway,
                 bridge,
@@ -102,7 +133,8 @@ def dispatch_discord_inbound(
     }
     cmd_id = str(uuid4())
 
-    # Tool approval first (Ink parity).
+    # Tool approval first (Ink parity) — oldest pending only.
+    # Prefer buttons for multi-approval; text "1" must not drain via N bots.
     pending_appr = bridge.pending_approval
     if pending_appr is not None:
         decision = parse_approval_decision(text)
@@ -116,11 +148,9 @@ def dispatch_discord_inbound(
                 source=source,
             )
             return gateway.dispatch(cmd, surface=INBOUND_SURFACE)
-        # Non-decision text while approval is pending: do not steal ask_user /
-        # free-form send; ask for a clear approve/deny token.
         return {
             "ok": False,
-            "error": "approval pending; reply 1/approve or 2/deny",
+            "error": "approval pending; use Approve/Deny buttons (or reply 1/2)",
             "approval_id": pending_appr.approval_id,
         }
 

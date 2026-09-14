@@ -4,10 +4,7 @@
 > 범위: 공유 스레드, non-blocking 동료 메시지, 역할, HITL, 선택적 P1~P5 프로토콜을 갖춘
 > model-agnostic Python 패키지.
 >
-> 관련 아이디어(비차단 inbox / fire-and-forget)의 학술·오픈소스 선례는
-> [AgentRadio](https://github.com/Coral-Protocol/AgentRadio)에 있다. **이 문서는 제품
-> 런타임의 설계 SSOT**이며, 원본 실험 코드의 재현 가이드가 아니다. 선례 프로젝트명은
-> 참고·고지에서만 쓰고, **이 프로젝트 자기 이름은 `agent-augury`다.**
+> **이 문서는 제품 런타임의 설계 SSOT**다. 학술 선례 인용은 [`NOTICE`](NOTICE)를 본다.
 
 ---
 
@@ -36,7 +33,7 @@ agent-augury는 **여러 LLM 에이전트를 한 팀으로 돌리는 로컬 런�
 | 구성 | **사용자가 에이전트 수·역할·백엔드를 YAML/위저드로 구성** |
 | 배포 | **pip 설치 가능한 오픈소스 패키지** |
 
-선례와의 상세 비교·계보 메모는 [`NOTICE`](NOTICE)와 아래 아카이브 절을 참고한다.
+선례·학술 인용은 [`NOTICE`](NOTICE)를 참고한다.
 (구버전 문서의 “논문 실험 코드 대비표”는 역사적 맥락용이다.)
 
 ### 1.3 비목표 (현재 제품 범위 밖)
@@ -284,9 +281,9 @@ agent-augury/
 
 ### 4.3 라이선스
 
-**결정(예정): Apache-2.0.**
+**결정: Apache-2.0.**
 
-원본이 Apache-2.0이고, 프로토콜/프롬프트 문장을 참고할 가능성이 있으면 Apache-2.0 + 논문·레포 인용이 마찰이 적다. 코드를 전혀 미복제하고 완전 재작성할 경우 MIT도 가능하지만, "원본 개념 계승"이라는 정체성상 Apache-2.0으로 두고 논문([arXiv:2607.28430](https://arxiv.org/abs/2607.28430))과 원본 레포를 명시 인용한다.
+독립 구현·재작성 기준이며, 관련 학술 인용은 [`NOTICE`](NOTICE)에 둔다.
 
 ---
 
@@ -386,5 +383,6 @@ agent-augury/
 
 ## 7. 참고
 
-- AgentRadio: <https://github.com/Coral-Protocol/AgentRadio> (Apache-2.0)
-- Paper: <https://arxiv.org/abs/2607.28430>
+- 학술 관련 인용: [`NOTICE`](NOTICE) (arXiv:2607.28430)
+- Wire / Gateway: `docs/architecture/MULTI_FRONT_DESIGN.md`
+- 도구 승인: `docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`

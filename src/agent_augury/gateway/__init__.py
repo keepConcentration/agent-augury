@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .bridge import PendingApproval, PendingQuestion, SessionBridge
 from .bus import SessionGateway, SurfaceMode, SurfaceSubscription
+from .headless import HeadlessRunner, emit_startup_warnings, run_headless_session
 from .stdio import JsonlStdioBridge, decode_line, encode_line, run_stdio_bridge
 from .translate import translate_core_event
 from .types import (
@@ -25,6 +26,7 @@ from .types import (
 __all__ = [
     "COMMAND_TYPES",
     "EVENT_TYPES",
+    "HeadlessRunner",
     "JsonlStdioBridge",
     "PendingApproval",
     "PendingQuestion",
@@ -37,10 +39,12 @@ __all__ = [
     "WireMessage",
     "WireResult",
     "decode_line",
+    "emit_startup_warnings",
     "encode_line",
     "make_command",
     "make_event",
     "make_result",
+    "run_headless_session",
     "run_stdio_bridge",
     "translate_core_event",
 ]

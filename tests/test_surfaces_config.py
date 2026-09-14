@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import yaml
-
 import pytest
+import yaml
 
 from agent_augury.config import ConfigError, load_config, normalize_surfaces
 from agent_augury.session import Session
@@ -118,6 +117,8 @@ def test_load_config_surfaces_roundtrip(tmp_path, monkeypatch):
 
 
 def test_session_from_surfaces_expanded_config(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock, patch
+
     monkeypatch.setenv("TEST_API_KEY", "sk")
     monkeypatch.setenv("AUGURY_MIRROR_URL", "https://example.test/hook")
     monkeypatch.setenv("DISCORD_TOKEN", "tok")
@@ -141,7 +142,14 @@ def test_session_from_surfaces_expanded_config(tmp_path, monkeypatch):
         ],
     )
     # Simulate post-normalize_surfaces shape (Session.from_config uses legacy keys).
-    session = Session.from_config(cfg)
+    # discord.Client requires an event loop; mock it like other bot unit tests.
+    mock_client = MagicMock()
+    mock_client.event = lambda func: func
+    with patch(
+        "agent_augury.channel.discord_bot.discord.Client",
+        return_value=mock_client,
+    ):
+        session = Session.from_config(cfg)
     assert session.mirror is not None
     assert session.bot_manager is not None
     assert "discord-mirror" in session.gateway.surfaces()

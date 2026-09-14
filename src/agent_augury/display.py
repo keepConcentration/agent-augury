@@ -63,10 +63,7 @@ def render_event(event: dict[str, Any]) -> str | None:
         # v1.4: protocol_violation -> always render (dont skip)
         if event.get("protocol_violation"):
             pass
-        elif tool in ("send_message", "create_thread", "read_resource"):
-            return None
-        # Default: skip run_command tool events (noise); protocol_violation still shows.
-        elif tool == "run_command":
+        elif tool in ("send_message", "create_thread", "read_resource") or tool == "run_command":
             return None
     elif event_type not in (
         "create_thread",

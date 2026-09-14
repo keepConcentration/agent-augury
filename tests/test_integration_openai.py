@@ -101,47 +101,29 @@ async def test_p1_to_p5_protocol_yaml_e2e_fake():
     assert len(final_approvals) == 3
 
 
-def test_cli_p1_to_p5_protocol_yaml(capsys, monkeypatch):
-    """CLI entry runs the YAML protocol config offline.
+def test_cli_p1_to_p5_protocol_yaml():
+    """CLI --config launches Ink for the P1~P5 YAML (session path).
 
-    T4/D11 coverage (agent-3 v4, main tree): the old `"[agent-1]"` assertion
-    referenced a stale output format. Current CLI step lines are
-    `💭 {agent_id}: {text}`; broadcast lines are
-    `💬 [{author} → {targets}][{tid}] {content}`; there is no `[agent-1]`
-    literal in the normal path. This test asserts the real output markers AND
-    closes the T4/D11 gap: a protocol-only session (no top-level `gate:`)
-    must report `gate=n/a` in the summary, and now also reports the protocol
-    phase (D11) via `phase={protocol.phase}`.
+    Full protocol E2E lives in ``test_p1_to_p5_protocol_yaml_e2e_fake``.
+    D11: protocol-only YAML has no standalone ``gate:`` → Session.gate is None.
     """
     from unittest.mock import patch
 
     from agent_augury.cli import main
 
-    # Mock load_config to return fake backend config (bypassing validation)
-    with patch("agent_augury.cli.load_config") as mock_load:
-        mock_load.return_value = _load_p1_p5_cfg()
-        # Mock the backend to avoid real API calls
-        # Mock the TUI adapter to avoid TTY issues
-        with patch("agent_augury.backends_factory.build_backend") as mock_build, \
-             patch("builtins.input", side_effect=EOFError):
-            from agent_augury.backend.fake import FakeModelBackend
-            mock_build.return_value = FakeModelBackend(script=["hello"])
-            rc = main(["--config", str(P1_P5_YAML)])
-    out = capsys.readouterr().out
+    cfg = _load_p1_p5_cfg()
+    assert "gate" not in cfg
+    session = Session.from_config(cfg)
+    assert session.gate is None
+    assert session.protocol is not None
+
+    with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
+        rc = main(["--config", str(P1_P5_YAML), "--demo"])
     assert rc == 0
-    # step log lines use the current format (agent-1 emits text completions)
-    assert "💭 agent-1:" in out
-    # summary line + step/message/gate/phase fields are present
-    assert "session finished" in out
-    assert "steps=" in out
-    # protocol-only config → no standalone gate → gate=n/a (D11 coverage)
-    assert "gate=n/a" in out
-    # D11: protocol phase is now reported in the summary
-    assert "phase=" in out
-    # P1 READY: broadcasts fire for all participants
-    assert "READY:" in out
-    # gate threads are pre-created → create_thread events are printed
-    assert "create_thread" in out
+    ink.assert_called_once()
+    assert ink.call_args.kwargs["mode"] == "session"
+    assert ink.call_args.kwargs["config"] == str(P1_P5_YAML)
+    assert ink.call_args.kwargs["demo"] is True
 
 
 # ---------------------------------------------------------------------------

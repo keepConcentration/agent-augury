@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
+from agent_augury.channel.discord_mirror import DiscordWebhookMirror
 from agent_augury.channel.discord_observe import (
     attach_discord_mirror,
     format_wire_for_bot,
 )
-from agent_augury.channel.slack_observe import attach_slack_mirror
-from agent_augury.channel.discord_mirror import DiscordWebhookMirror
 from agent_augury.channel.slack_mirror import SlackWebhookMirror
+from agent_augury.channel.slack_observe import attach_slack_mirror
 from agent_augury.gateway import (
     SessionBridge,
     SessionGateway,

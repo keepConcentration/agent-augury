@@ -50,7 +50,7 @@ def write_secrets_file(secrets: dict[str, str]) -> Path | None:
             json.dump(secrets, fh, ensure_ascii=False)
         try:
             os.chmod(path, 0o600)
-        except OSError:  # noqa: S110 — best-effort on platforms without chmod
+        except OSError:
             pass
     except Exception:
         path.unlink(missing_ok=True)
@@ -102,6 +102,6 @@ def load_gateway_secrets(*, unlink: bool = True) -> dict[str, Any]:
         if unlink:
             try:
                 path.unlink(missing_ok=True)
-            except OSError:  # noqa: S110
+            except OSError:
                 pass
     return loaded

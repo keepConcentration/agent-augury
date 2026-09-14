@@ -120,6 +120,75 @@ def test_dispatch_human_answer_when_pending():
     assert bridge.pending is None
 
 
+def test_dispatch_approval_resolve_when_pending():
+    from agent_augury.channel.discord_inbound import parse_approval_decision
+
+    assert parse_approval_decision("approve") == "granted"
+    assert parse_approval_decision("2") == "denied"
+    assert parse_approval_decision("maybe") is None
+
+    gw = SessionGateway()
+    resolved: list[tuple] = []
+
+    class Sess:
+        async def resolve_approval(self, approval_id, decision, *, reason=None):
+            resolved.append((approval_id, decision, reason))
+            return {"ok": True}
+
+        def request_interrupt(self) -> None:
+            return None
+
+        async def human_send(self, *args, **kwargs):
+            return "ok"
+
+    bridge = SessionBridge(gateway=gw, session=Sess())
+    bridge.install()
+    from agent_augury.gateway import SurfaceSubscription
+
+    gw.attach(
+        SurfaceSubscription(name=INBOUND_SURFACE, mode="interact", family="chat")
+    )
+    bridge.track_approval_request(
+        approval_id="ap-9",
+        agent_id="agent-1",
+        tool="run_command",
+        args_preview={"command": "echo hi"},
+    )
+    result = dispatch_discord_inbound(
+        gw, bridge, "1", agent_id="agent-1", user_id="u", channel_id=1
+    )
+    assert result["ok"] is True
+    assert result.get("queued") is True
+    assert result.get("decision") == "granted"
+    assert resolved == [("ap-9", "granted", "user")]
+    assert bridge.pending_approval is None
+
+
+def test_dispatch_blocks_freeform_while_approval_pending():
+    gw = SessionGateway()
+    sent: list = []
+    bridge = SessionBridge(
+        gateway=gw,
+        send_fn=lambda *a, **k: sent.append(a) or "ok",
+    )
+    bridge.install()
+    from agent_augury.gateway import SurfaceSubscription
+
+    gw.attach(
+        SurfaceSubscription(name=INBOUND_SURFACE, mode="interact", family="chat")
+    )
+    bridge.track_approval_request(
+        approval_id="ap-1", agent_id="a1", tool="write_file"
+    )
+    result = dispatch_discord_inbound(
+        gw, bridge, "just chatting", agent_id="a1", user_id="u", channel_id=1
+    )
+    assert result.get("ok") is False
+    assert "approval pending" in str(result.get("error", ""))
+    assert sent == []
+    assert bridge.pending_approval is not None
+
+
 def test_attach_inbound_sets_interact_surface():
     gw = SessionGateway()
     bridge = SessionBridge(gateway=gw, send_fn=lambda *_a, **_k: "ok")

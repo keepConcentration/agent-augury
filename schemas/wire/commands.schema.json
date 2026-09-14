@@ -71,6 +71,11 @@
         "content": { "type": "string" },
         "thread_id": { "type": ["string", "null"] },
         "question_id": { "type": "string" },
+        "approval_id": { "type": "string" },
+        "decision": {
+          "type": "string",
+          "enum": ["granted", "denied"]
+        },
         "mentions": {
           "type": "array",
           "items": { "type": "string" }
@@ -87,6 +92,23 @@
         "id": { "type": "string" },
         "type": { "const": "human.skip" },
         "question_id": { "type": "string" },
+        "source": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "id", "approval_id", "decision"],
+      "properties": {
+        "dir": { "const": "cmd" },
+        "id": { "type": "string" },
+        "type": { "const": "approval.resolve" },
+        "approval_id": { "type": "string" },
+        "decision": {
+          "type": "string",
+          "enum": ["granted", "denied"]
+        },
+        "reason": { "type": "string" },
         "source": { "type": "object" }
       },
       "additionalProperties": true

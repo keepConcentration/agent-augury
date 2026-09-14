@@ -60,6 +60,10 @@ class SessionGateway:
     def surfaces(self) -> list[str]:
         return sorted(self._surfaces)
 
+    def has_interact_surface(self) -> bool:
+        """True when at least one ``mode=interact`` surface is attached."""
+        return any(sub.mode == "interact" for sub in self._surfaces.values())
+
     def publish(self, event: WireEvent) -> int:
         """Validate and fan-out an event. Returns number of deliveries."""
         msg = validate_message(event)
@@ -109,9 +113,12 @@ class SessionGateway:
         except Exception as exc:  # noqa: BLE001 — surface gets structured error
             return make_result(str(msg["id"]), ok=False, error=str(exc))
         extra: dict[str, Any] = {}
+        ok = True
         if isinstance(payload, dict):
             extra.update(payload)
-        return make_result(str(msg["id"]), ok=True, **extra)
+            if "ok" in extra:
+                ok = bool(extra.pop("ok"))
+        return make_result(str(msg["id"]), ok=ok, **extra)
 
     def publish_raw(self, message: WireMessage) -> int:
         """Publish after validating an arbitrary mapping."""

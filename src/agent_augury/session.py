@@ -44,6 +44,7 @@ try:
 except ImportError:
     pass
 
+from .agent.approval import ApprovalStore, approval_notice_body
 from .agent.loop import AgentLoop, LocalTool
 from .agent.policy import ToolPolicy
 from .agent.web import build_search_provider
@@ -156,6 +157,8 @@ class Session:
         self.gateway = SessionGateway()
         self.bridge = SessionBridge(gateway=self.gateway, session=self)
         self.bridge.install()
+        # P0/M1: fail-closed tool approval (store may be replaced in from_config)
+        self.approvals = ApprovalStore()
         # v0.7: local-tool providers (web_search) to aclose at session end
         self._local_providers: list[Any] = []
         # Unified output queue for all display events (tools, steps, read_resource)
@@ -169,6 +172,168 @@ class Session:
         # P1: one READY reminder per agent before gate-wait park
         self._ready_nudged: set[str] = set()
 
+    def has_interact_surface(self) -> bool:
+        """True when an Interactive Surface can answer approval prompts."""
+        return self.gateway.has_interact_surface()
+
+    def _on_approval_request(self, rec: Any) -> None:
+        """Publish Wire ``approval.request`` (best-effort)."""
+        from .gateway.types import make_event
+
+        try:
+            self.gateway.publish(
+                make_event(
+                    "approval.request",
+                    approval_id=rec.approval_id,
+                    agent_id=rec.agent_id,
+                    tool=rec.tool,
+                    args_preview=dict(rec.args_snapshot),
+                    ttl_seconds=max(0.0, rec.expires_at - rec.created_at),
+                )
+            )
+        except Exception:  # noqa: BLE001, S110 — surface must not break tool path
+            pass
+        try:
+            self.bridge.track_approval_request(
+                approval_id=rec.approval_id,
+                agent_id=rec.agent_id,
+                tool=rec.tool,
+                args_preview=dict(rec.args_snapshot),
+                ttl_seconds=max(0.0, rec.expires_at - rec.created_at),
+            )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    async def resolve_approval(
+        self,
+        approval_id: str,
+        decision: str,
+        *,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Grant/deny a pending tool approval; on grant, run side effects now."""
+        from .gateway.types import make_event
+
+        if decision not in ("granted", "denied"):
+            raise ValueError("decision must be 'granted' or 'denied'")
+        try:
+            rec = self.approvals.resolve(approval_id, decision, reason=reason)  # type: ignore[arg-type]
+        except KeyError:
+            return {"ok": False, "error": f"unknown approval_id: {approval_id}"}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        agent = next((a for a in self.agents if a.agent_id == rec.agent_id), None)
+        if agent is None:
+            return {"ok": False, "error": f"unknown agent: {rec.agent_id}"}
+
+        if rec.state == "denied":
+            body = approval_notice_body(
+                approval_id=rec.approval_id,
+                decision="denied",
+                tool=rec.tool,
+                reason=rec.reason or "user",
+            )
+            self.server.inject_agent_notice(rec.agent_id, body)
+            try:
+                self.gateway.publish(
+                    make_event(
+                        "approval.resolved",
+                        approval_id=rec.approval_id,
+                        decision="denied",
+                        reason=rec.reason or "user",
+                        agent_id=rec.agent_id,
+                        tool=rec.tool,
+                    )
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+            self.bridge.clear_approval(rec.approval_id)
+            return {"ok": True, "state": "denied", "approval_id": rec.approval_id}
+
+        # granted — digest check then execute snapshot args
+        if not self.approvals.digest_matches(
+            rec.approval_id, rec.tool, rec.args_snapshot
+        ):
+            rec.state = "denied"
+            rec.reason = "digest_mismatch"
+            body = approval_notice_body(
+                approval_id=rec.approval_id,
+                decision="denied",
+                tool=rec.tool,
+                reason="digest_mismatch",
+            )
+            self.server.inject_agent_notice(rec.agent_id, body)
+            self.bridge.clear_approval(rec.approval_id)
+            return {"ok": False, "error": "digest_mismatch", "approval_id": rec.approval_id}
+
+        result_json = await agent._run_tool_body(rec.tool, dict(rec.args_snapshot))
+        self.approvals.mark_executed(rec.approval_id)
+        summary = result_json if len(result_json) <= 500 else result_json[:500] + "…"
+        body = approval_notice_body(
+            approval_id=rec.approval_id,
+            decision="granted",
+            tool=rec.tool,
+            result_summary=f"RESULT {summary}",
+        )
+        self.server.inject_agent_notice(rec.agent_id, body)
+        try:
+            self.gateway.publish(
+                make_event(
+                    "approval.resolved",
+                    approval_id=rec.approval_id,
+                    decision="granted",
+                    agent_id=rec.agent_id,
+                    tool=rec.tool,
+                )
+            )
+            self.gateway.publish(
+                make_event(
+                    "approval.granted",
+                    approval_id=rec.approval_id,
+                    agent_id=rec.agent_id,
+                    tool=rec.tool,
+                )
+            )
+        except Exception:  # noqa: BLE001, S110
+            pass
+        self.bridge.clear_approval(rec.approval_id)
+        return {
+            "ok": True,
+            "state": "executed",
+            "approval_id": rec.approval_id,
+            "result": result_json,
+        }
+
+    def expire_approvals(self, *, now: float | None = None) -> list[str]:
+        """Expire overdue pending tokens and push DENIED radio notices."""
+        from .gateway.types import make_event
+
+        expired = self.approvals.expire_due(now=now)
+        ids: list[str] = []
+        for rec in expired:
+            body = approval_notice_body(
+                approval_id=rec.approval_id,
+                decision="denied",
+                tool=rec.tool,
+                reason="expired",
+            )
+            self.server.inject_agent_notice(rec.agent_id, body)
+            ids.append(rec.approval_id)
+            try:
+                self.gateway.publish(
+                    make_event(
+                        "approval.expired",
+                        approval_id=rec.approval_id,
+                        agent_id=rec.agent_id,
+                        tool=rec.tool,
+                    )
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+            self.bridge.clear_approval(rec.approval_id)
+        return ids
+
     # -- assembly ------------------------------------------------------------
 
     @classmethod
@@ -180,22 +345,31 @@ class Session:
         allowed_roots: list[str] | None = None,
         token_store: TokenStore | None = None,
         on_user_code: Callable[[str, str], None] | None = None,
+        approval_bypass: bool = False,
     ) -> Session:
         server = MessageServer()
         agents: list[AgentLoop] = []
         pending_providers: list[Any] = []
         # Shared token store so all backends use the same OAuth tokens
         shared_token_store = token_store or TokenStore()
+        approvals = ApprovalStore()
 
         # v0.7: 전역 tools: 섹션 → ToolPolicy (기본 = 신규 도구 전부 활성 + 안전장치)
-        global_policy = ToolPolicy.from_config(
-            cfg.get("tools", {}), allowed_roots=allowed_roots
-        )
+        tools_cfg = dict(cfg.get("tools") or {})
+        if approval_bypass:
+            approval_cfg = dict(tools_cfg.get("approval") or {})
+            approval_cfg["bypass"] = True
+            tools_cfg["approval"] = approval_cfg
+        global_policy = ToolPolicy.from_config(tools_cfg, allowed_roots=allowed_roots)
 
         # Human-in-the-loop: 항상 내장 (v1.0)
         # config에 human 섹션이 있든 없든, 항상 켜져 있음
         has_human = True
         server.register_human()
+
+        # Rebound to the Session instance after construction (gateway surfaces).
+        interact_holder: dict[str, Callable[[], bool]] = {"fn": lambda: False}
+        request_holder: dict[str, Callable[[Any], None]] = {"fn": lambda _rec: None}
 
         for spec in cfg["agents"]:
             server.register_agent(spec["id"])
@@ -218,6 +392,9 @@ class Session:
                     local_tools=local_tools,
                     role_prompt=role_prompt,
                     has_human=has_human,
+                    approvals=approvals,
+                    has_interact_surface=lambda: interact_holder["fn"](),
+                    on_approval_request=lambda rec: request_holder["fn"](rec),
                     on_tool_call=lambda agent_id, tool, args, result, _server=server: (
                         _server._emit_event({
                             "type": "tool",
@@ -256,6 +433,9 @@ class Session:
             bot_manager=bot_manager,
             has_human=has_human,
         )
+        session.approvals = approvals
+        interact_holder["fn"] = session.has_interact_surface
+        request_holder["fn"] = session._on_approval_request
         # v0.7: provider clients are instance-owned (closed at session end)
         session._local_providers.extend(pending_providers)
         session.on_step = on_step

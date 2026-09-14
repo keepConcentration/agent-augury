@@ -6,7 +6,7 @@ Wire schemas: schemas/wire/.
 
 from __future__ import annotations
 
-from .bridge import PendingQuestion, SessionBridge
+from .bridge import PendingApproval, PendingQuestion, SessionBridge
 from .bus import SessionGateway, SurfaceMode, SurfaceSubscription
 from .stdio import JsonlStdioBridge, decode_line, encode_line, run_stdio_bridge
 from .translate import translate_core_event
@@ -26,6 +26,7 @@ __all__ = [
     "COMMAND_TYPES",
     "EVENT_TYPES",
     "JsonlStdioBridge",
+    "PendingApproval",
     "PendingQuestion",
     "SessionBridge",
     "SessionGateway",

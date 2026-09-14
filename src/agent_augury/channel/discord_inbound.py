@@ -2,6 +2,8 @@
 
 When ``bots[].inbound: true``, channel messages become Wire ``human.*``
 commands on an interact Gateway surface. Default remains observe-only (D2).
+
+Pending tool approvals take priority over ``ask_user`` answers (same as Ink).
 """
 
 from __future__ import annotations
@@ -17,6 +19,19 @@ from agent_augury.gateway.types import make_command
 from .discord_bot import BotManager
 
 INBOUND_SURFACE = "discord-inbound"
+
+_GRANT_TOKENS = frozenset({"1", "y", "yes", "approve", "/approve"})
+_DENY_TOKENS = frozenset({"2", "n", "no", "deny", "/deny"})
+
+
+def parse_approval_decision(text: str) -> str | None:
+    """Map a short Discord/Ink reply to ``granted`` / ``denied``, or None."""
+    token = (text or "").strip().lower()
+    if token in _GRANT_TOKENS:
+        return "granted"
+    if token in _DENY_TOKENS:
+        return "denied"
+    return None
 
 
 def attach_discord_inbound(
@@ -74,7 +89,7 @@ def dispatch_discord_inbound(
     user_id: str,
     channel_id: int,
 ) -> dict[str, Any]:
-    """Map one Discord user message to ``human.answer`` or ``human.send``."""
+    """Map one Discord user message to approval.resolve / human.answer / human.send."""
     text = (content or "").strip()
     if not text:
         return {"ok": False, "error": "empty content"}
@@ -86,6 +101,29 @@ def dispatch_discord_inbound(
         "channel": str(channel_id),
     }
     cmd_id = str(uuid4())
+
+    # Tool approval first (Ink parity).
+    pending_appr = bridge.pending_approval
+    if pending_appr is not None:
+        decision = parse_approval_decision(text)
+        if decision is not None:
+            cmd = make_command(
+                "approval.resolve",
+                id=cmd_id,
+                approval_id=pending_appr.approval_id,
+                decision=decision,
+                reason="user",
+                source=source,
+            )
+            return gateway.dispatch(cmd, surface=INBOUND_SURFACE)
+        # Non-decision text while approval is pending: do not steal ask_user /
+        # free-form send; ask for a clear approve/deny token.
+        return {
+            "ok": False,
+            "error": "approval pending; reply 1/approve or 2/deny",
+            "approval_id": pending_appr.approval_id,
+        }
+
     pending = bridge.pending
     if pending is not None:
         cmd = make_command(

@@ -21,6 +21,13 @@ from typing import Any
 from ..backend.base import Completion, ModelBackend
 from ..protocol.signals import is_ready_message
 from ..server import MessageServer
+from .approval import (
+    ApprovalStore,
+    denied_result,
+    gate_decision,
+    pending_result,
+    tool_approval_class,
+)
 from .policy import ToolPolicy
 from .system_prompt import render_system_prompt, render_tool_instructions
 from .tools import ToolBox
@@ -77,6 +84,9 @@ class AgentLoop:
         policy: ToolPolicy | None = None,
         role_prompt: str = "",
         has_human: bool = False,
+        approvals: ApprovalStore | None = None,
+        has_interact_surface: Callable[[], bool] | None = None,
+        on_approval_request: Callable[[Any], None] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.server = server
@@ -84,6 +94,9 @@ class AgentLoop:
         self.policy = policy  # v0.7 — may be None (legacy callers)
         self.tools = ToolBox(server, allowed_roots=allowed_roots, policy=policy)
         self.local_tools: dict[str, LocalTool] = {t.name: t for t in local_tools or []}
+        self.approvals = approvals
+        self.has_interact_surface = has_interact_surface
+        self.on_approval_request = on_approval_request
         self.conversation: list[Message] = [
             {
                 "role": "system",
@@ -192,6 +205,13 @@ class AgentLoop:
         )
 
     async def _execute_tool(self, name: str, args: dict[str, Any]) -> str:
+        gated = await self._maybe_gate_approval(name, args)
+        if gated is not None:
+            return gated
+        return await self._run_tool_body(name, args)
+
+    async def _run_tool_body(self, name: str, args: dict[str, Any]) -> str:
+        """Execute tool side effects (no approval gate)."""
         if name in self.local_tools:
             tool = self.local_tools[name]
             value = tool.handler(args)
@@ -234,6 +254,44 @@ class AgentLoop:
                             ensure_ascii=False,
                         )
         return await self.tools.execute(self.agent_id, name, args)
+
+    async def _maybe_gate_approval(self, name: str, args: dict[str, Any]) -> str | None:
+        """Return a JSON tool result when approval blocks execution; else None."""
+        if self.approvals is None or self.policy is None:
+            return None
+        if tool_approval_class(name) is None:
+            return None
+        if not self.policy.requires_approval(name):
+            return None
+
+        has_interact = False
+        if self.has_interact_surface is not None:
+            has_interact = bool(self.has_interact_surface())
+        decision = gate_decision(
+            requires_approval=True,
+            bypass=self.policy.approval_bypass,
+            has_interact_surface=has_interact,
+        )
+        if decision in ("execute", "bypass"):
+            return None
+        if decision == "deny_no_channel":
+            return json.dumps(
+                denied_result("no_approval_channel", tool=name),
+                ensure_ascii=False,
+            )
+
+        rec, created = self.approvals.request_or_join(
+            self.agent_id,
+            name,
+            args,
+            ttl_seconds=self.policy.approval_ttl_seconds,
+        )
+        if created and self.on_approval_request is not None:
+            self.on_approval_request(rec)
+        return json.dumps(
+            pending_result(rec.approval_id, name, args=args),
+            ensure_ascii=False,
+        )
 
     def _resolve_refs(self, args: dict[str, Any]) -> dict[str, Any]:
         resolved: dict[str, Any] = {}

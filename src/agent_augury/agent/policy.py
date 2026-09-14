@@ -69,6 +69,12 @@ class ToolPolicy:
     # file
     allowed_roots: tuple[str, ...] = ()
     edit_enabled: bool = True  # edit_file / append_file
+    # approval (TOOL_HUMAN_APPROVAL_DESIGN — T5: shell/file_write default require)
+    approval_shell: str = "require"  # require | off
+    approval_file_write: str = "require"
+    approval_web: str = "off"
+    approval_bypass: bool = False
+    approval_ttl_seconds: float = 600.0
 
     # -- construction ---------------------------------------------------------
 
@@ -88,6 +94,7 @@ class ToolPolicy:
         shell = tools_cfg.get("shell") or {}
         web = tools_cfg.get("web") or {}
         file_cfg = tools_cfg.get("file") or {}
+        approval = tools_cfg.get("approval") or {}
 
         roots = tuple(allowed_roots or ()) + tuple(file_cfg.get("allowed_roots") or ())
 
@@ -108,6 +115,11 @@ class ToolPolicy:
             web_search_provider=_as_str(web.get("search_provider"), "duckduckgo"),
             allowed_roots=roots,
             edit_enabled=_as_bool(file_cfg.get("edit_enabled"), True),
+            approval_shell=_as_approval_mode(approval.get("shell"), "require"),
+            approval_file_write=_as_approval_mode(approval.get("file_write"), "require"),
+            approval_web=_as_approval_mode(approval.get("web"), "off"),
+            approval_bypass=_as_bool(approval.get("bypass"), False),
+            approval_ttl_seconds=_as_float(approval.get("ttl_seconds"), 600.0),
         )
 
         # agent-1 feedback #5: enabled shell with empty allowlist → warn.
@@ -123,13 +135,14 @@ class ToolPolicy:
         """Deep-merge a per-agent ``tools:`` section over this policy.
 
         Agent-provided keys override; unspecified keys inherit (deep merge per
-        subsection — shell/web/file each merge independently).
+        subsection — shell/web/file/approval each merge independently).
         """
         if not agent_tools:
             return self
         shell = agent_tools.get("shell") or {}
         web = agent_tools.get("web") or {}
         file_cfg = agent_tools.get("file") or {}
+        approval = agent_tools.get("approval") or {}
 
         return ToolPolicy(
             shell_enabled=_as_bool(shell.get("enabled"), self.shell_enabled),
@@ -152,6 +165,15 @@ class ToolPolicy:
             ),
             allowed_roots=tuple(file_cfg.get("allowed_roots") or self.allowed_roots),
             edit_enabled=_as_bool(file_cfg.get("edit_enabled"), self.edit_enabled),
+            approval_shell=_as_approval_mode(approval.get("shell"), self.approval_shell),
+            approval_file_write=_as_approval_mode(
+                approval.get("file_write"), self.approval_file_write
+            ),
+            approval_web=_as_approval_mode(approval.get("web"), self.approval_web),
+            approval_bypass=_as_bool(approval.get("bypass"), self.approval_bypass),
+            approval_ttl_seconds=_as_float(
+                approval.get("ttl_seconds"), self.approval_ttl_seconds
+            ),
         )
 
     # -- helpers for callers ---------------------------------------------------
@@ -163,6 +185,22 @@ class ToolPolicy:
         if self.allowed_roots:
             return self.allowed_roots[0]
         return None
+
+    def approval_mode_for(self, tool: str) -> str:
+        """Return ``require`` / ``off`` for *tool* (ungated tools → ``off``)."""
+        from .approval import tool_approval_class
+
+        kind = tool_approval_class(tool)
+        if kind == "shell":
+            return self.approval_shell
+        if kind == "file_write":
+            return self.approval_file_write
+        if kind == "web":
+            return self.approval_web
+        return "off"
+
+    def requires_approval(self, tool: str) -> bool:
+        return self.approval_mode_for(tool) == "require" and not self.approval_bypass
 
 
 # ---------------------------------------------------------------------------
@@ -198,3 +236,16 @@ def _as_str(value: Any, default: str = "") -> str:
     if value is None:
         return default
     return str(value)
+
+
+def _as_approval_mode(value: Any, default: str) -> str:
+    if value is None:
+        return default
+    if value is False:  # YAML unquoted `off`
+        return "off"
+    if value is True:
+        return default
+    text = str(value).strip().lower()
+    if text in ("require", "off"):
+        return text
+    return default

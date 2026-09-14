@@ -175,6 +175,38 @@ agent-augury --demo --config examples/p1_to_p5_protocol.yaml
 
 ---
 
+## Tool approval (shell / file write)
+
+Dangerous local tools can require a human grant before side effects run
+(fail-closed; no blocking await — the agent gets `pending_approval` and continues).
+
+Defaults (override under `tools.approval` in YAML):
+
+| Class | Tools | Default |
+|-------|--------|---------|
+| `shell` | `run_command` | `require` |
+| `file_write` | `write_file` / `edit_file` / `append_file` | `require` |
+| `web` | `web_search` / `fetch_url` | `off` |
+
+```yaml
+tools:
+  approval:
+    shell: require          # require | off
+    file_write: require
+    web: off
+    ttl_seconds: 600
+    # bypass: true          # tests only — never in production
+```
+
+- **Ink**: approval card → type `1`/`approve` or `2`/`deny`
+- **Discord inbound** (`bots[].inbound: true`): same tokens in the channel
+- **`--demo`**: bypasses approval (scripted / CI runs)
+- Observe-only mirrors are **not** an approval channel; with no interact surface, gated tools are denied (`no_approval_channel`)
+
+Design notes: [`docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`](docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md)
+
+---
+
 ## Command-line options
 
 | Flag | Description |

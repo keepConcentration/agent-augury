@@ -116,6 +116,24 @@ def test_format_wire_create_thread_parity():
     assert "plan" in text
 
 
+def test_format_wire_approval_request():
+    text = format_wire_for_bot(
+        make_event(
+            "approval.request",
+            approval_id="ap-1",
+            agent_id="coder",
+            tool="run_command",
+            args_preview={"command": "rm -rf /tmp/x"},
+            ttl_seconds=60,
+        )
+    )
+    assert text is not None
+    assert "approval needed" in text
+    assert "coder" in text
+    assert "rm -rf /tmp/x" in text
+    assert "1/approve" in text
+
+
 def test_session_attaches_mirror_to_gateway(tmp_path, monkeypatch):
     """M4: mirror is a Gateway observe surface, not server.subscribe."""
     import yaml

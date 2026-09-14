@@ -130,6 +130,74 @@
         "messages": { "type": "integer" }
       },
       "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "approval_id", "agent_id", "tool"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "approval.request" },
+        "approval_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "tool": { "type": "string" },
+        "args_preview": { "type": "object" },
+        "ttl_seconds": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "approval_id", "decision"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "approval.resolved" },
+        "approval_id": { "type": "string" },
+        "decision": {
+          "type": "string",
+          "enum": ["granted", "denied", "expired"]
+        },
+        "reason": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "tool": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "approval_id"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "approval.granted" },
+        "approval_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "tool": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "approval_id"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "approval.expired" },
+        "approval_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "tool": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type", "reason"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "tool.denied" },
+        "reason": { "type": "string" },
+        "approval_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "tool": { "type": "string" }
+      },
+      "additionalProperties": true
     }
   ]
 }

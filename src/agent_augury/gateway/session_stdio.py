@@ -339,6 +339,7 @@ def main(argv: list[str] | None = None) -> int:
         cfg,
         allowed_roots=[str(PROJECT_ROOT)],
         on_user_code=auth_relay,
+        approval_bypass=bool(args.demo),
     )
     runner = SessionStdioRunner(
         session,

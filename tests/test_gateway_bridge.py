@@ -184,3 +184,74 @@ def test_human_send_requires_thread():
     assert result["ok"] is True
     # handler returns queued False via payload - make_result merges
     assert result.get("queued") is False
+
+
+def test_bridge_approval_resolve_queues():
+    gw = SessionGateway()
+    gw.attach(SurfaceSubscription(name="ink", mode="interact"))
+    resolved: list[tuple] = []
+
+    class Sess:
+        async def resolve_approval(self, approval_id, decision, *, reason=None):
+            resolved.append((approval_id, decision, reason))
+            return {"ok": True, "approval_id": approval_id}
+
+        def request_interrupt(self) -> None:
+            return None
+
+        async def human_send(self, *args, **kwargs):
+            return "ok"
+
+    bridge = SessionBridge(gateway=gw, session=Sess())
+    bridge.install()
+    result = gw.dispatch(
+        make_command(
+            "approval.resolve",
+            id="a1",
+            approval_id="appr-1",
+            decision="granted",
+        ),
+        surface="ink",
+    )
+    assert result["ok"] is True
+    assert result.get("queued") is True
+    assert result.get("approval_id") == "appr-1"
+    assert result.get("decision") == "granted"
+    assert resolved == [("appr-1", "granted", None)]
+
+
+def test_bridge_approval_resolve_validation():
+    gw = SessionGateway()
+    gw.attach(SurfaceSubscription(name="ink", mode="interact"))
+    bridge = SessionBridge(gateway=gw, send_fn=lambda *_a, **_k: "ok")
+    bridge.install()
+
+    missing = gw.dispatch(
+        make_command("approval.resolve", id="1", decision="granted"),
+        surface="ink",
+    )
+    assert missing.get("ok") is False
+    assert "approval_id" in str(missing.get("error", ""))
+
+    bad = gw.dispatch(
+        make_command(
+            "approval.resolve",
+            id="2",
+            approval_id="x",
+            decision="maybe",
+        ),
+        surface="ink",
+    )
+    assert bad.get("ok") is False
+    assert "decision" in str(bad.get("error", ""))
+
+    no_sess = gw.dispatch(
+        make_command(
+            "approval.resolve",
+            id="3",
+            approval_id="x",
+            decision="denied",
+        ),
+        surface="ink",
+    )
+    assert no_sess.get("ok") is False

@@ -125,9 +125,23 @@ export function formatEvent(event: WireMessage): string | null {
     return `[error] ${String(event.message ?? event.text ?? "")}`;
   }
 
-  // human.question is shown in the ask_user panel; skip duplicate log line.
+  // human.question / approval.request shown in panels; skip duplicate log lines.
   if (t === "human.question") {
     return null;
+  }
+  if (t === "approval.request") {
+    return null;
+  }
+  if (t === "approval.resolved" || t === "approval.granted" || t === "approval.expired") {
+    const decision = String(event.decision ?? t.split(".")[1] ?? "");
+    const aid = String(event.approval_id ?? "");
+    const tool = String(event.tool ?? "");
+    const agent = String(event.agent_id ?? "");
+    const reason = event.reason ? ` (${String(event.reason)})` : "";
+    return `🔐 approval ${decision} [${aid}] ${agent} ${tool}${reason}`.trim();
+  }
+  if (t === "tool.denied") {
+    return `🚫 tool denied: ${String(event.tool ?? "?")} (${String(event.reason ?? "")})`;
   }
 
   if (t === "agent.step") {

@@ -33,6 +33,14 @@ class SessionLike(Protocol):
         source: dict[str, Any] | None = None,
     ) -> str: ...
 
+    async def resolve_approval(
+        self,
+        approval_id: str,
+        decision: str,
+        *,
+        reason: str | None = None,
+    ) -> dict[str, Any]: ...
+
 
 SendFn = Callable[..., Any]  # sync or async human_send substitute
 InterruptFn = Callable[[], None]
@@ -49,6 +57,15 @@ class PendingQuestion:
 
 
 @dataclass
+class PendingApproval:
+    approval_id: str
+    agent_id: str
+    tool: str
+    args_preview: dict[str, Any] = field(default_factory=dict)
+    ttl_seconds: float | None = None
+
+
+@dataclass
 class SessionBridge:
     """Bind a Core session (or demo stand-in) to a :class:`SessionGateway`."""
 
@@ -59,6 +76,7 @@ class SessionBridge:
     send_fn: SendFn | None = None
     loop: asyncio.AbstractEventLoop | None = None
     _pending: deque[PendingQuestion] = field(default_factory=deque)
+    _pending_approvals: deque[PendingApproval] = field(default_factory=deque)
     _recent_thread: str | None = None
     _running: bool = False
 
@@ -90,6 +108,10 @@ class SessionBridge:
     @property
     def pending(self) -> PendingQuestion | None:
         return self._pending[0] if self._pending else None
+
+    @property
+    def pending_approval(self) -> PendingApproval | None:
+        return self._pending_approvals[0] if self._pending_approvals else None
 
     @property
     def recent_thread(self) -> str | None:
@@ -158,9 +180,30 @@ class SessionBridge:
                 make_event("log", text=f"skip question from {skipped.agent_id}")
             )
             return {"skipped": True, "question_id": skipped.question_id}
+        if typ == "approval.resolve":
+            return self._handle_approval_resolve(cmd)
         if typ in ("human.send", "human.answer"):
             return self._handle_human_message(cmd)
         return {}
+
+    def _handle_approval_resolve(self, cmd: WireCommand) -> dict[str, Any]:
+        approval_id = str(cmd.get("approval_id") or "").strip()
+        decision = str(cmd.get("decision") or "").strip().lower()
+        reason = cmd.get("reason")
+        if not approval_id:
+            return {"ok": False, "error": "approval_id required"}
+        if decision not in ("granted", "denied"):
+            return {"ok": False, "error": "decision must be granted|denied"}
+        if self.session is None or not hasattr(self.session, "resolve_approval"):
+            return {"ok": False, "error": "no session.resolve_approval installed"}
+        reason_s = None if reason is None else str(reason)
+        self.clear_approval(approval_id)
+        self._maybe_schedule(
+            self.session.resolve_approval(
+                approval_id, decision, reason=reason_s
+            )
+        )
+        return {"queued": True, "approval_id": approval_id, "decision": decision}
 
     def _handle_human_message(self, cmd: WireCommand) -> dict[str, Any]:
         content = str(cmd.get("content", ""))
@@ -236,6 +279,46 @@ class SessionBridge:
             self.session.request_interrupt()
         self.set_running(False)
         self.gateway.publish(make_event("log", text="run interrupted"))
+
+    def track_approval_request(
+        self,
+        *,
+        approval_id: str,
+        agent_id: str,
+        tool: str,
+        args_preview: dict[str, Any] | None = None,
+        ttl_seconds: float | None = None,
+    ) -> None:
+        """Record a pending tool approval for Discord/Ink routing."""
+        aid = str(approval_id or "").strip()
+        if not aid:
+            return
+        # Deduplicate joins (same approval_id republished).
+        for pa in self._pending_approvals:
+            if pa.approval_id == aid:
+                return
+        self._pending_approvals.append(
+            PendingApproval(
+                approval_id=aid,
+                agent_id=str(agent_id or ""),
+                tool=str(tool or ""),
+                args_preview=dict(args_preview or {}),
+                ttl_seconds=ttl_seconds,
+            )
+        )
+
+    def clear_approval(self, approval_id: Any | None = None) -> PendingApproval | None:
+        """Drop a pending approval (by id, or oldest if *approval_id* is None)."""
+        if not self._pending_approvals:
+            return None
+        if approval_id:
+            aid = str(approval_id)
+            for i, pa in enumerate(self._pending_approvals):
+                if pa.approval_id == aid:
+                    del self._pending_approvals[i]
+                    return pa
+            return None
+        return self._pending_approvals.popleft()
 
     def _track_question(self, wire: WireEvent) -> None:
         pq = PendingQuestion(

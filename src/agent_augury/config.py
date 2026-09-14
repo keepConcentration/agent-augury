@@ -20,7 +20,13 @@ _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # ---------------------------------------------------------------------------
 
 # 허용된 tools: 최상위 키
-_TOOLS_TOP_KEYS = frozenset({"shell", "web", "file"})
+_TOOLS_TOP_KEYS = frozenset({"shell", "web", "file", "approval"})
+
+# tools.approval 허용 키 / 모드 (TOOL_HUMAN_APPROVAL_DESIGN)
+_TOOLS_APPROVAL_KEYS = frozenset(
+    {"shell", "file_write", "web", "bypass", "ttl_seconds"}
+)
+_VALID_APPROVAL_MODES = frozenset({"require", "off"})
 
 # tools.shell 허용 키
 _TOOLS_SHELL_KEYS = frozenset(
@@ -141,6 +147,44 @@ def _validate_tools_section(tools: Any, *, where: str) -> None:
         roots = file_.get("allowed_roots")
         if roots is not None and (not isinstance(roots, list) or not all(isinstance(r, str) for r in roots)):
             raise ConfigError(f"'{where}.file.allowed_roots' must be a list of strings")
+
+    approval = tools.get("approval")
+    if approval is not None:
+        if not isinstance(approval, dict):
+            raise ConfigError(f"'{where}.approval' must be a mapping")
+        for key in approval:
+            if key not in _TOOLS_APPROVAL_KEYS:
+                raise ConfigError(
+                    f"'{where}.approval' contains unknown key {key!r} — "
+                    f"only {sorted(_TOOLS_APPROVAL_KEYS)} are allowed"
+                )
+        for mode_key in ("shell", "file_write", "web"):
+            if mode_key not in approval:
+                continue
+            mode = approval[mode_key]
+            # Unquoted YAML `off` becomes bool False — treat as the mode string.
+            if mode is False:
+                mode = "off"
+                approval[mode_key] = "off"
+            if mode is True:
+                raise ConfigError(
+                    f"'{where}.approval.{mode_key}' must be one of "
+                    f"{sorted(_VALID_APPROVAL_MODES)} (quote strings in YAML), "
+                    f"got boolean true"
+                )
+            if mode not in _VALID_APPROVAL_MODES:
+                raise ConfigError(
+                    f"'{where}.approval.{mode_key}' must be one of "
+                    f"{sorted(_VALID_APPROVAL_MODES)}, got {mode!r}"
+                )
+        if "bypass" in approval and not isinstance(approval["bypass"], bool):
+            raise ConfigError(f"'{where}.approval.bypass' must be a boolean")
+        if "ttl_seconds" in approval:
+            ttl = approval["ttl_seconds"]
+            if not isinstance(ttl, (int, float)) or isinstance(ttl, bool) or ttl <= 0:
+                raise ConfigError(
+                    f"'{where}.approval.ttl_seconds' must be a positive number"
+                )
 
 
 def _expand_env_refs(data: Any) -> Any:

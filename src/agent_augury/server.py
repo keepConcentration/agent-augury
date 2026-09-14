@@ -414,6 +414,34 @@ class MessageServer:
         self._emit_event(event)
         return message["message_id"]
 
+    def inject_agent_notice(
+        self,
+        agent_id: str,
+        content: str,
+        *,
+        author: str = "human",
+    ) -> str:
+        """Push a direct inbox notice for *agent_id* (no thread required).
+
+        Used for approval grant/deny/result absorption. The next ``step()``
+        drains it as a normal ``[radio]`` block.
+        """
+        self._require_participant(agent_id)
+        message: dict[str, Any] = {
+            "message_id": f"msg-{next(self._message_ids)}",
+            "thread_id": "_approval",
+            "author": author,
+            "content": content,
+            "mentions": [agent_id],
+            "delivered_to": [agent_id],
+            "created_at": int(time.time()),
+            "seq": len(self._messages),
+        }
+        self._messages.append(message)
+        self._message_index[message["message_id"]] = message
+        self._inboxes[agent_id].put_nowait(message["message_id"])
+        return message["message_id"]
+
     # -- subscriptions (gate / mirrors) --------------------------------------
 
     def subscribe(self, callback: Callable[[dict[str, Any]], None]) -> None:

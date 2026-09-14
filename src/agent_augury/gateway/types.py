@@ -23,6 +23,11 @@ EVENT_TYPES = frozenset({
     "session.ended",
     "error",
     "read_resource",
+    "approval.request",
+    "approval.resolved",
+    "approval.granted",
+    "approval.expired",
+    "tool.denied",
 })
 
 COMMAND_TYPES = frozenset({
@@ -32,12 +37,14 @@ COMMAND_TYPES = frozenset({
     "human.send",
     "human.answer",
     "human.skip",
+    "approval.resolve",
 })
 
 HUMAN_COMMAND_TYPES = frozenset({
     "human.send",
     "human.answer",
     "human.skip",
+    "approval.resolve",
 })
 
 WireMessage = dict[str, Any]

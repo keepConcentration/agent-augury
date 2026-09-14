@@ -21,6 +21,43 @@ type PendingQuestion = {
   options: string[];
 };
 
+type PendingApproval = {
+  approval_id: string;
+  agent_id?: string;
+  tool: string;
+  argsPreview?: Record<string, unknown>;
+  ttlSeconds?: number;
+};
+
+function previewApprovalArgs(args?: Record<string, unknown>): string {
+  if (!args || typeof args !== "object") {
+    return "";
+  }
+  if (typeof args.command === "string") {
+    return String(args.command);
+  }
+  if (typeof args.path === "string") {
+    return String(args.path);
+  }
+  try {
+    const raw = JSON.stringify(args);
+    return raw.length > 120 ? `${raw.slice(0, 120)}...` : raw;
+  } catch {
+    return "";
+  }
+}
+
+function parseApprovalDecision(line: string): "granted" | "denied" | null {
+  const t = line.trim().toLowerCase();
+  if (t === "1" || t === "y" || t === "yes" || t === "approve" || t === "/approve") {
+    return "granted";
+  }
+  if (t === "2" || t === "n" || t === "no" || t === "deny" || t === "/deny") {
+    return "denied";
+  }
+  return null;
+}
+
 export default function App() {
   const {exit} = useApp();
   const [logs, setLogs] = useState<LogItem[]>([]);
@@ -28,6 +65,9 @@ export default function App() {
   const [status, setStatus] = useState("starting...");
   const [running, setRunning] = useState(true);
   const [pending, setPending] = useState<PendingQuestion | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(
+    null,
+  );
   const [agents, setAgents] = useState<string[]>([]);
   const gwRef = useRef<GatewayChild | null>(null);
   const lastCtrlC = useRef(0);
@@ -48,6 +88,35 @@ export default function App() {
               setAgents(roster);
             }
           }
+          if (msg.type === "approval.request") {
+            const approvalId = String(msg.approval_id ?? "");
+            if (approvalId) {
+              setPendingApproval({
+                approval_id: approvalId,
+                agent_id: msg.agent_id ? String(msg.agent_id) : undefined,
+                tool: String(msg.tool ?? "tool"),
+                argsPreview:
+                  msg.args_preview && typeof msg.args_preview === "object"
+                    ? (msg.args_preview as Record<string, unknown>)
+                    : undefined,
+                ttlSeconds:
+                  typeof msg.ttl_seconds === "number" ? msg.ttl_seconds : undefined,
+              });
+              setStatus("approval");
+            }
+          }
+          if (
+            msg.type === "approval.resolved" ||
+            msg.type === "approval.granted" ||
+            msg.type === "approval.expired" ||
+            msg.type === "tool.denied"
+          ) {
+            const aid = String(msg.approval_id ?? "");
+            setPendingApproval((prev) =>
+              prev && (!aid || prev.approval_id === aid) ? null : prev,
+            );
+            setStatus((s) => (s === "approval" ? "running" : s));
+          }
           if (msg.type === "human.question") {
             setPending({
               question_id: msg.question_id,
@@ -56,7 +125,7 @@ export default function App() {
               question: String(msg.question ?? ""),
               options: Array.isArray(msg.options) ? msg.options.map(String) : [],
             });
-            setStatus("ask_user");
+            setStatus((s) => (s === "approval" ? s : "ask_user"));
           }
           if (msg.type === "log" && String(msg.text ?? "").includes("interrupted")) {
             setRunning(false);
@@ -144,6 +213,25 @@ export default function App() {
       return;
     }
 
+    // Tool approval takes priority over ask_user answers.
+    if (pendingApproval) {
+      const decision = parseApprovalDecision(trimmed);
+      if (!decision) {
+        pushLog("! type 1/approve or 2/deny");
+        return;
+      }
+      pushLog(`> approval ${decision} [${pendingApproval.approval_id}]`);
+      gw.send(
+        makeCommand("approval.resolve", {
+          approval_id: pendingApproval.approval_id,
+          decision,
+        }),
+      );
+      setPendingApproval(null);
+      setStatus(running ? "running" : "idle");
+      return;
+    }
+
     const {mentions, unknown} = parseHumanMentions(trimmed, agents);
     if (unknown.length > 0) {
       const hint =
@@ -195,7 +283,24 @@ export default function App() {
         )}
       </Static>
 
-      {pending ? (
+      {pendingApproval ? (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" paddingX={1}>
+          <Text color="magenta">
+            approval [{pendingApproval.agent_id ?? "?"}] {pendingApproval.tool}
+          </Text>
+          {previewApprovalArgs(pendingApproval.argsPreview) ? (
+            <Text>{previewApprovalArgs(pendingApproval.argsPreview)}</Text>
+          ) : null}
+          {pendingApproval.ttlSeconds != null ? (
+            <Text dimColor>{`ttl ${pendingApproval.ttlSeconds}s`}</Text>
+          ) : null}
+          <Text>{`  [1] approve`}</Text>
+          <Text>{`  [2] deny`}</Text>
+          <Text dimColor>type 1/approve or 2/deny</Text>
+        </Box>
+      ) : null}
+
+      {!pendingApproval && pending ? (
         <Box flexDirection="column" marginTop={1} borderStyle="round" paddingX={1}>
           <Text color="yellow">
             ask_user [{pending.agent_id ?? "?"}]{" "}

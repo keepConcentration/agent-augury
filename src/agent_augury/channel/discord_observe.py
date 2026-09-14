@@ -25,6 +25,10 @@ _BOT_TYPES = frozenset({
     "tool",
     "agent.step",
     "human.question",
+    "approval.request",
+    "approval.resolved",
+    "approval.expired",
+    "tool.denied",
     "log",
     "read_resource",
 })
@@ -155,6 +159,33 @@ def format_wire_for_bot(event: WireEvent) -> str | None:
         q = event.get("question") or ""
         agent = event.get("agent_id") or "?"
         return f"❓ {agent}: {q}"
+    if etype == "approval.request":
+        agent = event.get("agent_id") or "?"
+        tool = event.get("tool") or "tool"
+        aid = event.get("approval_id") or "?"
+        preview = event.get("args_preview") or {}
+        detail = ""
+        if isinstance(preview, dict):
+            if preview.get("command"):
+                detail = f"\n`{preview['command']}`"
+            elif preview.get("path"):
+                detail = f"\n`{preview['path']}`"
+        return (
+            f"🔐 approval needed [{agent}] {tool} ({aid}){detail}\n"
+            "Reply: 1/approve or 2/deny"
+        )
+    if etype in ("approval.resolved", "approval.granted", "approval.expired"):
+        decision = event.get("decision") or str(etype).split(".")[-1]
+        aid = event.get("approval_id") or "?"
+        tool = event.get("tool") or ""
+        reason = event.get("reason")
+        extra = f" reason={reason}" if reason else ""
+        return f"🔐 approval {decision} [{aid}] {tool}{extra}".strip()
+    if etype == "tool.denied":
+        return (
+            f"🚫 tool denied: {event.get('tool') or '?'} "
+            f"({event.get('reason') or ''})"
+        )
     if etype == "log" and event.get("text"):
         return str(event["text"])
     return None

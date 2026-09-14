@@ -3,8 +3,8 @@
 agent-2 담당 — config.py 의 tools: 검증 규칙을 검증한다.
 
 검증 규칙:
-1. tools: 최상위 키는 shell/web/file 만 허용.
-2. tools.shell / tools.web / tools.file 의 하위 키 화이트리스트.
+1. tools: 최상위 키는 shell/web/file/approval 만 허용.
+2. tools.shell / tools.web / tools.file / tools.approval 의 하위 키 화이트리스트.
 3. web.search_provider 는 duckduckgo|serper|tavily|searxng 중 하나.
 4. 에이전트별 tools: 도 동일 검증 (딥 병합은 ToolPolicy.from_config/merge 에서).
 5. 빈 shell allowed → 경고 (치명 오류 아님).
@@ -71,13 +71,22 @@ def test_tools_web_unknown_key_rejected(tmp_path):
         load_config(path, allow_fake=True)
 
 
-def test_tools_file_unknown_key_rejected(tmp_path):
+def test_tools_approval_unknown_key_rejected(tmp_path):
     path = _write(
         tmp_path,
-        _base_yaml("  file:\n    edit: true\n"),  # edit_enabled 가 아니라 edit
+        _base_yaml("  approval:\n    shell_mode: require\n"),
     )
-    with pytest.raises(ConfigError, match="unknown key 'edit'"):
+    with pytest.raises(ConfigError, match="unknown key 'shell_mode'"):
         load_config(path, allow_fake=True)
+
+
+def test_tools_approval_valid(tmp_path):
+    path = _write(
+        tmp_path,
+        _base_yaml("  approval:\n    shell: require\n    file_write: require\n    web: off\n"),
+    )
+    cfg = load_config(path, allow_fake=True)
+    assert cfg["tools"]["approval"]["shell"] == "require"
 
 
 # ---------------------------------------------------------------------------

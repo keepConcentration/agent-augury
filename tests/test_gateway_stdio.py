@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import io
 import json
-import subprocess
-import sys
+import os
 from pathlib import Path
 
 from agent_augury.gateway import (
@@ -16,6 +15,8 @@ from agent_augury.gateway import (
     make_command,
     make_event,
 )
+
+from .conftest import popen_python_module
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src"
@@ -63,18 +64,13 @@ def test_bridge_fanout_and_echo():
 
 def test_hello_demo_subprocess_jsonl():
     env = {
-        **dict(**{k: v for k, v in __import__("os").environ.items()}),
+        **{k: v for k, v in os.environ.items()},
         "PYTHONPATH": str(SRC),
         "PYTHONUTF8": "1",
     }
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "agent_augury.gateway.hello_demo"],
-        cwd=str(REPO_ROOT),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
+    # Absolute paths + posix_spawn-friendly Popen (see popen_python_module).
+    proc = popen_python_module(
+        ["-m", "agent_augury.gateway.hello_demo"],
         env=env,
     )
     assert proc.stdin is not None and proc.stdout is not None

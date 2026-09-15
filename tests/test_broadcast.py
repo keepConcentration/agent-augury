@@ -178,7 +178,8 @@ def test_wizard_flow_quiet_flag_passed(tmp_path):
     with patch("agent_augury.cli._run_ink_surface", fake_ink), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
-         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG):
+         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
+         patch("builtins.input", return_value=""):
         result = _run_wizard_flow(output_path=out_path, quiet=True)
 
     assert result == 0
@@ -197,7 +198,8 @@ def test_wizard_flow_quiet_false_by_default(tmp_path):
     with patch("agent_augury.cli._run_ink_surface", fake_ink), \
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
-         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG):
+         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
+         patch("builtins.input", return_value=""):
         result = _run_wizard_flow(output_path=out_path)
 
     assert result == 0
@@ -230,6 +232,7 @@ def test_wizard_flow_stops_when_api_key_env_missing(tmp_path, monkeypatch):
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
          patch("agent_augury.cli.load_model_config", return_value=cfg), \
+         patch("builtins.input", return_value=""), \
          patch("getpass.getpass", return_value=""):
         result = _run_wizard_flow(output_path=out_path, quiet=True)
 
@@ -263,6 +266,7 @@ def test_wizard_flow_prompts_for_missing_api_key(tmp_path, monkeypatch):
          patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
          patch("agent_augury.cli.load_model_config", return_value=cfg), \
+         patch("builtins.input", return_value=""), \
          patch("getpass.getpass", return_value="sk-or-test-key"):
         result = _run_wizard_flow(output_path=out_path, quiet=True)
 

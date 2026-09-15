@@ -17,6 +17,19 @@ from agent_augury.backend.openai_compat import OpenAICompatBackend
 # ---------------------------------------------------------------------------
 
 
+def _feed(responses):
+    """Drive wizard prompts; exhausted inputs → '' so optional defaults apply."""
+    it = iter(responses)
+
+    def fake(_prompt=""):
+        try:
+            return next(it)
+        except StopIteration:
+            return ""
+
+    return fake
+
+
 def _models_response(ids: list[str]) -> dict:
     return {"data": [{"id": m, "object": "model"} for m in ids]}
 
@@ -445,7 +458,7 @@ def test_wizard_openai_with_model_listing(tmp_path, monkeypatch):
             "1",            # select model #1 from list (gpt-4o)
             "n",            # no more agents
         ])
-        with patch("builtins.input", side_effect=lambda *args: next(inputs)), \
+        with patch("builtins.input", side_effect=_feed(inputs)), \
              patch("agent_augury.cli.check_tty", return_value=True), \
              patch("agent_augury.cli.model_config_exists", return_value=False), \
              patch("agent_augury.wizard.save_model_config"), \
@@ -483,7 +496,7 @@ def test_wizard_openai_model_listing_falls_back_to_manual(tmp_path, monkeypatch)
             "n",            # no more agents
             "test task",    # task description
         ])
-        with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+        with patch("builtins.input", side_effect=_feed(inputs)), \
              patch("agent_augury.wizard.save_model_config"):
             cfg = run_wizard()
 
@@ -508,7 +521,7 @@ def test_wizard_openai_model_listing_user_picks_model(tmp_path, monkeypatch):
             "n",            # no more agents
             "test task",    # task description
         ])
-        with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+        with patch("builtins.input", side_effect=_feed(inputs)), \
              patch("agent_augury.wizard.save_model_config"):
             cfg = run_wizard()
 
@@ -528,7 +541,7 @@ def test_wizard_nous_oauth_with_model_listing(tmp_path):
             "1",            # select model #1
             "n",            # no more agents
         ])
-        with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+        with patch("builtins.input", side_effect=_feed(inputs)), \
              patch("agent_augury.wizard.save_model_config"), \
              patch("agent_augury.wizard._run_nous_oauth_device_code", return_value="mock-token"):
             cfg = run_wizard()
@@ -550,7 +563,7 @@ def test_wizard_nous_oauth_no_base_url_prompt(tmp_path):
             "1",            # select model #1
             "n",            # no more agents
         ])
-        with patch("builtins.input", side_effect=lambda _: next(inputs)) as mock_input, \
+        with patch("builtins.input", side_effect=_feed(inputs)) as mock_input, \
              patch("agent_augury.wizard.save_model_config"), \
              patch("agent_augury.wizard._run_nous_oauth_device_code", return_value="mock-token"):
             cfg = run_wizard()
@@ -592,7 +605,7 @@ def test_wizard_nous_oauth_reuses_valid_token(tmp_path):
             "1",            # select model #1
             "n",            # no more agents
         ])
-        with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+        with patch("builtins.input", side_effect=_feed(inputs)), \
              patch("agent_augury.wizard.save_model_config"), \
              patch("agent_augury.wizard._run_nous_oauth_device_code") as mock_auth:
             cfg = run_wizard()
@@ -634,7 +647,7 @@ def test_wizard_nous_oauth_force_reconfigure(tmp_path):
             "1",            # select model #1
             "n",            # no more agents
         ])
-        with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+        with patch("builtins.input", side_effect=_feed(inputs)), \
              patch("agent_augury.wizard.save_model_config"), \
              patch("agent_augury.wizard._run_nous_oauth_device_code", return_value="new-token") as mock_auth:
             cfg = run_wizard(force_reconfigure=True)
@@ -660,7 +673,7 @@ def test_wizard_nous_oauth_auth_fallback_manual(tmp_path):
             "manual-model", # manual model entry after auth failure
             "n",            # no more agents
         ])
-        with patch("builtins.input", side_effect=lambda _: next(inputs)), \
+        with patch("builtins.input", side_effect=_feed(inputs)), \
              patch("agent_augury.wizard.save_model_config"), \
              patch("agent_augury.wizard._run_nous_oauth_device_code", return_value=None):
             cfg = run_wizard()

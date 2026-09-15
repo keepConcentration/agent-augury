@@ -12,6 +12,7 @@ from agent_augury.bot_token_env import (
     upsert_dotenv_value,
     validate_token_env_name,
 )
+from tests.token_fakes import fake_discord_bot_token
 
 
 def test_env_names_accepted():
@@ -21,7 +22,7 @@ def test_env_names_accepted():
 
 
 def test_discord_token_shape_rejected():
-    fake = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
+    fake = fake_discord_bot_token()
     assert looks_like_discord_bot_token(fake)
     err = validate_token_env_name(fake)
     assert err is not None

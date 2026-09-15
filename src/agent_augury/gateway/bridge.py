@@ -69,6 +69,14 @@ class PendingApproval:
     ttl_seconds: float | None = None
 
 
+@dataclass(frozen=True)
+class BridgeBindOptions:
+    """Options for :meth:`SessionBridge.bind_session` (B6 / G1)."""
+
+    wire_agent_steps: bool = True
+    suppress_agent_steps: bool = False  # headless --quiet
+
+
 @dataclass
 class SessionBridge:
     """Bind a Core session (or demo stand-in) to a :class:`SessionGateway`."""
@@ -83,31 +91,39 @@ class SessionBridge:
     _pending_approvals: deque[PendingApproval] = field(default_factory=deque)
     _recent_thread: str | None = None
     _running: bool = False
+    _step_bound: bool = False
 
     def install(self) -> None:
         """Wire ``gateway.on_command`` to this bridge."""
         self.gateway.on_command = self.handle_command
 
-    def attach_session_callbacks(self, session: Any) -> None:
-        """Chain Core ``on_step`` / ``on_tool_event`` into Wire publish (non-destructive)."""
+    def bind_session(
+        self,
+        session: Any,
+        *,
+        options: BridgeBindOptions | None = None,
+    ) -> None:
+        """Chain Core ``on_step`` into Wire publish (B6). Does not touch ``on_tool_event``."""
+        opts = options or BridgeBindOptions()
+        self.session = session
+        if not opts.wire_agent_steps:
+            return
+        if self._step_bound:
+            return
+
         prev_step = getattr(session, "on_step", None)
-        prev_tool = getattr(session, "on_tool_event", None)
+        suppress = opts.suppress_agent_steps
 
         def on_step(agent_id: str, result: Any) -> None:
-            self.publish_core_event(
-                {"type": "step", "agent_id": agent_id, "result": result}
-            )
+            if not suppress:
+                self.publish_core_event(
+                    {"type": "step", "agent_id": agent_id, "result": result}
+                )
             if prev_step is not None:
                 prev_step(agent_id, result)
 
-        def on_tool_event(event: dict[str, Any]) -> None:
-            self.publish_core_event(event)
-            if prev_tool is not None:
-                prev_tool(event)
-
         session.on_step = on_step
-        session.on_tool_event = on_tool_event
-        self.session = session
+        self._step_bound = True
 
     @property
     def pending(self) -> PendingQuestion | None:

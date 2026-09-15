@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+from collections.abc import Mapping, Sequence
 
 import pytest
 
@@ -31,3 +34,28 @@ def build_cfg(**overrides):
     }
     cfg.update(overrides)
     return cfg
+
+
+def popen_python_module(
+    module_args: Sequence[str],
+    *,
+    env: Mapping[str, str],
+) -> subprocess.Popen[str]:
+    """Spawn ``sys.executable -m …`` preferring posix_spawn over fork+exec.
+
+    After discord.py / aiohttp have been imported, macOS ``fork`` in
+    ``subprocess.Popen`` can SIGSEGV the child (empty stdout → flaky JSONL
+    tests). CPython only takes the posix_spawn path when ``close_fds`` is
+    False and ``cwd`` is None — pass absolute paths in *module_args* instead.
+    """
+    return subprocess.Popen(
+        [sys.executable, *module_args],
+        cwd=None,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=dict(env),
+        close_fds=False,
+    )

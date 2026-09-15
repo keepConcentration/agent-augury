@@ -58,7 +58,9 @@ async def test_start_empty_token_raises_clear_error(mock_client):
 
 @pytest.mark.asyncio
 async def test_start_token_env_is_literal_token_raises_yaml_hint(mock_client):
-    pasted = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
+    from tests.token_fakes import fake_discord_bot_token
+
+    pasted = fake_discord_bot_token()
     with patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client):
         bot = DiscordBotAdapter(
             agent_id="agent-1",
@@ -226,7 +228,7 @@ class TestBotManager:
         mgr.register(adapter)
         mgr.route_event("agent-1", "hello world")
         item = adapter._outbox.get_nowait()
-        assert item == "hello world"
+        assert item.content == "hello world"
 
     def test_register_overwrites_same_agent_id(self, adapter, mock_client):
         mgr = BotManager()
@@ -405,7 +407,9 @@ class TestBotsConfigValidation:
 
         from agent_augury.config import ConfigError, load_config
 
-        pasted = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
+        from tests.token_fakes import fake_discord_bot_token
+
+        pasted = fake_discord_bot_token()
         cfg = build_cfg(
             agents=[{"id": "a1", "backend": {"type": "openai", "base_url": "http://x/v1", "api_key_env": "X", "model": "m"}}],
             bots=[{"agent_id": "a1", "token_env": pasted, "channel_id": 123}],

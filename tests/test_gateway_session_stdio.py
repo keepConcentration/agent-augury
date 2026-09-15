@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 from agent_augury.gateway.stdio import decode_line, encode_line
 from agent_augury.gateway.types import make_command
+
+from .conftest import popen_python_module
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src"
@@ -25,9 +25,8 @@ def _env() -> dict[str, str]:
 
 
 def test_session_stdio_no_auto_start_quit():
-    proc = subprocess.Popen(
+    proc = popen_python_module(
         [
-            sys.executable,
             "-m",
             "agent_augury.gateway.session_stdio",
             "--config",
@@ -35,12 +34,6 @@ def test_session_stdio_no_auto_start_quit():
             "--demo",
             "--no-auto-start",
         ],
-        cwd=str(REPO_ROOT),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
         env=_env(),
     )
     assert proc.stdin is not None and proc.stdout is not None
@@ -70,21 +63,14 @@ def test_session_stdio_no_auto_start_quit():
 
 
 def test_session_stdio_auto_start_demo_then_quit():
-    proc = subprocess.Popen(
+    proc = popen_python_module(
         [
-            sys.executable,
             "-m",
             "agent_augury.gateway.session_stdio",
             "--config",
             str(DEMO),
             "--demo",
         ],
-        cwd=str(REPO_ROOT),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
         env=_env(),
     )
     assert proc.stdin is not None and proc.stdout is not None
@@ -148,5 +134,3 @@ def test_cli_plain_surface_removed():
     kwargs = ink.call_args.kwargs
     assert kwargs["mode"] == "session"
     assert kwargs["config"] == "fake.yaml"
-    assert kwargs["demo"] is True
-

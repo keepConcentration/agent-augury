@@ -956,8 +956,10 @@ def test_wizard_discord_bots_per_agent(tmp_path, monkeypatch):
 
 
 def test_wizard_rejects_pasted_bot_token_as_env_name(monkeypatch):
+    from tests.token_fakes import fake_discord_bot_token
+
     monkeypatch.delenv("BOT_TOKEN_SOLO", raising=False)
-    pasted = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
+    pasted = fake_discord_bot_token()
     inputs = iter([
         "solo",
         "1",
@@ -982,8 +984,10 @@ def test_wizard_rejects_pasted_bot_token_as_env_name(monkeypatch):
 
 
 def test_wizard_stores_discord_bot_token_in_dotenv(tmp_path, monkeypatch):
+    from tests.token_fakes import fake_discord_bot_token
+
     secrets = tmp_path / ".env"
-    token = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
+    token = fake_discord_bot_token(prefix="st")
     monkeypatch.delenv("BOT_TOKEN_SOLO", raising=False)
     inputs = iter([
         "solo",
@@ -1007,7 +1011,7 @@ def test_wizard_stores_discord_bot_token_in_dotenv(tmp_path, monkeypatch):
         cfg = run_wizard()
 
     assert cfg["bots"][0]["token_env"] == "BOT_TOKEN_SOLO"
-    assert "MTU0" not in yaml.safe_dump(cfg)
+    assert token not in yaml.safe_dump(cfg)
     assert secrets.exists()
     assert "BOT_TOKEN_SOLO=" in secrets.read_text(encoding="utf-8")
     assert os.environ.get("BOT_TOKEN_SOLO") == token

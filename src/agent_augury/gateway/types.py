@@ -17,6 +17,7 @@ EVENT_TYPES = frozenset({
     "session.checkpoint",
     "session.resumed",
     "session.resume_failed",
+    "session.human_approval_pending",
     "agent.step",
     "tool",
     "human.question",

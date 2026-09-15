@@ -11,7 +11,7 @@ import discord
 from agent_augury.gateway.bus import SessionGateway
 from agent_augury.gateway.types import make_command
 
-from .chat_surface_format import format_wire_for_chat_surface
+from ..chat_surface_format import format_wire_for_chat_surface
 
 log = logging.getLogger(__name__)
 

@@ -18,14 +18,15 @@ from uuid import uuid4
 import discord
 
 from agent_augury.gateway.bridge import SessionBridge
-from agent_augury.gateway.bus import SessionGateway, SurfaceSubscription
+from agent_augury.gateway.bus import SessionGateway
+from agent_augury.gateway.register import register_chat_surface
 from agent_augury.gateway.types import make_command
 
-from .discord_approval import (
+from .approval import (
     handle_approval_interaction,
     parse_approval_custom_id,
 )
-from .discord_bot import BotManager
+from .bot import BotManager
 
 INBOUND_SURFACE = "discord-inbound"
 
@@ -57,13 +58,12 @@ def attach_discord_inbound(
         return False
 
     if INBOUND_SURFACE not in gateway.surfaces():
-        gateway.attach(
-            SurfaceSubscription(
-                name=INBOUND_SURFACE,
-                mode="interact",
-                family="chat",
-                on_event=None,
-            )
+        register_chat_surface(
+            gateway,
+            name=INBOUND_SURFACE,
+            mode="interact",
+            on_event=None,
+            event_types=None,
         )
 
     async def _on_interaction(interaction: discord.Interaction) -> None:
@@ -170,8 +170,15 @@ def dispatch_discord_inbound(
             "mentions": [agent_id],
             "source": source,
         }
-        if bridge.recent_thread:
-            fields["thread_id"] = bridge.recent_thread
+        mapped_tid: str | None = None
+        session = bridge.session
+        if session is not None:
+            lookup = getattr(session, "lookup_external_thread", None)
+            if callable(lookup):
+                mapped_tid = lookup(source)
+        thread_id = mapped_tid or bridge.recent_thread
+        if thread_id:
+            fields["thread_id"] = thread_id
         cmd = make_command("human.send", id=cmd_id, **fields)
 
     return gateway.dispatch(cmd, surface=INBOUND_SURFACE)

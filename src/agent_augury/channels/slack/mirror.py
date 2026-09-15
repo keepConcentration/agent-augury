@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 
+from ..chunk import split_chat_content
+
 # Slack text practical limit; leave headroom for mrkdwn.
 _MAX_CONTENT = 3000
 
@@ -32,9 +34,8 @@ class SlackWebhookMirror:
     def enqueue_text(self, text: str) -> None:
         if not text:
             return
-        if len(text) > _MAX_CONTENT:
-            text = text[:_MAX_CONTENT] + "…"
-        self.outbox.append(text)
+        for chunk in split_chat_content(text, limit=_MAX_CONTENT):
+            self.outbox.append(chunk)
 
     async def flush(self) -> int:
         """Post every queued line. Swallows HTTP failures (records them)."""

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_augury.server import MessageServer, ReservedNameError
+from agent_augury.core.server import MessageServer, ReservedNameError
 
 # ---------------------------------------------------------------------------
 # S1 — agent id 'human' (및 대소문자 변형)은 등록 시 거부
@@ -145,7 +145,7 @@ async def test_human_send_delivers_to_agent_inbox():
 
 async def test_ask_user_routes_to_human_via_mentions():
     """에이전트가 ask_user → human inbox로 push되는 경로 검증."""
-    from agent_augury.agent.tools import ToolBox
+    from agent_augury.core.agent.tools import ToolBox
 
     server = MessageServer()
     server.register_agent("agent-1")

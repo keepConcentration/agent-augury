@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import yaml
 
-from agent_augury.channel.slack_mirror import SlackWebhookMirror, slack_from_config
-from agent_augury.channel.slack_observe import attach_slack_mirror
+from agent_augury.channels.slack.mirror import SlackWebhookMirror, slack_from_config
+from agent_augury.channels.slack.observe import attach_slack_mirror
 from agent_augury.config import ConfigError, load_config
 from agent_augury.gateway import SessionGateway, make_event
 from tests.conftest import build_cfg
@@ -95,7 +95,7 @@ def test_config_slack_requires_url_env(tmp_path):
 
 
 def test_session_attaches_slack_mirror(tmp_path, monkeypatch):
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     monkeypatch.setenv("TEST_API_KEY", "sk-test")
     monkeypatch.setenv("AUGURY_SLACK_WEBHOOK_URL", "https://hooks.slack.test/x")

@@ -12,7 +12,7 @@ import tempfile
 
 import pytest
 
-from agent_augury.server import MessageServer
+from agent_augury.core.server import MessageServer
 
 # ---------------------------------------------------------------------------
 # Helpers

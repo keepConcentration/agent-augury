@@ -26,21 +26,32 @@ GateCallback = Callable[[], None]
 class ConsensusGate:
     """Watches messages via server subscription; flips open on unanimity."""
 
-    def __init__(self, server: MessageServer, thread_name: str, *, require_proposal: bool = True, bind_prefixes: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        server: MessageServer,
+        thread_name: str,
+        *,
+        require_proposal: bool = True,
+        bind_prefixes: list[str] | None = None,
+        await_human_after_agents: bool = False,
+    ) -> None:
         self._server = server
         self.thread_name = thread_name
         self.thread_id: str | None = None
         self.participants: list[str] = []
         self.approvals: set[str] = set()
         self.require_proposal = require_proposal
-        self.bind_prefixes = bind_prefixes or (["PROPOSE:"] if require_proposal else None)
+        self.bind_prefixes = bind_prefixes or (
+            ["PROPOSE:"] if require_proposal else None
+        )
         self.opened_at_seq: int | None = None
         self._bound: bool = False
         self._on_open: GateCallback | None = None
-        # v0.2: separate flag tracking whether a PROPOSE message was actually received.
-        # This prevents has_proposal from being True when bind_to_thread() is called
-        # explicitly (e.g. during Session setup) before any PROPOSE arrives.
         self._proposal_received: bool = False
+        # HUMAN_APPROVAL_GATE_DESIGN: after_agents 2nd stage
+        self.await_human_after_agents = bool(await_human_after_agents)
+        self.human_pending: bool = False
+        self._on_human_pending: GateCallback | None = None
 
     # -- explicit binding (for pre-created threads) -------------------------
 
@@ -96,23 +107,47 @@ class ConsensusGate:
             return
         content = message["content"]
         author = message["author"]
+
+        # Stage 2: waiting for human after agent unanimity
+        if self.await_human_after_agents and self.human_pending:
+            if content.startswith("REJECT:"):
+                self.approvals.clear()
+                self.human_pending = False
+                return
+            if author == "human" and content.startswith("APPROVE:"):
+                self._open_gate(message)
+            return
+
         if content.startswith("PROPOSE:"):
             self._proposal_received = True
         elif content.startswith("REJECT:"):
             self.approvals.clear()
+            self.human_pending = False
         elif content.startswith("APPROVE:"):
+            if author == "human":
+                # Ignore human votes before agent unanimity (after_agents T5)
+                return
             if not self.require_proposal:
                 # P3+ (require_proposal=False): first APPROVE acts as the proposal
-                # P2 (require_proposal=True): proposal must come from a real PROPOSE
                 self._proposal_received = True
             if author in self.participants:
                 self.approvals.add(author)
                 if set(self.participants) <= self.approvals and (
                     not self.require_proposal or self.has_proposal
                 ):
-                    self.opened_at_seq = message["seq"]
-                    if self._on_open:
-                        self._on_open()
+                    if self.await_human_after_agents:
+                        if not self.human_pending:
+                            self.human_pending = True
+                            if self._on_human_pending:
+                                self._on_human_pending()
+                    else:
+                        self._open_gate(message)
+
+    def _open_gate(self, message: dict[str, Any]) -> None:
+        self.human_pending = False
+        self.opened_at_seq = message["seq"]
+        if self._on_open:
+            self._on_open()
 
     # -- views -----------------------------------------------------------------
 
@@ -125,6 +160,8 @@ class ConsensusGate:
             "opened_at_seq": self.opened_at_seq,
             "proposal_received": self._proposal_received,
             "require_proposal": self.require_proposal,
+            "await_human_after_agents": self.await_human_after_agents,
+            "human_pending": self.human_pending,
         }
 
     def restore_state(self, snap: dict[str, Any]) -> None:
@@ -140,6 +177,9 @@ class ConsensusGate:
         opened = snap.get("opened_at_seq")
         self.opened_at_seq = int(opened) if opened is not None else None
         self._proposal_received = bool(snap.get("proposal_received", False))
+        if "await_human_after_agents" in snap:
+            self.await_human_after_agents = bool(snap["await_human_after_agents"])
+        self.human_pending = bool(snap.get("human_pending", False))
 
     @property
     def is_open(self) -> bool:
@@ -148,6 +188,10 @@ class ConsensusGate:
     def on_open(self, callback: GateCallback) -> None:
         """Register a callback invoked when the gate flips open."""
         self._on_open = callback
+
+    def on_human_pending(self, callback: GateCallback) -> None:
+        """Register a callback when agent unanimity parks for human approval."""
+        self._on_human_pending = callback
 
     @property
     def has_proposal(self) -> bool:

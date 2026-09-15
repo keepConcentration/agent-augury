@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent_augury.session import Session
+from agent_augury.core.session import Session
 
 
 def _mock_server() -> MagicMock:

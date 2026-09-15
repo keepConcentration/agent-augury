@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from agent_augury.config import ConfigError, load_config, normalize_surfaces
-from agent_augury.session import Session
+from agent_augury.core.session import Session
 from tests.conftest import build_cfg
 
 
@@ -146,7 +146,7 @@ def test_session_from_surfaces_expanded_config(tmp_path, monkeypatch):
     mock_client = MagicMock()
     mock_client.event = lambda func: func
     with patch(
-        "agent_augury.channel.discord_bot.discord.Client",
+        "agent_augury.channels.discord.bot.discord.Client",
         return_value=mock_client,
     ):
         session = Session.from_config(cfg)

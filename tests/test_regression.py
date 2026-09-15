@@ -9,11 +9,11 @@ import json
 
 import pytest
 
-from agent_augury.agent.loop import AgentLoop
+from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.backend.base import Completion, ModelBackend, ToolCall
-from agent_augury.protocol.collaboration import CollaborationProtocol
-from agent_augury.protocol.phases import P1_EXPLORE, P2_SPLIT
-from agent_augury.server import MessageServer
+from agent_augury.core.protocol.collaboration import CollaborationProtocol
+from agent_augury.core.protocol.phases import P1_EXPLORE, P2_SPLIT
+from agent_augury.core.server import MessageServer
 
 
 class ScriptedBackend(ModelBackend):
@@ -324,8 +324,8 @@ async def test_gate_binding_messages_allowed_after_gate_bound():
 
 async def test_p1_explore_blocks_non_ready_messages():
     """P1_EXPLORE: only READY: messages are allowed; others are blocked."""
-    from agent_augury.protocol.collaboration import CollaborationProtocol
-    from agent_augury.protocol.phases import P1_EXPLORE
+    from agent_augury.core.protocol.collaboration import CollaborationProtocol
+    from agent_augury.core.protocol.phases import P1_EXPLORE
 
     server = MessageServer()
     for a in ("a1", "a2"):
@@ -376,7 +376,7 @@ async def test_bind_to_thread_does_not_set_has_proposal():
     arrives. This prevents gates from opening without a real proposal
     when Session pre-binds gates during setup.
     """
-    from agent_augury.protocol.approval import ConsensusGate
+    from agent_augury.core.protocol.approval import ConsensusGate
 
     server = MessageServer()
     for a in ("a1", "a2"):
@@ -521,7 +521,7 @@ class FailingBackend(ModelBackend):
 
 async def test_session_continues_when_one_agent_fails():
     """Session must continue when one agent's step raises an exception."""
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     server = MessageServer()
     server.register_agent("agent-1")
@@ -553,7 +553,7 @@ async def test_session_continues_when_one_agent_fails():
 
 async def test_session_all_agents_fail_returns_zero_steps():
     """Session with all agents failing should return 0 steps, not crash."""
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     server = MessageServer()
     server.register_agent("agent-1")

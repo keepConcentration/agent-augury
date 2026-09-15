@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent_augury.channel.discord_approval import (
+from agent_augury.channels.discord.approval import (
     ToolApprovalView,
     approval_prompt_text,
     make_approval_custom_id,
@@ -54,15 +54,15 @@ def test_approval_view_has_two_buttons():
 def test_observe_routes_approval_with_view():
     from unittest.mock import MagicMock, patch
 
-    from agent_augury.channel.discord_bot import BotManager, DiscordBotAdapter, OutboundMessage
-    from agent_augury.channel.discord_observe import attach_discord_bots
+    from agent_augury.channels.discord.bot import BotManager, DiscordBotAdapter, OutboundMessage
+    from agent_augury.channels.discord.observe import attach_discord_bots
     from agent_augury.gateway import SessionGateway, make_event
 
     gw = SessionGateway()
     mgr = BotManager()
     client = MagicMock()
     client.event = lambda func: func
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=client):
         bot = DiscordBotAdapter(agent_id="agent-1", token="t", channel_id=1)
     mgr.register(bot)
     attach_discord_bots(gw, mgr)

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent_augury.channel.discord_bot import (
+from agent_augury.channels.discord.bot import (
     BotManager,
     DiscordBotAdapter,
     DiscordBotError,
@@ -33,7 +33,7 @@ def mock_client():
 @pytest.fixture
 def adapter(mock_client):
     """DiscordBotAdapter with mocked internals."""
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client):
         adapter = DiscordBotAdapter(
             agent_id="agent-1",
             token="fake-token",
@@ -45,7 +45,7 @@ def adapter(mock_client):
 
 @pytest.mark.asyncio
 async def test_start_empty_token_raises_clear_error(mock_client):
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client):
         bot = DiscordBotAdapter(
             agent_id="coder",
             token="  ",
@@ -59,7 +59,7 @@ async def test_start_empty_token_raises_clear_error(mock_client):
 @pytest.mark.asyncio
 async def test_start_token_env_is_literal_token_raises_yaml_hint(mock_client):
     pasted = "REDACTED_DISCORD_BOT_TOKEN_DUMMY"
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client):
         bot = DiscordBotAdapter(
             agent_id="agent-1",
             token="",
@@ -78,7 +78,7 @@ async def test_start_returns_after_ready_while_gateway_keeps_running(mock_client
         await asyncio.sleep(3600)
 
     mock_client.start = long_gateway
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client):
         bot = DiscordBotAdapter(
             agent_id="agent-1",
             token="fake-token",
@@ -101,7 +101,7 @@ async def test_bot_manager_start_all_does_not_block_on_gateway(mock_client):
 
     mock_client.start = long_gateway
     manager = BotManager()
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client):
         for i in (1, 2):
             manager.register(
                 DiscordBotAdapter(
@@ -129,7 +129,7 @@ async def test_start_login_failure_wraps_message(mock_client):
     mock_client.start = AsyncMock(
         side_effect=discord.LoginFailure("Improper token has been passed.")
     )
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client):
         bot = DiscordBotAdapter(
             agent_id="agent-1",
             token="not-a-real-token",
@@ -160,13 +160,47 @@ class TestDiscordBotAdapter:
             parts.append(item.content if hasattr(item, "content") else item)
         assert len(parts) >= 2
         assert all(len(p) <= 1800 for p in parts)
-        assert "".join(parts) == long_text
+        # Indicators are appended; body without ``(i/n)`` covers the input.
+        bodies = []
+        for p in parts:
+            if " (" in p and p.endswith(")"):
+                p = p.rsplit(" (", 1)[0]
+            bodies.append(p)
+        assert "".join(bodies) == long_text
 
     def test_enqueue_short_content_unchanged(self, adapter):
         adapter.enqueue("hello")
         item = adapter._outbox.get_nowait()
         text = item.content if hasattr(item, "content") else item
         assert text == "hello"
+
+    def test_enqueue_from_other_thread_via_call_soon(self, adapter):
+        """D4: foreign-thread enqueue schedules onto the bot loop."""
+        import threading
+
+        loop = asyncio.new_event_loop()
+        adapter._loop = loop
+        done = threading.Event()
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                adapter.enqueue("from-other-thread")
+            except BaseException as exc:  # noqa: BLE001 — collect for main thread
+                errors.append(exc)
+            finally:
+                done.set()
+
+        threading.Thread(target=worker, daemon=True).start()
+        assert done.wait(timeout=2.0)
+        assert errors == []
+        # Drain the scheduled callback(s) on the owning loop.
+        loop.call_soon(loop.stop)
+        loop.run_forever()
+        item = adapter._outbox.get_nowait()
+        assert item.content == "from-other-thread"
+        loop.close()
+        adapter._loop = None
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +233,7 @@ class TestBotManager:
         mgr.register(adapter)
 
         # Register a second adapter with same agent_id
-        with patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client):
+        with patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client):
             adapter2 = DiscordBotAdapter(
                 agent_id="agent-1",
                 token="other-token",
@@ -442,7 +476,7 @@ class TestSessionBotManagerIntegration:
         import yaml
 
         from agent_augury.config import load_config
-        from agent_augury.session import Session
+        from agent_augury.core.session import Session
 
         monkeypatch.setenv("TEST_API_KEY", "sk-test")
         cfg = build_cfg(
@@ -462,7 +496,7 @@ class TestSessionBotManagerIntegration:
         mock_client.event = lambda func: func
 
         with (
-            patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client),
+            patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client),
             patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}),
         ):
                 session = Session.from_config(load_config(str(path)))
@@ -476,7 +510,7 @@ class TestSessionBotManagerIntegration:
         import yaml
 
         from agent_augury.config import load_config
-        from agent_augury.session import Session
+        from agent_augury.core.session import Session
 
         monkeypatch.setenv("TEST_API_KEY", "sk-test")
         cfg = build_cfg(
@@ -496,7 +530,7 @@ class TestSessionBotManagerIntegration:
         import yaml
 
         from agent_augury.config import load_config
-        from agent_augury.session import Session
+        from agent_augury.core.session import Session
 
         monkeypatch.setenv("TEST_API_KEY", "sk-test")
         cfg = build_cfg(
@@ -517,7 +551,7 @@ class TestSessionBotManagerIntegration:
         mock_client.event = lambda func: func
 
         with (
-            patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client),
+            patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client),
             patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}),
         ):
                 session = Session.from_config(load_config(str(path)))
@@ -543,7 +577,7 @@ class TestSessionBotManagerIntegration:
         import yaml
 
         from agent_augury.config import load_config
-        from agent_augury.session import Session
+        from agent_augury.core.session import Session
 
         monkeypatch.setenv("TEST_API_KEY", "sk-test")
         cfg = build_cfg(
@@ -564,7 +598,7 @@ class TestSessionBotManagerIntegration:
         mock_client.event = lambda func: func
 
         with (
-            patch("agent_augury.channel.discord_bot.discord.Client", return_value=mock_client),
+            patch("agent_augury.channels.discord.bot.discord.Client", return_value=mock_client),
             patch.dict("os.environ", {"BOT_TOKEN_1": "fake-token"}),
         ):
                 session = Session.from_config(load_config(str(path)))
@@ -598,7 +632,7 @@ class TestSessionBotManagerIntegration:
         import yaml
 
         from agent_augury.config import load_config
-        from agent_augury.session import Session
+        from agent_augury.core.session import Session
 
         monkeypatch.setenv("TEST_API_KEY", "sk-test")
         cfg = build_cfg(
@@ -617,11 +651,11 @@ class TestSessionBotManagerIntegration:
     @pytest.mark.asyncio
     async def test_session_run_empty_bot_manager_is_safe(self, tmp_path):
         """bot_manager에 봇이 0개일 때 run()이 정상 동작하는지 확인."""
-        from agent_augury.agent.loop import AgentLoop
+        from agent_augury.core.agent.loop import AgentLoop
         from agent_augury.backend.fake import FakeModelBackend
-        from agent_augury.channel.discord_bot import BotManager
-        from agent_augury.server import MessageServer
-        from agent_augury.session import Session
+        from agent_augury.channels.discord.bot import BotManager
+        from agent_augury.core.server import MessageServer
+        from agent_augury.core.session import Session
 
         server = MessageServer()
         server.register_agent("a1")

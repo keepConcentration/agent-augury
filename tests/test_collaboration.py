@@ -2,9 +2,9 @@
 
 import pytest
 
-from agent_augury.protocol.approval import ConsensusGate
-from agent_augury.protocol.collaboration import CollaborationProtocol
-from agent_augury.protocol.phases import (
+from agent_augury.core.protocol.approval import ConsensusGate
+from agent_augury.core.protocol.collaboration import CollaborationProtocol
+from agent_augury.core.protocol.phases import (
     COMPLETED,
     P1_EXPLORE,
     P2_SPLIT,
@@ -13,7 +13,7 @@ from agent_augury.protocol.phases import (
     P5_SUBMIT,
     REJECTED,
 )
-from agent_augury.server import MessageServer
+from agent_augury.core.server import MessageServer
 
 
 def make_protocol(*agents):

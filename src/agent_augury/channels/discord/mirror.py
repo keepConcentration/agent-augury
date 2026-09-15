@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 
+from ..chunk import split_chat_content
+
 # Discord webhook content limit is 2000; leave headroom for formatting.
 _MAX_CONTENT = 1800
 
@@ -32,7 +34,9 @@ class DiscordWebhookMirror:
         self.enqueue(message)
 
     def enqueue(self, message: dict[str, Any]) -> None:
-        self.outbox.append(self.format_line(message))
+        line = self.format_line(message)
+        for chunk in split_chat_content(line, limit=_MAX_CONTENT):
+            self.outbox.append(chunk)
 
     # -- flushing ----------------------------------------------------------------
 
@@ -59,15 +63,9 @@ class DiscordWebhookMirror:
 
     @staticmethod
     def format_line(message: dict[str, Any]) -> str:
+        """Full mirror line (no truncate — ``enqueue`` chunks via ``split_chat_content``)."""
         content = str(message.get("content", ""))
-        prefix = f"`[{message['thread_id']}]` **{message['author']}**: "
-        budget = max(32, _MAX_CONTENT - len(prefix) - 1)
-        if len(content) > budget:
-            content = content[:budget] + "…"
-        line = f"{prefix}{content}"
-        if len(line) > _MAX_CONTENT:
-            line = line[: _MAX_CONTENT - 1] + "…"
-        return line
+        return f"`[{message['thread_id']}]` **{message['author']}**: {content}"
 
     @classmethod
     def from_env(cls, url_env: str) -> DiscordWebhookMirror | None:

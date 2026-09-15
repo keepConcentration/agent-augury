@@ -127,6 +127,16 @@ Human-in-the-loop rules:
 - Match the user's language when asking.
 """
 
+_HUMAN_APPROVAL_INSTRUCTIONS = """
+Human phase approval (protocol):
+- For phase(s): {phases} — reach agent consensus as usual (PROPOSE:/APPROVE:
+  among agents only).
+- After all agents APPROVE, the gate waits for the human. Do not assume the
+  phase advanced until you see the phase change.
+- If the human REJECT:s, re-form agent consensus, then wait again.
+- This is separate from tool-approval buttons for shell/file tools.
+"""
+
 # Phase-specific instruction templates
 _PHASE_INSTRUCTIONS = {
     "P1_EXPLORE": """\
@@ -176,6 +186,7 @@ def render_system_prompt(
     role_prompt: str = "",
     has_human: bool = False,
     tool_instructions: str = "",
+    human_approval_phases: list[str] | None = None,
 ) -> str:
     """Render the system prompt for an agent.
 
@@ -191,11 +202,16 @@ def render_system_prompt(
             agent knows how to ask the user via ``ask_user``.
         tool_instructions: Dynamically rendered tool block (P6). Empty when
             no tools are active (defensive).
+        human_approval_phases: Protocol phases with ``human_approval: true``.
     """
     role_instructions = ""
     if role_prompt:
         role_instructions = f"\nYour role:\n{role_prompt}\n"
     human_instructions = _HUMAN_INSTRUCTIONS if has_human else ""
+    if human_approval_phases:
+        human_instructions += _HUMAN_APPROVAL_INSTRUCTIONS.format(
+            phases=", ".join(human_approval_phases)
+        )
     phase_instructions = _PHASE_INSTRUCTIONS.get(phase, "")
     language_instruction = ""
     if language:

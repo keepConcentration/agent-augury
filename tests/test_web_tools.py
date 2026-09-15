@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import httpx
 
-from agent_augury.agent.web import (
+from agent_augury.core.agent.web import (
     DuckDuckGoProvider,
     build_search_provider,
     fetch_url_safe,

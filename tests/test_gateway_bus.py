@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agent_augury.gateway import (
@@ -113,3 +115,71 @@ def test_detach():
     gw.detach("ink")
     assert gw.surfaces() == []
     assert gw.publish(make_event("log", text="x")) == 0
+
+
+def test_publish_isolates_surface_exceptions():
+    """D5: one surface raising must not stop delivery to others."""
+    gw = SessionGateway()
+    ok: list[str] = []
+
+    def boom(_e: dict) -> None:
+        raise RuntimeError("broken pipe")
+
+    def good(e: dict) -> None:
+        ok.append(str(e.get("text")))
+
+    gw.attach(SurfaceSubscription(name="bad", on_event=boom))
+    gw.attach(SurfaceSubscription(name="good", on_event=good))
+    assert gw.publish(make_event("log", text="survive")) == 2
+    assert ok == ["survive"]
+
+
+def test_mailbox_drop_oldest_under_backpressure():
+    """A7: bounded mailbox drops oldest when full."""
+    from collections import deque
+
+    gw = SessionGateway()
+    inbox: list[str] = []
+    gw.attach(
+        SurfaceSubscription(
+            name="chat",
+            mode="observe",
+            family="chat",
+            on_event=lambda e: inbox.append(str(e.get("text"))),
+            mailbox_max=2,
+        )
+    )
+    sub = gw._surfaces["chat"]
+    # Suppress auto-drain so we can observe overflow.
+    gw._drain_scheduled.add("chat")
+    gw._mailboxes["chat"] = deque()
+    for i in range(3):
+        gw._enqueue_mailbox(sub, make_event("log", text=f"e{i}"))
+    box = gw._mailboxes["chat"]
+    assert len(box) == 2
+    assert gw.drop_counts().get("chat") == 1
+    assert [e["text"] for e in box] == ["e1", "e2"]
+    gw._drain_scheduled.discard("chat")
+    gw.drain_mailboxes()
+    assert inbox == ["e1", "e2"]
+
+
+@pytest.mark.asyncio
+async def test_mailbox_defers_delivery_on_running_loop():
+    """A7: with a running loop, publish returns before mailbox drain."""
+    gw = SessionGateway()
+    inbox: list[str] = []
+    gw.attach(
+        SurfaceSubscription(
+            name="chat",
+            family="chat",
+            mode="observe",
+            on_event=lambda e: inbox.append(str(e.get("text"))),
+            mailbox_max=8,
+        )
+    )
+    n = gw.publish(make_event("log", text="deferred"))
+    assert n == 1
+    assert inbox == []
+    await asyncio.sleep(0)
+    assert inbox == ["deferred"]

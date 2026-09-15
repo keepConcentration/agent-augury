@@ -95,6 +95,8 @@ class CollaborationProtocol:
         self._gate_open_fired: set[Phase] = set()
         # v0.2: READY-based P1 finish policy
         self._ready_states: set[str] = set()
+        # Subscribe once at construction (not only on checkpoint restore).
+        self._server.subscribe(self._on_message)
 
     # -- configuration --------------------------------------------------------
 
@@ -154,8 +156,6 @@ class CollaborationProtocol:
             self._setup_gate_for_phase(str(cgp))
         else:
             self._setup_gate_for_phase(self.phase)
-        # Subscribe to server messages to track READY states
-        self._server.subscribe(self._on_message)
 
     def _on_message(self, message: dict[str, Any]) -> None:
         """Track READY messages from participants for P1 finish policy.
@@ -263,13 +263,23 @@ class CollaborationProtocol:
     # -- gate binding (called by orchestrator before phase starts) ------------
 
     def bind_gate(
-        self, phase: Phase, thread_name: str, *, require_proposal: bool = True
+        self,
+        phase: Phase,
+        thread_name: str,
+        *,
+        require_proposal: bool = True,
+        await_human_after_agents: bool = False,
     ) -> ConsensusGate:
         """Bind a gate for the given phase to a thread with the given name."""
         if phase not in self._gates:
             raise ValueError(f"no gate slot for phase {phase}")
 
-        gate = ConsensusGate(self._server, thread_name=thread_name, require_proposal=require_proposal)
+        gate = ConsensusGate(
+            self._server,
+            thread_name=thread_name,
+            require_proposal=require_proposal,
+            await_human_after_agents=await_human_after_agents,
+        )
         self._server.subscribe(gate.on_message)
         self._gates[phase] = gate
         return gate

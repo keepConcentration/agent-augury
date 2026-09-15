@@ -8,8 +8,8 @@ Conventions decided by the orchestrator (2026-08-26):
 - REJECT from anyone clears collected approvals (consensus must re-form).
 """
 
-from agent_augury.protocol.approval import ConsensusGate
-from agent_augury.server import MessageServer
+from agent_augury.core.protocol.approval import ConsensusGate
+from agent_augury.core.server import MessageServer
 
 
 def make_server(*agents):

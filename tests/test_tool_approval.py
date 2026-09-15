@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from agent_augury.agent.approval import (
+from agent_augury.core.agent.approval import (
     ApprovalStore,
     args_digest,
     denied_result,
@@ -16,7 +16,7 @@ from agent_augury.agent.approval import (
     radio_line,
     tool_approval_class,
 )
-from agent_augury.agent.policy import ToolPolicy
+from agent_augury.core.agent.policy import ToolPolicy
 from agent_augury.config import ConfigError, load_config
 from agent_augury.gateway import SurfaceSubscription
 from tests.conftest import build_cfg
@@ -215,7 +215,7 @@ agents:
 
 
 def test_session_has_approval_store_and_interact_detection():
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     cfg = build_cfg(
         agents=[{"id": "a1", "backend": {"type": "fake", "script": [{"text": "ok"}]}}]
@@ -232,11 +232,11 @@ def test_session_has_approval_store_and_interact_detection():
 
 @pytest.mark.asyncio
 async def test_execute_tool_denies_without_interact_surface(tmp_path):
-    from agent_augury.agent.approval import ApprovalStore
-    from agent_augury.agent.loop import AgentLoop
-    from agent_augury.agent.policy import ToolPolicy
+    from agent_augury.core.agent.approval import ApprovalStore
+    from agent_augury.core.agent.loop import AgentLoop
+    from agent_augury.core.agent.policy import ToolPolicy
     from agent_augury.backend.fake import FakeModelBackend
-    from agent_augury.server import MessageServer
+    from agent_augury.core.server import MessageServer
 
     server = MessageServer()
     server.register_agent("a1")
@@ -258,7 +258,7 @@ async def test_execute_tool_denies_without_interact_surface(tmp_path):
 
 @pytest.mark.asyncio
 async def test_execute_tool_pending_then_grant_runs_once(tmp_path):
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     target = tmp_path / "out.txt"
     cfg = build_cfg(
@@ -313,7 +313,7 @@ async def test_execute_tool_pending_then_grant_runs_once(tmp_path):
 
 @pytest.mark.asyncio
 async def test_execute_tool_deny_never_writes(tmp_path):
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     target = tmp_path / "out.txt"
     cfg = build_cfg(
@@ -353,7 +353,7 @@ async def test_execute_tool_deny_never_writes(tmp_path):
 
 @pytest.mark.asyncio
 async def test_approval_bypass_executes_immediately(tmp_path):
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     target = tmp_path / "out.txt"
     cfg = build_cfg(
@@ -390,7 +390,7 @@ async def test_approval_bypass_executes_immediately(tmp_path):
 
 @pytest.mark.asyncio
 async def test_expire_approvals_pushes_denied_radio():
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     cfg = build_cfg(
         agents=[{"id": "a1", "backend": {"type": "fake", "script": [{"text": "ok"}]}}],

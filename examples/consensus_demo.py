@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agent_augury.session import Session
+from agent_augury.core.session import Session
 
 AGENTS = ["agent-1", "agent-2", "agent-3"]
 

@@ -252,37 +252,27 @@ from agent-3: (FYI) 내 몫은 DB 쪽이야.
 agent-augury/
   pyproject.toml
   README.md
-  DESIGN.md
-  LICENSE                  # Apache-2.0 (예정)
+  DESIGN.md                 # 제품 런타임 개념 SSOT (역사·로드맵 포함)
+  docs/architecture/        # Multi-front / resume / gates 등 세부 설계
   src/
     agent_augury/
-      cli.py               # CLI 진입점 (로그 미러)
-      config.py            # YAML 로드/검증
-      session.py           # 세션 = 에이전트 묶음 + 메시지 서버 + 생명주기
-      server.py            # 내부 메시지 서버 (SSOT, in-process asyncio)
-      agent/
-        loop.py            # 에이전트 step() 루프 + inbox drain (단일 소비자)
-        tools.py           # create_thread/send_message/read_resource 도구
-        system_prompt.py   # 모델 무관 통신 규칙 프롬프트 템플릿
-        # watcher.py 없음(A 모델) — 필요 시 v0.1+에서 B 모델 도입 시 추가
-      backend/
-        base.py            # ModelBackend 인터페이스
-        openai_compat.py   # OpenAI 호환 어댑터 (1순위)
-        nous_portal.py     # Nous Portal 어댑터 (2순위)
-      channel/             # (v0.1b 이후) 사람용 관측창 / 미러
-        base.py
-      protocol/            # (v0.1b~) 분할 합의 등 최소 프로토콜
-        phases.py
-        approval.py
+      cli.py
+      config.py
+      core/                 # Session, MessageServer, agent/, protocol/, checkpoint
+      channels/             # discord/, slack/, chat formatting, display
+      gateway/              # Wire bus, Ink/headless bridges
+      backend/              # ModelBackend 어댑터
+  fronts/ink/               # Ink Surface (Node)
   examples/
-    demo.yaml             # 예시 세션 구성
   tests/
 ```
 
+> 세부 경로·갭은 `docs/architecture/IMPLEMENTATION_GAP_CONSOLIDATED.md`를 본다.
+> 아래 §5–§6 로드맵/열린 결정은 **초기 제품화 기록**(대부분 landed)이다.
+
 ### 4.3 라이선스
 
-**결정: Apache-2.0.**
-
+**결정: Apache-2.0** (적용됨).  
 독립 구현·재작성 기준이며, 관련 학술 인용은 [`NOTICE`](NOTICE)에 둔다.
 
 ---
@@ -294,7 +284,7 @@ agent-augury/
 | # | 항목 | 기본값(상태) |
 |---|------|-------------|
 | D1 | 프로젝트 이름 | `agent-augury` — **확정 (2026-08-26)** |
-| D2 | 라이선스 | Apache-2.0 (예정) — §4.3 |
+| D2 | 라이선스 | Apache-2.0 — **확정** |
 | D3 | Discord 위치 | v0.1a는 CLI 로그 미러만, Discord는 v0.1b 이후 — **확정** |
 | D4 | Nous Portal API 스펙 | 2순위 어댑터라 v0.1a 블로커 아님 — 확인 시점 유동 |
 | D5 | 서버 상태 저장 | 메모리 primary + 선택적 aiosqlite — **구현됨** |

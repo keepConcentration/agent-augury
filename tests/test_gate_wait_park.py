@@ -6,12 +6,12 @@ import asyncio
 
 import pytest
 
-from agent_augury.agent.loop import AgentLoop
+from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.backend.base import Completion, ModelBackend
-from agent_augury.protocol.collaboration import CollaborationProtocol
-from agent_augury.protocol.phases import P1_EXPLORE, P2_SPLIT
-from agent_augury.server import MessageServer
-from agent_augury.session import Session
+from agent_augury.core.protocol.collaboration import CollaborationProtocol
+from agent_augury.core.protocol.phases import P1_EXPLORE, P2_SPLIT
+from agent_augury.core.server import MessageServer
+from agent_augury.core.session import Session
 
 
 class CountingBackend(ModelBackend):

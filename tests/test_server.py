@@ -6,7 +6,7 @@ Spec refs: DESIGN.md §2.1, §3.4, §3.5.2, §3.5.3.
 
 import pytest
 
-from agent_augury.server import MessageServer
+from agent_augury.core.server import MessageServer
 
 # ---------------------------------------------------------------------------
 # create_thread

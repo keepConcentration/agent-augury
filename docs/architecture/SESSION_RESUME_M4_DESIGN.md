@@ -1,10 +1,10 @@
 # Session resume M4 — 경화 설계
 
-> **Status:** **M4a–M4d landed** (pending approvals / quarantine / sessions CLI / rule compact); M4e LLM summary still optional/off  
+> **Status:** **M4a–M4e landed** (pending approvals / quarantine / sessions CLI / rule compact / optional LLM summary); default `llm_summary: false`  
 > **Date:** 2026-09-15  
 > **Parent:** `docs/architecture/SESSION_RESUME_DESIGN.md` (M0–M3 landed)  
 > **Priority:** P1 (실사용 다듬기; resume 자체는 M3로 이미 가능)  
-> **Code:** `checkpoint.py`, `compact.py`, `sessions_cli.py`, `agent/approval.py`, `session.py`, `cli.py`  
+> **Code:** `core/checkpoint.py`, `core/compact.py`, `sessions_cli.py`, `core/agent/approval.py`, `core/session.py`, `cli.py`  
 > **Tests:** `tests/test_m4_resume.py`  
 > **UX 상속:** D1 idle-wait · D2 append · D3 headless+Ink 기본 on (변경 없음)
 
@@ -152,18 +152,19 @@ session:
       soft_limit_chars: 200000
       keep_tail_chars: 80000
       keep_tail_messages: 40
-      llm_summary: false      # true면 후속: 보조 모델 요약 (M4.1)
+      llm_summary: false      # true → agent backend 요약 (M4e); 실패 시 규칙 fall back
 ```
 
 `--demo`에서는 compact off 가능 (결정론 테스트).
 
-### 4.4 LLM 요약 (옵션 M4.1)
+### 4.4 LLM 요약 (옵션 M4e) — **landed**
 
-`llm_summary: true`일 때만:
+`llm_summary: true`일 때만 (`compact_conversation_async` / async `flush_checkpoint`·`close`):
 
-- compact 대상 구간을 한 에이전트 백엔드(또는 지정 소형 모델)로 요약.  
-- 실패 시 규칙 기반으로 fall back.  
-- 비용·레이트 리밋 → 기본 **false**.
+- compact 대상 구간을 **해당 에이전트 백엔드**로 요약 (`tools=[]`).  
+- 실패·빈 응답 시 규칙 기반으로 fall back (`meta.llm_summary: false`).  
+- 비용·레이트 리밋 → 기본 **false**.  
+- sync interrupt flush는 규칙만 (LLM 호출 없음).
 
 ### 4.5 모델 호출과의 관계
 
@@ -346,9 +347,9 @@ session:
 | **M4b** | 규칙 기반 compact + meta.compactions | flush 경로 |
 | **M4c** | `sessions list/show/rm` | CheckpointStore 헬퍼 |
 | **M4d** | quarantine move + REASON + Wire reason | bootstrap_session |
-| **M4e** (옵션) | `llm_summary` | 백엔드 한 번 호출 |
+| **M4e** (옵션) | `llm_summary` → `compact_conversation_async` | ✅ landed (기본 off) |
 
-권장 착수 순서: **M4a → M4d → M4c → M4b → M4e**.  
+권장 착수 순서: **M4a → M4d → M4c → M4b → M4e** (완료).  
 (승인 복원·격리·관리 CLI가 체감 크고, compact는 긴 세션 나올 때.)
 
 ---
@@ -362,6 +363,8 @@ session:
 | A3 | resume 후 Discord 재발행 | Wire `approval.request` 1회+ |
 | B1 | soft_limit 강제 compact | chars 감소, system/tail 유지 |
 | B2 | compact 후 resume | tombstone 유지 |
+| B3 | `llm_summary` 성공 | meta.llm_summary true + 요약 본문 |
+| B4 | `llm_summary` 실패 | 규칙 fall back, meta.llm_summary false |
 | C1 | list에 LATEST·phase | 파싱 가능 |
 | C2 | rm 후 list 없음 / LATEST 갱신 | |
 | D1 | 깨진 JSON | quarantine 이동 + fresh |
@@ -385,7 +388,7 @@ session:
 | 항목 | 제안 |
 |------|------|
 | pending 영속 | `approvals.json`, 유효 TTL만 재발행 |
-| compact 기본 | 규칙 기반 tombstone; LLM off |
+| compact 기본 | 규칙 기반 tombstone; LLM off (`llm_summary` 옵션 landed) |
 | fingerprint mismatch | quarantine 말고 leave + fresh |
 | 진짜 corrupt | `sessions/quarantine/` |
 | CLI | `sessions list\|show\|rm` |

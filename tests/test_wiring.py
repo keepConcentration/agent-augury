@@ -8,7 +8,7 @@ import yaml
 
 from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.config import ConfigError, load_config
-from agent_augury.session import Session
+from agent_augury.core.session import Session
 from tests.conftest import build_cfg
 
 
@@ -685,7 +685,7 @@ def test_session_role_preset_injected_into_system_prompt(tmp_path):
     """role 프리셋을 지정한 agent의 system prompt에 역할이 주입됨."""
     import os
 
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     p = write_cfg(tmp_path, {
         "mode": "L3",
@@ -715,7 +715,7 @@ def test_session_role_custom_injected_into_system_prompt(tmp_path):
     """role_custom을 지정한 agent의 system prompt에 커스텀 역할이 주입됨."""
     import os
 
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     p = write_cfg(tmp_path, {
         "mode": "L3",
@@ -742,7 +742,7 @@ def test_session_no_role_backward_compatible(tmp_path):
     """role이 없는 agent는 기존과 동일하게 동작 (하위호환)."""
     import os
 
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     p = write_cfg(tmp_path, {
         "mode": "L3",

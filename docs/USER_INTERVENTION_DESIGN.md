@@ -1,13 +1,21 @@
 # agent-augury — 사용자 개입(Human-in-the-Loop) 설계안
 
-> **Task:** agent-augury 프로젝트 분석 + 사용자 개입 / 에이전트→사용자 의견 요청 창구 부재 문제의 구현 방향 설계
-> **Date:** 2026-09 · agent-1 (설계) · 검토: agent-2, agent-3, agent-4 (대기/지원)
-> **Scope:** 설계 문서 (구현 코드 아님). DESIGN.md §3.5.2(A 모델, inbox push → step() drain) 철학을 유지하며 사람을 참가자로 모델링.
+> **Status:** **HITL 핵심 landed** (ask_user · Ink/Discord inbound · human 예약어).  
+> 본 문서는 초기 설계 기록이다. 경로·현재 갭은  
+> `docs/architecture/HUMAN_APPROVAL_GATE_DESIGN.md`,  
+> `docs/architecture/IMPLEMENTATION_GAP_CONSOLIDATED.md`,  
+> 코드 `core/` · `channels/discord/` 를 본다.  
+> **Task:** agent-augury 프로젝트 분석 + 사용자 개입 / 에이전트→사용자 의견 요청 창구 부재 문제의 구현 방향 설계  
+> **Date:** 2026-09 · agent-1 (설계) · 검토: agent-2, agent-3, agent-4 (대기/지원)  
+> **Scope:** 설계 문서 (구현 코드 아님). DESIGN.md §3.5.2(A 모델, inbox push → step() drain) 철학을 유지하며 사람을 참가자로 모델링.  
 > **Rev:** 2026-09 · v1.1 — `human` 예약어 충돌 시나리오(S1~S4) 대응 설계 추가 (§3.2)
 
 ---
 
 ## 1. 배경: 무엇이 부재한가
+
+> **주석 (2026-09):** 아래 §1은 설계 시점의 문제 서술이다.  
+> 이후 Ink/Discord inbound · `ask_user` · `register_human` 이 landed. 역사적 맥락으로 유지.
 
 agent-augury는 **에이전트 간(agent↔agent)** 통신만 지원한다. 사용자는 세션 **시작 전**(위저드/초기 task 입력)에만 개입할 수 있고, 세션 **도중**에는 어떤 경로로도 개입할 수 없다. 에이전트가 사용자에게 질문하거나, 중요한 결정(제출, 파일 쓰기, 방향 전환) 전에 사용자 확인을 받을 **창구가 전혀 없다.**
 
@@ -19,7 +27,7 @@ agent-augury는 **에이전트 간(agent↔agent)** 통신만 지원한다. 사�
 | 초기 task 입력 | `_run_wizard_flow()`의 `input("What would you like to do?")` | ❌ (1회, 세션 시작 시) |
 | `--config` 모드 | `cli.py` → `_run()` — `session.run()` 후 종료 | ❌ (도중 입력 경로 없음) |
 | `--repl` 모드 | `_run_repl()` — 세션 *간* 질문 수용 | ⚠️ (세션 도중 아님, 라운드 사이) |
-| Discord 봇 / 웹훅 미러 | `channel/discord_bot.py`, `discord_mirror.py` | ❌ (발신 전용, 수신 없음) |
+| Discord 봇 / 웹훅 미러 (설계 시점) | `channels/discord/bot.py`, `mirror.py` | ❌ 당시 발신 전용 → **이후 inbound landed** |
 
 ### 1.2 근본 원인 (아키텍처 레벨)
 
@@ -256,26 +264,25 @@ Human-in-the-loop rules:
 
 ### 4.4 사람 승인 게이트 (Human Approval Gate) — `protocol/` 재사용
 
-기존 `ConsensusGate`를 그대로 재사용한다. 핵심: **participants에 human을 포함**시키면 된다.
+> **상세 SSOT:** [`docs/architecture/HUMAN_APPROVAL_GATE_DESIGN.md`](./architecture/HUMAN_APPROVAL_GATE_DESIGN.md)  
+> YAML · 모드 **`after_agents`** (에이전트 만장일치 → 사람 승인) · 도구 승인과 구분
 
 ```yaml
-# config 예시 (v1.1)
 protocol:
-  participants: [agent-1, agent-2, agent-3, human]
-  assembler_id: agent-1
+  participants: [agent-1, agent-2, agent-3]   # 에이전트만
   gates:
     P2_SPLIT: plan
     P3_EXECUTE: execution
     P4_REVIEW: review
     P5_SUBMIT: submission
   human_approval:
-    P5_SUBMIT: true          # 제출 전 사람 승인 필수
+    # 기본: P2~P5 전부 false. 켠 페이즈만 사람 승인.
+    P5_SUBMIT: true          # 해당 페이즈: 에이전트 합의 후 human APPROVE
 ```
 
-- 에이전트가 `REQUEST_APPROVAL: <최종안 요약>` 전송 → human이 `APPROVE:` / `REJECT:` 응답.
-- `ConsensusGate.bind_prefixes`에 `["REQUEST_APPROVAL:"]` 사용, `require_proposal=True`.
-- `REJECT:` 시 기존처럼 승인 리셋 → 수정 후 재요청.
-- **P1~P5 게이트 코드 변경 없음** — participants에 human이 들어갈 뿐. participants 해석 시 `"human"`은 `_humans` 레지스트리 기준으로 검증한다 (에이전트 id와의 혼동 방지, §3.2).
+- **순서:** 에이전트끼리 기존처럼 합의(`PROPOSE:`/`APPROVE:`) → 그다음 `human_pending` → 사람 `APPROVE:` / `REJECT:`.  
+- `REJECT:` 시 에이전트 표부터 다시.  
+- 도구 승인(`tools.approval`)과 **별 트랙**.
 
 ### 4.5 사용자 인터페이스 (HumanAdapter)
 
@@ -318,7 +325,7 @@ human:
 protocol:
   ...
   human_approval:
-    P5_SUBMIT: true
+    P5_SUBMIT: true     # 상세: architecture/HUMAN_APPROVAL_GATE_DESIGN.md
 
 # v1.1 (Discord 양방향)
 bots:
@@ -393,15 +400,16 @@ bots:
 src/agent_augury/
   server.py               # _humans 레지스트리 분리, register_human(), human_send(),
                           # ReservedNameError, send_message/human_send 발신 경로 강제
-  agent/tools.py          # ask_user 도구 (spec + execute)
-  agent/system_prompt.py  # HITL 규칙 블록 (human 존재 시)
-  agent/loop.py           # (변경 최소) [radio] 포맷에 from human 자연 포함
-  session.py              # human 등록, human_approval 게이트 바인딩
-  protocol/collaboration.py # human_approval 설정 파싱 (게이트 재사용)
+  core/agent/tools.py          # ask_user 도구 (spec + execute)
+  core/agent/system_prompt.py  # HITL 규칙 블록 (human 존재 시)
+  core/agent/loop.py           # (변경 최소) [radio] 포맷에 from human 자연 포함
+  core/session.py              # human 등록, human_approval 게이트 바인딩
+  core/protocol/collaboration.py # human_approval 설정 파싱 (게이트 재사용)
   cli.py                  # --interactive 플래그, human 입력 태스크, ask_user 로그 표시
   config.py               # human:, protocol.human_approval, bots[].inbound 검증
                           # + 예약어(RESERVED_NAMES)/중복 id 검증 (신규)
-  channel/discord_bot.py  # (v1.1) inbound 옵션, on_message 핸들러
+  channels/discord/bot.py # (v1.1) inbound 옵션, on_message 핸들러
+  channels/discord/inbound.py
 examples/
   human_in_the_loop.yaml  # v1.0 데모 (fake 백엔드)
 tests/

@@ -18,7 +18,8 @@ import sys
 from collections.abc import Callable, Iterable
 from typing import TextIO
 
-from .bus import SessionGateway, SurfaceSubscription
+from .bus import SessionGateway
+from .register import register_ui_surface
 from .types import WireCommand, WireEvent, WireMessage, WireResult, validate_message
 
 WriteFn = Callable[[str], None]
@@ -72,13 +73,11 @@ class JsonlStdioBridge:
         def on_event(event: WireEvent) -> None:
             self._write(encode_line(event) + "\n")
 
-        self.gateway.attach(
-            SurfaceSubscription(
-                name=self.surface,
-                mode="interact",
-                family="ui",
-                on_event=on_event,
-            )
+        register_ui_surface(
+            self.gateway,
+            name=self.surface,
+            mode="interact",
+            on_event=on_event,
         )
         self._attached = True
 

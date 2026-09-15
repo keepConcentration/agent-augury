@@ -7,6 +7,7 @@ Disk layout under ``~/.agent-augury/sessions/<session_id>/``:
 - ``protocol.json`` — phase + gate snapshots
 - ``inbox.json`` — undrained message ids per agent
 - ``approvals.json`` — pending tool approvals (M4a)
+- ``bindings.json`` — platform↔thread + bridge HITL queue (A5)
 - ``server.sqlite`` — MessageServer D5
 - ``../LATEST`` — last session pointer
 - ``../quarantine/`` — corrupt checkpoints (M4d)
@@ -93,9 +94,18 @@ def config_fingerprint(cfg: dict[str, Any], *, config_path: str | None = None) -
     """Stable fingerprint: agent ids + protocol presence (+ optional config path)."""
     agents = cfg.get("agents") or []
     ids = sorted(str(a.get("id", "")) for a in agents if isinstance(a, dict))
+    proto = cfg.get("protocol") if isinstance(cfg.get("protocol"), dict) else {}
+    ha = proto.get("human_approval") if isinstance(proto.get("human_approval"), dict) else {}
+    ha_norm = {
+        "P2_SPLIT": bool(ha.get("P2_SPLIT", False)),
+        "P3_EXECUTE": bool(ha.get("P3_EXECUTE", False)),
+        "P4_REVIEW": bool(ha.get("P4_REVIEW", False)),
+        "P5_SUBMIT": bool(ha.get("P5_SUBMIT", False)),
+    }
     payload = {
         "agents": ids,
         "protocol": bool(cfg.get("protocol")),
+        "human_approval": ha_norm,
         "gate": bool(cfg.get("gate")),
         "config_path": str(Path(config_path).resolve()) if config_path else "",
     }

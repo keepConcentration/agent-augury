@@ -19,7 +19,7 @@ from typing import Any
 
 import discord
 
-from ..bot_token_env import (
+from ...bot_token_env import (
     DEFAULT_SECRETS_ENV_PATH,
     discord_token_shape_hint,
     looks_like_discord_bot_token,
@@ -77,25 +77,10 @@ def _channel_gate(channel_id: int) -> asyncio.Lock:
 
 
 def split_discord_content(content: str, *, limit: int = _MAX_CONTENT) -> list[str]:
-    """Split long prose into Discord-safe chunks (prefer newline boundaries)."""
-    text = (content or "").strip()
-    if not text:
-        return []
-    if len(text) <= limit:
-        return [text]
-    chunks: list[str] = []
-    rest = text
-    while len(rest) > limit:
-        cut = rest.rfind("\n", 0, limit)
-        if cut < limit // 3:
-            cut = limit
-        piece = rest[:cut].rstrip()
-        if piece:
-            chunks.append(piece)
-        rest = rest[cut:].lstrip()
-    if rest:
-        chunks.append(rest)
-    return chunks
+    """Split long prose into Discord-safe chunks (Hermes-style; see ``chunk``)."""
+    from ..chunk import split_chat_content
+
+    return split_chat_content(content, limit=limit)
 
 
 class DiscordBotError(RuntimeError):
@@ -135,6 +120,7 @@ class DiscordBotAdapter:
         self._client = discord.Client(intents=intents)
         self._ready = asyncio.Event()
         self._outbox: asyncio.Queue[OutboundMessage] = asyncio.Queue()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._sender_task: asyncio.Task | None = None
         self._gateway_task: asyncio.Task | None = None
         self._interaction_handler: Callable[[discord.Interaction], Any] | None = None
@@ -248,6 +234,7 @@ class DiscordBotAdapter:
             )
 
         self._ready.clear()
+        self._loop = asyncio.get_running_loop()
         self._sender_task = asyncio.create_task(self._sender_loop())
         self._gateway_task = asyncio.create_task(self._client.start(token))
 
@@ -313,12 +300,33 @@ class DiscordBotAdapter:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._gateway_task
             self._gateway_task = None
+        self._loop = None
 
     async def wait_ready(self, timeout: float = 30.0) -> None:
         """Wait until on_ready fires (gateway handshake complete)."""
         await asyncio.wait_for(self._ready.wait(), timeout=timeout)
 
     # -- send path -----------------------------------------------------------
+
+    def _put_outbox(self, item: OutboundMessage) -> None:
+        """Enqueue onto ``_outbox`` from any thread (D4).
+
+        ``asyncio.Queue.put_nowait`` is only safe on the owning loop. When
+        called from another thread, schedule via ``call_soon_threadsafe``.
+        Before ``start()``, fall back to direct put (unit tests / early route).
+        """
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            self._outbox.put_nowait(item)
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            self._outbox.put_nowait(item)
+            return
+        loop.call_soon_threadsafe(self._outbox.put_nowait, item)
 
     def enqueue(
         self,
@@ -333,7 +341,7 @@ class DiscordBotAdapter:
             chunks = ["🔐 Approval needed"]
         for i, chunk in enumerate(chunks):
             last = i == len(chunks) - 1
-            self._outbox.put_nowait(
+            self._put_outbox(
                 OutboundMessage(
                     content=chunk,
                     view=view if last else None,
@@ -506,6 +514,6 @@ def normalize_inbound_content(content: str, *, bot_user_id: int | None = None) -
 
 def _format_event(event: dict[str, Any]) -> str | None:
     """Legacy log-line formatter (tests / TUI parity). Chat bots use ``chat_surface_format``."""
-    from .chat_surface_format import format_core_event_log_line
+    from ..chat_surface_format import format_core_event_log_line
 
     return format_core_event_log_line(event)

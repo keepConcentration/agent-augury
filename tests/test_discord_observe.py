@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from agent_augury.channel.discord_bot import BotManager, DiscordBotAdapter
-from agent_augury.channel.discord_mirror import DiscordWebhookMirror
-from agent_augury.channel.discord_observe import (
+from agent_augury.channels.discord.bot import BotManager, DiscordBotAdapter
+from agent_augury.channels.discord.mirror import DiscordWebhookMirror
+from agent_augury.channels.discord.observe import (
     attach_discord_bots,
     attach_discord_mirror,
     format_wire_for_bot,
@@ -57,7 +57,7 @@ def test_bots_route_via_gateway():
     mgr = BotManager()
     client = MagicMock()
     client.event = lambda func: func
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=client):
         bot = DiscordBotAdapter(
             agent_id="agent-1",
             token="t",
@@ -140,7 +140,7 @@ def test_session_attaches_mirror_to_gateway(tmp_path, monkeypatch):
     import yaml
 
     from agent_augury.config import load_config
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
     from tests.conftest import build_cfg
 
     monkeypatch.setenv("TEST_API_KEY", "sk-test")

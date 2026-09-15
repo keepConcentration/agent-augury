@@ -1,6 +1,6 @@
 """Phase transition hooks — v0.1b extension point for v0.2 P1~P5."""
 
-from agent_augury.protocol.phases import (
+from agent_augury.core.protocol.phases import (
     APPROVED,
     OPEN,
     PROPOSED,
@@ -45,8 +45,8 @@ def test_advance_is_idempotent_no_callback_on_same_phase():
 
 def test_gate_open_triggers_phase_advance():
     """Integration: ConsensusGate.on_open drives PhaseManager.advance."""
-    from agent_augury.protocol.approval import ConsensusGate
-    from agent_augury.server import MessageServer
+    from agent_augury.core.protocol.approval import ConsensusGate
+    from agent_augury.core.server import MessageServer
 
     async def scenario():
         server = MessageServer()

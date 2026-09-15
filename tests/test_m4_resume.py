@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_augury.agent.approval import ApprovalStore
-from agent_augury.checkpoint import (
+from agent_augury.core.agent.approval import ApprovalStore
+from agent_augury.backend.base import Completion
+from agent_augury.core.checkpoint import (
     CheckpointStore,
     bootstrap_session,
     config_fingerprint,
@@ -17,9 +18,13 @@ from agent_augury.checkpoint import (
     list_sessions,
     show_session,
 )
-from agent_augury.compact import approx_chars, compact_conversation
+from agent_augury.core.compact import (
+    approx_chars,
+    compact_conversation,
+    compact_conversation_async,
+)
 from agent_augury.config import load_config
-from agent_augury.session import Session
+from agent_augury.core.session import Session
 from agent_augury.sessions_cli import run_sessions_cli
 
 
@@ -231,4 +236,109 @@ async def test_flush_compacts_large_conversation(tmp_path: Path):
         (sessions / s1.session_id / "meta.json").read_text(encoding="utf-8")
     )
     assert meta.get("compactions")
+    await s1.close()
+
+
+class _OkBackend:
+    async def complete(self, messages, tools):
+        assert tools == []
+        return Completion(text="LLM summary: touched /tmp/x and finished P3.")
+
+
+class _FailBackend:
+    async def complete(self, messages, tools):
+        raise RuntimeError("boom")
+
+
+def _big_conv() -> list[dict]:
+    conv = [{"role": "system", "content": "sys"}]
+    for i in range(80):
+        conv.append({"role": "user", "content": f"msg {i} " + ("x" * 200)})
+        conv.append(
+            {
+                "role": "tool",
+                "name": "run_command",
+                "tool_call_id": f"t{i}",
+                "content": "y" * 500,
+            }
+        )
+    return conv
+
+
+@pytest.mark.asyncio
+async def test_compact_llm_summary_success():
+    new_conv, meta = await compact_conversation_async(
+        _big_conv(),
+        soft_limit_chars=10_000,
+        keep_tail_chars=3_000,
+        keep_tail_messages=6,
+        agent_id="a1",
+        phase="P3_EXECUTE",
+        llm_summary=True,
+        backend=_OkBackend(),
+    )
+    assert meta is not None
+    assert meta["llm_summary"] is True
+    compact_msgs = [
+        m
+        for m in new_conv
+        if isinstance(m.get("content"), str)
+        and m["content"].startswith("[checkpoint compact]")
+    ]
+    assert compact_msgs
+    assert "LLM summary" in compact_msgs[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_compact_llm_summary_falls_back_on_failure():
+    new_conv, meta = await compact_conversation_async(
+        _big_conv(),
+        soft_limit_chars=10_000,
+        keep_tail_chars=3_000,
+        keep_tail_messages=6,
+        agent_id="a1",
+        phase="P3_EXECUTE",
+        llm_summary=True,
+        backend=_FailBackend(),
+    )
+    assert meta is not None
+    assert meta["llm_summary"] is False
+    assert any(
+        isinstance(m.get("content"), str)
+        and "agent=a1" in m["content"]
+        and m["content"].startswith("[checkpoint compact]")
+        for m in new_conv
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_flush_records_compactions_meta(tmp_path: Path):
+    sessions = tmp_path / "sessions"
+    cfg = _cfg(tmp_path, sessions)
+    cfg["session"]["checkpoint"]["compact"]["llm_summary"] = True
+    cfg_path = str(tmp_path / "s.yaml")
+    s1 = Session.open_from_config(
+        cfg, config_path=cfg_path, approval_bypass=True, allowed_roots=[str(tmp_path)]
+    )
+    await s1._setup()
+
+    class _SumBackend:
+        async def complete(self, messages, tools):
+            return Completion(text="async flush llm summary")
+
+    s1.agents[0].backend = _SumBackend()
+    for i in range(40):
+        s1.agents[0].conversation.append(
+            {"role": "user", "content": f"blob {i} " + ("z" * 300)}
+        )
+    await s1.flush_checkpoint()
+    meta = json.loads(
+        (sessions / s1.session_id / "meta.json").read_text(encoding="utf-8")
+    )
+    assert meta.get("compactions")
+    assert meta["compactions"][0].get("llm_summary") is True
+    assert any(
+        isinstance(m.get("content"), str) and "async flush llm summary" in m["content"]
+        for m in s1.agents[0].conversation
+    )
     await s1.close()

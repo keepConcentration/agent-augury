@@ -14,7 +14,7 @@ from agent_augury.gateway import (
     make_command,
 )
 from agent_augury.gateway.headless import run_headless_session
-from agent_augury.session import Session
+from agent_augury.core.session import Session
 from tests.conftest import build_cfg
 
 

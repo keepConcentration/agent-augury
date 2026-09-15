@@ -32,7 +32,7 @@ from typing import Any
 
 # .env 자동 로딩 — 셸 export 최우선; 파일끼리는 ~/.agent-augury/.env 가 cwd/프로젝트보다 우선
 try:
-    from .bot_token_env import load_merged_dotenv_into_environ
+    from ..bot_token_env import load_merged_dotenv_into_environ
 
     load_merged_dotenv_into_environ()
 except ImportError:
@@ -42,15 +42,16 @@ from .agent.approval import ApprovalStore, approval_notice_body
 from .agent.loop import AgentLoop, LocalTool
 from .agent.policy import ToolPolicy
 from .agent.web import build_search_provider
-from .auth.token_store import TokenStore
-from .backends_factory import build_backend
-from .channel.discord_bot import BotManager, DiscordBotAdapter
-from .channel.discord_inbound import attach_discord_inbound
-from .channel.discord_mirror import mirror_from_config
-from .channel.discord_observe import attach_discord_bots, attach_discord_mirror
-from .channel.slack_mirror import slack_from_config
-from .channel.slack_observe import attach_slack_mirror
-from .gateway import SessionBridge, SessionGateway
+from ..auth.token_store import TokenStore
+from ..backends_factory import build_backend
+from ..channels.discord.bot import BotManager, DiscordBotAdapter
+from ..channels.display import resolve_chat_display_policy
+from ..channels.discord.inbound import attach_discord_inbound
+from ..channels.discord.mirror import mirror_from_config
+from ..channels.discord.observe import attach_discord_bots, attach_discord_mirror
+from ..channels.slack.mirror import slack_from_config
+from ..channels.slack.observe import attach_slack_mirror
+from ..gateway import SessionBridge, SessionGateway
 from .protocol.approval import ConsensusGate
 from .protocol.collaboration import CollaborationProtocol
 from .protocol.phases import (
@@ -175,6 +176,7 @@ class Session:
         self._checkpoint_fingerprint: str = ""
         self._checkpoint_created_at: float | None = None
         self._pending_bootstrap: Any = None
+        self._bindings: Any = None  # BindingsSnapshot | None (A5)
         self._resuming: bool = False
         self._flush_task: asyncio.Task | None = None
         self._flush_interval_task: asyncio.Task | None = None
@@ -186,6 +188,9 @@ class Session:
         self._compact_opts: Any = None
         self._compactions_this_flush: list[dict[str, Any]] = []
         self._restored_pending_approvals: list[Any] = []
+        # protocol.human_approval (after_agents); defaults empty/false
+        self._human_approval: dict[str, bool] = {}
+        self._human_approval_needs_interact: bool = False
 
     def has_interact_surface(self) -> bool:
         """True when an Interactive Surface can answer approval prompts."""
@@ -193,7 +198,7 @@ class Session:
 
     def _on_approval_request(self, rec: Any) -> None:
         """Publish Wire ``approval.request`` (best-effort)."""
-        from .gateway.types import make_event
+        from ..gateway.types import make_event
 
         try:
             self.gateway.publish(
@@ -227,7 +232,7 @@ class Session:
         reason: str | None = None,
     ) -> dict[str, Any]:
         """Grant/deny a pending tool approval; on grant, run side effects now."""
-        from .gateway.types import make_event
+        from ..gateway.types import make_event
 
         if decision not in ("granted", "denied"):
             raise ValueError("decision must be 'granted' or 'denied'")
@@ -322,7 +327,7 @@ class Session:
 
     def expire_approvals(self, *, now: float | None = None) -> list[str]:
         """Expire overdue pending tokens and push DENIED radio notices."""
-        from .gateway.types import make_event
+        from ..gateway.types import make_event
 
         expired = self.approvals.expire_due(now=now)
         ids: list[str] = []
@@ -433,7 +438,7 @@ class Session:
             bot_manager = BotManager()
             for bot_entry in bots_spec:
                 token_env = bot_entry["token_env"]
-                from .bot_token_env import normalize_discord_token
+                from ..bot_token_env import normalize_discord_token
 
                 token = normalize_discord_token(os.environ.get(token_env, ""))
                 adapter = DiscordBotAdapter(
@@ -473,7 +478,35 @@ class Session:
         # v0.2: P1~P5 collaboration protocol
         protocol_spec = cfg.get("protocol")
         if protocol_spec:
+            from ..config import ConfigError
+            from .protocol.human_approval import (
+                any_human_approval,
+                has_discord_inbound,
+                normalize_human_approval,
+            )
+
             participant_ids = [a.agent_id for a in agents]
+            ha_map = normalize_human_approval(
+                protocol_spec, config_error=ConfigError
+            )
+            protocol_spec["human_approval"] = ha_map
+            # D4: interact required when any phase enabled (Ink attaches later;
+            # Discord inbound counted here; bypass for demo/tests).
+            if (
+                any_human_approval(ha_map)
+                and not approval_bypass
+                and not has_discord_inbound(cfg)
+                and not bool(cfg.get("_allow_human_approval_without_interact"))
+            ):
+                session._human_approval_needs_interact = True
+            else:
+                session._human_approval_needs_interact = False
+            session._human_approval = dict(ha_map)
+            for agent in agents:
+                agent._human_approval_phases = [
+                    p for p, on in ha_map.items() if on
+                ]
+
             session.protocol = CollaborationProtocol(
                 server=server,
                 participants=protocol_spec.get("participants", participant_ids),
@@ -483,8 +516,20 @@ class Session:
             for phase_name, thread_name in protocol_spec.get("gates", {}).items():
                 phase = _phase_from_string(phase_name)
                 # P2 requires proposal; P3+ do not (work logs start immediately)
-                require_proposal = (phase == P2_SPLIT)
-                session.protocol.bind_gate(phase, thread_name, require_proposal=require_proposal)
+                require_proposal = phase == P2_SPLIT
+                await_human = bool(ha_map.get(phase_name, False))
+                gate = session.protocol.bind_gate(
+                    phase,
+                    thread_name,
+                    require_proposal=require_proposal,
+                    await_human_after_agents=await_human,
+                )
+                if await_human:
+                    gate.on_human_pending(
+                        lambda g=gate, ph=phase: _publish_human_approval_pending(
+                            session, ph, g
+                        )
+                    )
             # Auto-advance on gate open
             session.protocol.on_gate_open(
                 lambda phase: _on_protocol_gate_open(session, phase)
@@ -493,17 +538,25 @@ class Session:
             session.protocol.on_phase_change(
                 lambda _frm, to: _publish_session_phase(session, to)
             )
+        discord_display = resolve_chat_display_policy(cfg, "discord")
+        slack_display = resolve_chat_display_policy(cfg, "slack")
         session.mirror = mirror_from_config(cfg.get("mirror"))
         if session.mirror is not None:
             # M4: Gateway observe surface (replaces server.subscribe(mirror.on_message))
-            attach_discord_mirror(session.gateway, session.mirror)
+            attach_discord_mirror(
+                session.gateway, session.mirror, display=discord_display
+            )
         session.slack_mirror = slack_from_config(cfg.get("slack"))
         if session.slack_mirror is not None:
             # M6: Slack Incoming Webhook observe surface
-            attach_slack_mirror(session.gateway, session.slack_mirror)
+            attach_slack_mirror(
+                session.gateway, session.slack_mirror, display=slack_display
+            )
         if session.bot_manager is not None:
             # M4: Gateway observe surface (replaces inline route in _on_server_event)
-            attach_discord_bots(session.gateway, session.bot_manager)
+            attach_discord_bots(
+                session.gateway, session.bot_manager, display=discord_display
+            )
             # M5: opt-in inbound → interact surface + on_message → human.*
             attach_discord_inbound(
                 session.gateway, session.bridge, session.bot_manager
@@ -573,6 +626,14 @@ class Session:
         if boot.enabled:
             session._checkpoint_store = CheckpointStore(boot.session_dir, boot.session_id)
             session._checkpoint_store.ensure_dir()
+            from .external_binding import (
+                BINDINGS_FILENAME,
+                BindingsSnapshot,
+                load_bindings,
+            )
+
+            bindings_path = boot.session_dir / BINDINGS_FILENAME
+            session._bindings = load_bindings(bindings_path) or BindingsSnapshot()
         return session
 
     # -- lifecycle -----------------------------------------------------------
@@ -640,6 +701,10 @@ class Session:
 
         # Always have a durable chat thread for human.send (Discord / Ink mid-run).
         human_tid = await self.ensure_human_thread()
+        if self._bindings is not None and self.bridge is not None:
+            from .external_binding import apply_to_bridge
+
+            apply_to_bridge(self.bridge, self._bindings)
         if self.bridge is not None and not self.bridge.recent_thread:
             self.bridge._recent_thread = human_tid
 
@@ -677,7 +742,7 @@ class Session:
 
         if getattr(boot, "approvals_corrupt", False):
             try:
-                from .gateway.types import make_event
+                from ..gateway.types import make_event
 
                 self.gateway.publish(
                     make_event(
@@ -692,7 +757,7 @@ class Session:
             self._restored_pending_approvals = list(alive)
             for rec in expired:
                 try:
-                    from .gateway.types import make_event
+                    from ..gateway.types import make_event
 
                     self.gateway.publish(
                         make_event(
@@ -714,7 +779,7 @@ class Session:
                 pass
 
     def _publish_resume_events(self, boot: Any) -> None:
-        from .gateway.types import make_event
+        from ..gateway.types import make_event
 
         phase = None
         if self.protocol:
@@ -741,7 +806,7 @@ class Session:
             pass
 
     def _publish_resume_failed(self, reason: str) -> None:
-        from .gateway.types import make_event
+        from ..gateway.types import make_event
 
         try:
             self.gateway.publish(
@@ -754,7 +819,7 @@ class Session:
             pass
 
     def _maybe_compact_conversations(self) -> list[dict[str, Any]]:
-        """Apply M4b compact in-place; return compaction meta entries."""
+        """Apply M4b rule compact in-place (sync; interrupt/close path)."""
         opts = self._compact_opts
         if opts is None or not getattr(opts, "enabled", False):
             return []
@@ -770,6 +835,32 @@ class Session:
                 keep_tail_messages=int(opts.keep_tail_messages),
                 agent_id=agent.agent_id,
                 phase=str(phase or ""),
+            )
+            if meta is not None:
+                agent.conversation = new_conv
+                metas.append(meta)
+        return metas
+
+    async def _maybe_compact_conversations_async(self) -> list[dict[str, Any]]:
+        """M4b/M4e compact; uses LLM when ``compact.llm_summary`` is true."""
+        opts = self._compact_opts
+        if opts is None or not getattr(opts, "enabled", False):
+            return []
+        from .compact import compact_conversation_async
+
+        phase = self.protocol.phase if self.protocol else ""
+        use_llm = bool(getattr(opts, "llm_summary", False))
+        metas: list[dict[str, Any]] = []
+        for agent in self.agents:
+            new_conv, meta = await compact_conversation_async(
+                agent.conversation,
+                soft_limit_chars=int(opts.soft_limit_chars),
+                keep_tail_chars=int(opts.keep_tail_chars),
+                keep_tail_messages=int(opts.keep_tail_messages),
+                agent_id=agent.agent_id,
+                phase=str(phase or ""),
+                llm_summary=use_llm,
+                backend=agent.backend if use_llm else None,
             )
             if meta is not None:
                 agent.conversation = new_conv
@@ -794,15 +885,50 @@ class Session:
             snap["legacy_gate"] = self.gate.snapshot()
         return snap
 
-    def flush_checkpoint_sync(self, *, exit_reason: str | None = None) -> None:
+    def _persist_bindings_sync(self) -> None:
+        """Write ``bindings.json`` from bridge + in-memory platform map (A5)."""
+        if self._bindings is None or self._checkpoint_store is None:
+            return
+        from .external_binding import (
+            BINDINGS_FILENAME,
+            capture_from_bridge,
+            merge_snapshots,
+            save_bindings,
+        )
+
+        if self.bridge is not None:
+            cap = capture_from_bridge(self.bridge)
+        else:
+            from .external_binding import BindingsSnapshot
+
+            cap = BindingsSnapshot()
+        self._bindings = merge_snapshots(self._bindings, cap)
+        path = self._checkpoint_store.session_dir / BINDINGS_FILENAME
+        try:
+            save_bindings(path, self._bindings)
+        except Exception:  # noqa: BLE001, S110 — never break checkpoint for bindings
+            pass
+
+    def flush_checkpoint_sync(
+        self,
+        *,
+        exit_reason: str | None = None,
+        skip_compact: bool = False,
+        compactions: list[dict[str, Any]] | None = None,
+    ) -> None:
         """Best-effort synchronous checkpoint write (interrupt / close)."""
         if not self._checkpoint_enabled or self._checkpoint_store is None:
             return
         from .checkpoint import write_latest
 
+        self._persist_bindings_sync()
+
         reason = exit_reason or self._exit_reason
         phase = self.protocol.phase if self.protocol else None
-        compactions = self._maybe_compact_conversations()
+        if compactions is None:
+            compactions = []
+            if not skip_compact:
+                compactions = self._maybe_compact_conversations()
         approvals = (
             self.approvals.export_pending() if self._approvals_persist else []
         )
@@ -828,7 +954,7 @@ class Session:
                 self._checkpoint_created_at = __import__("time").time()
         except Exception as exc:  # noqa: BLE001 — never break Core for checkpoint
             try:
-                from .gateway.types import make_event
+                from ..gateway.types import make_event
 
                 self.gateway.publish(
                     make_event("log", text=f"checkpoint save failed: {exc}")
@@ -838,10 +964,16 @@ class Session:
 
     async def flush_checkpoint(self, *, exit_reason: str | None = None) -> None:
         async with self._checkpoint_lock:
-            self.flush_checkpoint_sync(exit_reason=exit_reason)
+            # Prefer async compact (M4e LLM) then write without re-compacting.
+            metas = await self._maybe_compact_conversations_async()
+            self.flush_checkpoint_sync(
+                exit_reason=exit_reason,
+                skip_compact=True,
+                compactions=metas,
+            )
             if self._checkpoint_enabled:
                 try:
-                    from .gateway.types import make_event
+                    from ..gateway.types import make_event
 
                     self.gateway.publish(
                         make_event(
@@ -919,6 +1051,10 @@ class Session:
             resolved = await self.ensure_human_thread()
             if self.bridge is not None:
                 self.bridge._recent_thread = resolved
+        if self._bindings is not None:
+            from .external_binding import record_platform_thread
+
+            record_platform_thread(self._bindings, source, resolved)
         return await self.server.human_send(
             resolved,
             author="human",
@@ -926,6 +1062,14 @@ class Session:
             mentions=mentions,
             source=source,
         )
+
+    def lookup_external_thread(self, source: dict[str, Any] | None) -> str | None:
+        """Resolve augury ``thread_id`` from a platform ``source`` (A5)."""
+        if self._bindings is None:
+            return None
+        from .external_binding import lookup_platform_thread
+
+        return lookup_platform_thread(self._bindings, source)
 
     def request_interrupt(self) -> None:
         """Ask the current ``run()`` to stop (Ctrl+C / quit while agents work).
@@ -979,7 +1123,21 @@ class Session:
         ``request_interrupt()`` stops a run early; the next ``run()`` starts clean.
         """
         await self._setup()
+        self._enforce_human_approval_interact()
         return await self._run_impl(initial_prompt)
+
+    def _enforce_human_approval_interact(self) -> None:
+        """D4: human_approval requires Ink/Discord interact (or test bypass)."""
+        if not self._human_approval_needs_interact:
+            return
+        if self.has_interact_surface():
+            return
+        from ..config import ConfigError
+
+        raise ConfigError(
+            "protocol.human_approval requires an interact surface "
+            "(Ink UI or bots[].inbound: true)"
+        )
 
     async def _run_impl(self, initial_prompt: str | None = None) -> int:
         """Core run logic (separated so start/stop wraps it cleanly)."""
@@ -1195,7 +1353,12 @@ class Session:
             self._flush_task.cancel()
         if self._flush_interval_task and not self._flush_interval_task.done():
             self._flush_interval_task.cancel()
-        self.flush_checkpoint_sync(exit_reason=self._exit_reason)
+        try:
+            await self.flush_checkpoint(exit_reason=self._exit_reason)
+        except Exception:  # noqa: BLE001 — never block shutdown on checkpoint
+            self.flush_checkpoint_sync(
+                exit_reason=self._exit_reason, skip_compact=True
+            )
 
         # Shutdown unified output consumer.
         await self._output_queue.put(None)
@@ -1378,6 +1541,40 @@ def _publish_session_phase(session: Session, phase: Phase) -> None:
     try:
         session.bridge.publish_core_event({"type": "session.phase", "phase": phase})
     except Exception:  # noqa: BLE001, S110 — never break Core for Wire
+        pass
+
+
+def _publish_human_approval_pending(
+    session: Session, phase: Phase, gate: ConsensusGate
+) -> None:
+    """D5: agents agreed — wait for human APPROVE:/REJECT:."""
+    from ..gateway.types import make_event
+
+    try:
+        session.gateway.publish(
+            make_event(
+                "session.human_approval_pending",
+                phase=str(phase),
+                thread_id=gate.thread_id,
+                text=(
+                    f"Agents reached consensus on {phase} — "
+                    "reply APPROVE: or REJECT: to continue"
+                ),
+            )
+        )
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        session.bridge.publish_core_event(
+            {
+                "type": "log",
+                "text": (
+                    f"[human_approval] {phase}: agent consensus — "
+                    "waiting for human APPROVE:/REJECT:"
+                ),
+            }
+        )
+    except Exception:  # noqa: BLE001, S110
         pass
 
 

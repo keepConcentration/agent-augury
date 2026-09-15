@@ -10,7 +10,7 @@ from typing import Any
 import yaml
 
 from .bot_token_env import validate_token_env_name
-from .server import RESERVED_NAMES
+from .core.server import RESERVED_NAMES
 
 _VALID_BACKEND_TYPES = {"openai", "nous", "nous_oauth"}
 
@@ -207,7 +207,7 @@ class ConfigError(Exception):
     pass
 
 
-_SURFACES_KEYS = frozenset({"ink", "discord", "slack"})
+_SURFACES_KEYS = frozenset({"ink", "discord", "slack", "display"})
 
 
 def normalize_surfaces(data: dict[str, Any]) -> None:
@@ -441,6 +441,22 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     tools = data.get("tools")
     if tools is not None:
         _validate_tools_section(tools, where="tools")
+
+    # protocol.human_approval (HUMAN_APPROVAL_GATE_DESIGN)
+    protocol = data.get("protocol")
+    if protocol is not None and not isinstance(protocol, dict):
+        raise ConfigError("'protocol' must be a mapping")
+    if isinstance(protocol, dict):
+        from .core.protocol.human_approval import normalize_human_approval
+
+        # Normalize onto protocol for Session consumers (defaults all false).
+        protocol["human_approval"] = normalize_human_approval(
+            protocol, config_error=ConfigError
+        )
+
+    from .channels.display import validate_display_config
+
+    validate_display_config(data, config_error=ConfigError)
 
     # A2: surfaces: → legacy mirror/bots/slack (before validating those keys)
     normalize_surfaces(data)

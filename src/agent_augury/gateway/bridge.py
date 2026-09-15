@@ -225,7 +225,23 @@ class SessionBridge:
             # Map bare option index to option text (pt TUI parity).
             content = _resolve_option_content(pq, content)
 
-        thread_id = thread_id or self._recent_thread
+        # D3: while a protocol gate awaits human, route to that thread
+        gate_tid = None
+        if self.session is not None:
+            protocol = getattr(self.session, "protocol", None)
+            if protocol is not None:
+                gate = protocol.current_gate
+                if (
+                    gate is not None
+                    and gate.thread_id
+                    and not gate.is_open
+                    and (
+                        getattr(gate, "human_pending", False)
+                        or getattr(gate, "await_human_after_agents", False)
+                    )
+                ):
+                    gate_tid = gate.thread_id
+        thread_id = thread_id or gate_tid or self._recent_thread
         known = self._coerce_known_thread(thread_id) if thread_id else None
         if known:
             use_id = known

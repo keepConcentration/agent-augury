@@ -18,7 +18,7 @@ import pytest
 
 from agent_augury.backends_factory import build_backend
 from agent_augury.config import load_config
-from agent_augury.session import Session
+from agent_augury.core.session import Session
 from tests.conftest import requires_openai
 
 ROOT = Path(__file__).resolve().parents[1]

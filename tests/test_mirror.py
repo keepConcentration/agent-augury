@@ -7,7 +7,7 @@ The core NEVER reads anything back from Discord (§3.3 — channels are views).
 import httpx
 import pytest
 
-from agent_augury.channel.discord_mirror import DiscordWebhookMirror, mirror_from_config
+from agent_augury.channels.discord.mirror import DiscordWebhookMirror, mirror_from_config
 
 
 def make_mirror(handler):
@@ -84,15 +84,26 @@ async def test_format_line_contains_thread_author_content():
     assert "agent-2" in line and "hello" in line
 
 
-async def test_format_line_truncates_long_content():
-    from agent_augury.channel.discord_mirror import _MAX_CONTENT
+async def test_format_line_chunks_long_content_on_enqueue():
+    from agent_augury.channels.discord.mirror import _MAX_CONTENT
 
     long = "x" * (_MAX_CONTENT + 500)
-    line = DiscordWebhookMirror.format_line(
-        {"thread_id": "t1", "author": "a1", "content": long}
-    )
-    assert len(line) <= _MAX_CONTENT
-    assert line.endswith("…")
+    mirror = DiscordWebhookMirror(webhook_url="https://example.test/hook")
+    mirror.enqueue({"thread_id": "t1", "author": "a1", "content": long})
+    assert len(mirror.outbox) >= 2
+    assert all(len(line) <= _MAX_CONTENT for line in mirror.outbox)
+    assert f"(1/{len(mirror.outbox)})" in mirror.outbox[0]
+    # Full content preserved across chunks (strip indicators).
+    bodies = []
+    for line in mirror.outbox:
+        body = line
+        if " (" in body and body.endswith(")"):
+            body = body.rsplit(" (", 1)[0]
+        # Drop mirror prefix on first chunk
+        if "**: " in body:
+            body = body.split("**: ", 1)[1]
+        bodies.append(body)
+    assert "x" * 100 in "".join(bodies)
 
 
 async def test_flush_success_returns_sent_count():

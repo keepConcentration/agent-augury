@@ -1,14 +1,15 @@
 # Tool human-approval (fail-closed, pending) — 배경 · 설계 · 구현 계획
 
-> **Status:** **M0–M4 landed** (policy / Store / execute gate / Ink + Discord resolve / README); remaining optional: Discord buttons, pending 영속, smart 분류  
+> **Status:** **M0–M4 landed** (policy / Store / execute gate / Ink + Discord buttons+text / README);  
+> optional remaining: smart 위험 분류 고도화. Pending 영속은 M4 resume 쪽.  
 > **Date:** 2026-09-14  
 > **Priority:** P0 (제품 신뢰도)  
 > **Related:**  
-> - `PRODUCT_GAPS_AND_ORCHESTRATOR_TRANSFER.md` §4 P0  
 > - `docs/USER_INTERVENTION_DESIGN.md` (ask_user / HITL; 본 문서는 **부작용 도구 집행 게이트**)  
 > - `docs/AGENT_TOOLS_EXPANSION_DESIGN.md` (`ToolPolicy`)  
-> - `docs/architecture/IMPLEMENTATION_GAP_CONSOLIDATED.md` (`human_approval` 미구현 항목과 구분)  
-> **비교 원본:** `~/orchestrator` D14 (`gate.sh` fail-closed), Hermes Agent (`tools/approval.py` / `pending_approval`)
+> - `docs/architecture/IMPLEMENTATION_GAP_CONSOLIDATED.md`  
+> - `docs/architecture/SESSION_RESUME_M4_DESIGN.md` (pending approval 영속)  
+> **비교 원본:** Hermes Agent (`tools/approval.py` / `pending_approval`)
 
 ---
 
@@ -141,7 +142,9 @@ approval_ttl_seconds: float
 
 ### 4.3 ApprovalStore (동적 토큰)
 
-Session이 소유하는 in-proc 저장소 (P0 최소 = 메모리; A5 영속은 후속).
+Session이 소유하는 in-proc 저장소 (P0 = 메모리). 도구 승인 영속은 M4a `approvals.json`
+(`ApprovalStore.export_pending` / resume 재발행). 플랫폼↔thread 매핑은 A5 `bindings.json`
+([`EXTERNAL_BINDING_DESIGN.md`](./EXTERNAL_BINDING_DESIGN.md)) — 별 트랙.
 
 | 필드 | 의미 |
 |------|------|

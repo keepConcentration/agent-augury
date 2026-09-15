@@ -2,17 +2,17 @@
 
 import json
 
-from agent_augury.agent.loop import AgentLoop
+from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.backend.base import Completion, ToolCall
 from agent_augury.backend.fake import FakeModelBackend
-from agent_augury.server import MessageServer
+from agent_augury.core.server import MessageServer
 
 
 async def test_local_tool_executes_without_server_roundtrip():
     async def handler(arguments):
         return {"query": arguments.get("q"), "hits": ["r1"]}
 
-    from agent_augury.agent.loop import LocalTool
+    from agent_augury.core.agent.loop import LocalTool
 
     server = MessageServer()
     server.register_agent("agent-a")

@@ -4,7 +4,7 @@
 > **Date:** 2026-09-13  
 > **Goal:** Python **core 유지**. Surface = Ink/Desktop/Web **+** Discord/Slack/…  
 > **Not:** 전면 Node화(엔진 TS 재작성).  
-> **Related:** `USER_INTERVENTION_DESIGN.md`, `channel/discord_*`, `channel/slack_*`  
+> **Related:** `USER_INTERVENTION_DESIGN.md`, `channels/discord/*`, `channels/slack/*`  
 > **Schemas:** `schemas/wire/` · **Code:** `src/agent_augury/gateway/`  
 > **Ink hello+HITL:** `fronts/ink/` (`agent-augury --ink-hello`)  
 > **Ink real session (M7):** `agent-augury --ink --demo --config examples/demo.yaml`  
@@ -75,7 +75,7 @@ Gateway (공통 Wire)
 1. Gateway는 세션당 Surface **1개**가 아니라 **N개 fan-out**이 기본 가정.
 2. Chat은 “나중 특수 케이스”가 아니라 **처음부터 Wire 소비자**.
 3. outbound(관찰) / inbound(개입)를 Adapter 계약으로 명시.
-4. Discord 现状(`channel/`)은 Channel Adapter의 **초기 구현**으로 재분류.
+4. Discord/Slack (`channels/`)은 Channel Adapter의 **초기 구현**으로 재분류.
 
 ---
 
@@ -128,8 +128,9 @@ ask_user message id / slack view id
     ↔ pending question id
 ```
 
-이 표는 **Core SSOT가 아님**. Adapter 재시작 시 유실 가능 →
-필요하면 Core에 `external_binding` 저장을 후속으로 올림.
+이 표는 Adapter 로컬만이 아니라 **세션 체크포인트 `bindings.json`(A5 v1)** 에도 영속한다.
+→ [`EXTERNAL_BINDING_DESIGN.md`](./EXTERNAL_BINDING_DESIGN.md)
+(Slack 상관 id·다중 human·TTL은 후속.)
 
 ---
 
@@ -186,7 +187,8 @@ v0.1 이벤트/커맨드에 더해:
 |--------|------|
 | (기존) `agent.step`, `tool`, `message`, … | 공통 |
 | `human.question` | ask_user 승격(권장) — Chat이 버튼 UI 만들기 쉬움 |
-| `log.summary` | (옵션) Adapter/Gateway가 만든 짧은 요약 힌트 — 없어도 Adapter가 step에서 자체 요약 가능 |
+| `log.summary` | **후순위 옵션** — V1에서는 사용하지 않음. 채팅 밀도는 Adapter `display` 정책  
+([`SURFACE_DISPLAY_DESIGN.md`](./SURFACE_DISPLAY_DESIGN.md)). 여러 surface가 동일 요약 문장을 공유해야 할 때만 재검토. |
 
 ### 5.2 커맨드 (Surfaces → Server)
 
@@ -216,9 +218,12 @@ Core는 `source`를 **신뢰 경계 메타**로 기록할 수 있으나,
 
 ### 6.2 Gateway
 
-- Surface 등록/해제, fan-out, backpressure
+- Surface 등록/해제, fan-out, **backpressure** (chat mailbox + drop-oldest)
+- **surface별 `on_event` 예외 격리** (D5)
 - stdio / WS / in-proc bus
 - (나중) auth, 세션 멀티플렉스
+
+> A7/D5: [`GATEWAY_BACKPRESSURE_DESIGN.md`](./GATEWAY_BACKPRESSURE_DESIGN.md)
 
 ### 6.3 Adapters
 
@@ -253,13 +258,19 @@ agent-augury (Python)
 입력이 양쪽에서 오면 둘 다 `human.send` — Core는 순서대로 처리
 (충돌 정책은 후속: 마지막 승 / 동일 human 병합).
 
-### 7.2 Chat-only (헤드리스 서버)
+### 7.2 Chat-only (헤드리스 서버) — **landed**
 
 ```text
-agent-augury --surface none --channels discord,slack
+agent-augury --headless
+agent-augury --headless --config session.yaml
+agent-augury --headless --no-auto-start   # Discord human.send 대기
 ```
 
-Interactive UI 없이 봇만. CI·서버 배포용.
+Interactive UI(Ink) 없이 Core만 기동. 채널은 YAML의 `bots:` / `slack:` / `mirror:`
+(또는 `surfaces:`)로 켠다. CI·서버·Discord-as-main-UX용.
+
+> 초안 문구 ``--surface none --channels discord,slack`` 는 채택하지 않음.
+> 동일 목적의 공식 플래그는 **`--headless`**.
 
 ### 7.3 Desktop + Slack
 
@@ -275,12 +286,13 @@ Desktop ──WS──► Gateway ◄── slack-adapter
 ```text
 agent-augury/
   src/agent_augury/
-    core/                 # session, server, agent… (점진 정리)
+    core/                 # session, server, agent, protocol, checkpoint, compact
     gateway/              # wire + fan-out + transports
-    channels/             # ← 기존 channel/ 승격·정리
-      discord/            # bot + mirror (현 discord_bot/mirror)
-      slack/              # 신규
-      base.py             # ChannelAdapter protocol
+    channels/             # Chat adapters
+      discord/            # bot, mirror, observe, inbound, approval
+      slack/              # mirror, observe
+      base.py             # ChannelAdapter (handler typing); register via attach_* + gateway/register
+      chat_surface_format.py
     # (pt TUI + plain REPL removed — Interactive Surface is Ink only)
   fronts/
     ink/
@@ -291,18 +303,26 @@ agent-augury/
     MULTI_FRONT_DESIGN.md
 ```
 
+> **A10 landed (2026-09):** `channel/` → `channels/{discord,slack}`;  
+> `session`/`server`/`agent`/`protocol`/`checkpoint`/`compact` → `core/`.  
+> 옛 import 경로(`agent_augury.session`, `agent_augury.channel…`)는 **제거** (호환 깨기).
 ---
 
 ## 9. 기존 Discord 코드 재분류
 
+> **Surface 등록 SSOT (B4/B6):** [`GATEWAY_SURFACE_BINDING_DESIGN.md`](./GATEWAY_SURFACE_BINDING_DESIGN.md)  
+> Wire fan-out = `SessionGateway` + `SurfaceSubscription`. Chat 등록 = `register_chat_surface` ← `attach_*`.  
+> Core step → Wire = `SessionBridge.bind_session` (host `bootstrap_gateway_host`).
+
 | 현재 | v0.2에서의 위치 |
 |------|-----------------|
-| `DiscordWebhookMirror` | ChannelAdapter outbound (observe) |
-| `DiscordBotAdapter` + `BotManager` | ChannelAdapter outbound (per-agent bot) |
-| `bots[].inbound` (설계만) | ChannelAdapter inbound → `human.*` |
+| `DiscordWebhookMirror` | **send sink**; observe adapter = `attach_discord_mirror` → `register_chat_surface` |
+| `DiscordBotAdapter` + `BotManager` | **send/route sink**; adapter = `attach_discord_bots` |
+| `bots[].inbound` (M5) | interact surface + `dispatch` → `human.*` (`attach_discord_inbound`) |
 | `mirror:` config | `surfaces.discord` / `channels.discord` 로 통합 예정 |
 
-Slack은 Discord와 **동일 Protocol**, 다른 API 클라이언트.
+Slack은 Discord와 **동일 등록 패턴** (`attach_slack_mirror`), 다른 API 클라이언트.  
+`channels/base.py`의 `ChannelAdapter`는 **handler shape 타입 힌트**이며 Mirror 클래스가 직접 implement할 필요는 없다.
 
 ### Outbound formatting (Chat vs Interactive UI)
 
@@ -312,7 +332,7 @@ Each Surface owns presentation:
 | Surface | Formatter | Notes |
 |---------|-----------|--------|
 | **Ink** | `fronts/ink` (Markdown panels, cards) | May use log lines like `💭 agent:` in the *log* view only |
-| **Discord bot / Slack webhook** | `channel/chat_surface_format.py` | Plain chat text; no Ink log emoji |
+| **Discord bot / Slack webhook** | `channels/chat_surface_format.py` | Plain chat text; no Ink log emoji |
 | **Per-agent Discord bot** | same + `recipient_agent_id` | Bot display name ⇒ omit redundant `agent_id` on prose |
 
 Do **not** stringify events once in Core for all fronts. Channel adapters call
@@ -343,9 +363,9 @@ Do **not** stringify events once in Core for all fronts. Channel adapters call
 | 리스크 | 완화 |
 |--------|------|
 | UI+Chat 이중 입력 충돌 | 단일 큐; 문서화; 필요 시 “primary surface” 설정 |
-| 플랫폼 rate limit | Adapter outbox + 청크 (현 Discord 1800자) |
-| 매핑 유실 | 재시작 정책; 후속 Core binding store |
-| 요약 과도/누락 | Adapter 설정 `verbosity: full\|summary` |
+| 플랫폼 rate limit | Adapter outbox + **청크 분할** (`channels/chunk.py`, Discord 1800 / Slack 3000) |
+| 매핑 유실 | A5 `bindings.json` (platform↔thread + pending ask_user); Slack 상관 id는 후속 |
+| 요약 과도/누락 | [`SURFACE_DISPLAY_DESIGN.md`](./SURFACE_DISPLAY_DESIGN.md) — `display.chat`: full\|summary\|quiet (Hermes display 축소판) |
 | 보안 (토큰) | 계속 env; Gateway가 토큰을 Surface에 안 넘김 |
 
 ---
@@ -356,10 +376,10 @@ Do **not** stringify events once in Core for all fronts. Channel adapters call
 2. Interactive UI와 **동일 Wire/Gateway**; fan-out이 기본.  
 3. 두꺼운 BFF는 **Web만**; Chat은 Python Channel Adapter가 본진.  
 4. **Primary = Interactive UI(Ink 등). Chat 기본 = observe-only** (inbound는 opt-in).  
-5. ~~다음 착수: M0…M6~~ → ~~M7 Ink 실세션~~ → **다음: M8** (Desktop/Web 스파이크)
-   또는 deferred (Slack inbound/Block Kit, chat-only CLI).
-   `surfaces:` YAML 통합은 `config.normalize_surfaces`로 landed.
-   Slack은 observe-only Incoming Webhook 스파이크; Block Kit / inbound는 후속.
+5. ~~다음 착수: M0…M6~~ → ~~M7 Ink 실세션~~ → **다음: M8** 또는 deferred (Slack inbound).  
+   채팅 밀도 노브: [`SURFACE_DISPLAY_DESIGN.md`](./SURFACE_DISPLAY_DESIGN.md) (A6 V1).  
+   ~~chat-only CLI~~ → `--headless` landed. `surfaces:` YAML landed.  
+   Slack observe-only; Block Kit / inbound는 후속.
 
 ---
 

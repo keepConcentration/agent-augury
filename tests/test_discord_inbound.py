@@ -8,13 +8,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from agent_augury.channel.discord_bot import (
+from agent_augury.channels.discord.bot import (
     BotManager,
     DiscordBotAdapter,
     accept_inbound_message,
     normalize_inbound_content,
 )
-from agent_augury.channel.discord_inbound import (
+from agent_augury.channels.discord.inbound import (
     INBOUND_SURFACE,
     attach_discord_inbound,
     dispatch_discord_inbound,
@@ -121,7 +121,7 @@ def test_dispatch_human_answer_when_pending():
 
 
 def test_dispatch_approval_resolve_when_pending():
-    from agent_augury.channel.discord_inbound import parse_approval_decision
+    from agent_augury.channels.discord.inbound import parse_approval_decision
 
     assert parse_approval_decision("approve") == "granted"
     assert parse_approval_decision("2") == "denied"
@@ -197,7 +197,7 @@ def test_attach_inbound_sets_interact_surface():
     client = MagicMock()
     client.event = lambda func: func
     client.user = MagicMock(id=999)
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=client):
         bot = DiscordBotAdapter(
             agent_id="a1",
             token="t",
@@ -216,7 +216,7 @@ def test_attach_inbound_noop_when_disabled():
     mgr = BotManager()
     client = MagicMock()
     client.event = lambda func: func
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=client):
         bot = DiscordBotAdapter(
             agent_id="a1", token="t", channel_id=1, inbound=False
         )
@@ -254,7 +254,7 @@ def test_config_inbound_must_be_bool(tmp_path):
 
 
 def test_session_wires_inbound_surface(tmp_path, monkeypatch):
-    from agent_augury.session import Session
+    from agent_augury.core.session import Session
 
     monkeypatch.setenv("TEST_API_KEY", "sk-test")
     monkeypatch.setenv("BOT_TOKEN_1", "fake")
@@ -284,7 +284,7 @@ def test_session_wires_inbound_surface(tmp_path, monkeypatch):
     client = MagicMock()
     client.event = lambda func: func
     client.user = MagicMock(id=1)
-    with patch("agent_augury.channel.discord_bot.discord.Client", return_value=client):
+    with patch("agent_augury.channels.discord.bot.discord.Client", return_value=client):
         session = Session.from_config(load_config(str(path)))
     assert session.bot_manager is not None
     assert INBOUND_SURFACE in session.gateway.surfaces()

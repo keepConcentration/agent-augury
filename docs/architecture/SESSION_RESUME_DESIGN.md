@@ -3,7 +3,7 @@
 > **Status:** **M0–M3 landed** (CheckpointStore / conversation+phase+sqlite hydrate / CLI `--session` `--new-session` / headless+Ink D1–D3)  
 > **Date:** 2026-09-15  
 > **Priority:** P0 (실사용 연속성)  
-> **Code:** `checkpoint.py`, `session.py` (`open_from_config`), `gateway/headless.py`, `gateway/session_stdio.py`, `cli.py`  
+> **Code:** `core/checkpoint.py`, `core/session.py` (`open_from_config`), `gateway/headless.py`, `gateway/session_stdio.py`, `cli.py`  
 > **Tests:** `tests/test_checkpoint_resume.py`  
 > **UX 동결:** D1 idle-wait · D2 append · D3 headless+Ink 기본 on (본 문서 §17)  
 > **Related:**  
@@ -370,7 +370,7 @@ agent-augury sessions show <id>
 - headless LATEST 포인터  
 - README + Discord 운영 가이드 (“종료해도 이어짐”)  
 
-### M4 — 경화 → **M4a–M4d landed** (M4e LLM 요약은 옵션/미구현)
+### M4 — 경화 → **M4a–M4e landed** (LLM 요약은 옵션, 기본 off)
 
 상세: [`SESSION_RESUME_M4_DESIGN.md`](./SESSION_RESUME_M4_DESIGN.md)
 
@@ -380,9 +380,9 @@ agent-augury sessions show <id>
 | M4b | conversation 규칙 기반 compact / tombstone | done |
 | M4c | `agent-augury sessions list\|show\|rm` | done |
 | M4d | 손상 체크포인트 → `sessions/quarantine/` | done |
-| M4e | (옵션) LLM 요약 | deferred |
+| M4e | (옵션) LLM 요약 (`compact.llm_summary`) | done (기본 false) |
 
-**권장 출시 컷:** M1+M2+M3. M4a–d는 실사용 다듬기.
+**권장 출시 컷:** M1+M2+M3. M4a–e는 실사용 다듬기.
 
 ---
 

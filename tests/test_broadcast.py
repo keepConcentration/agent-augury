@@ -7,7 +7,7 @@ import os
 from unittest.mock import patch
 
 from agent_augury.cli import _mask_sensitive
-from agent_augury.server import MessageServer
+from agent_augury.core.server import MessageServer
 
 # ---------------------------------------------------------------------------
 # _mask_sensitive

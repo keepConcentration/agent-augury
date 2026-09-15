@@ -30,6 +30,18 @@
       "required": ["dir", "type"],
       "properties": {
         "dir": { "const": "event" },
+        "type": { "const": "session.human_approval_pending" },
+        "phase": { "type": "string" },
+        "thread_id": { "type": "string" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
         "type": { "const": "session.checkpoint" },
         "session_id": { "type": "string" }
       },

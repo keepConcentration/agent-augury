@@ -31,8 +31,8 @@ from .model_config import (
     save_model_config,
 )
 from .model_listing import ModelInfo, format_aligned_labels
-from .protocol.defaults import DEFAULT_PROTOCOL
-from .server import RESERVED_NAMES
+from .core.protocol.defaults import DEFAULT_PROTOCOL
+from .core.server import RESERVED_NAMES
 
 # -- constants ---------------------------------------------------------------
 

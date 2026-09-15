@@ -23,7 +23,7 @@ from typing import Any
 
 from agent_augury.config import load_config
 from agent_augury.ink_front import resolve_project_root
-from agent_augury.session import Session
+from agent_augury.core.session import Session
 
 from .bridge import SessionBridge
 from .stdio import JsonlStdioBridge

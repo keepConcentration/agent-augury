@@ -8,10 +8,10 @@ v0.7 (AGENT_TOOLS_EXPANSION_DESIGN.md): 기본 활성 신규 도구로 도구 �
 
 import json
 
-from agent_augury.agent.loop import AgentLoop, LocalTool
-from agent_augury.agent.policy import ToolPolicy
+from agent_augury.core.agent.loop import AgentLoop, LocalTool
+from agent_augury.core.agent.policy import ToolPolicy
 from agent_augury.backend.base import Completion, ModelBackend, ToolCall
-from agent_augury.server import MessageServer
+from agent_augury.core.server import MessageServer
 
 
 class ScriptedBackend(ModelBackend):
@@ -235,7 +235,7 @@ def test_disabled_tools_not_exposed():
 
 
 async def test_system_prompt_contains_prefix_conventions_and_mention_syntax():
-    from agent_augury.agent.system_prompt import render_system_prompt
+    from agent_augury.core.agent.system_prompt import render_system_prompt
 
     prompt = render_system_prompt("agent-2")
     assert "agent-2" in prompt
@@ -312,7 +312,7 @@ async def test_step_with_http_404_returns_error_text():
 
 async def test_toolbox_rejects_path_outside_allowed_roots(tmp_path):
     """ToolBox with allowed_roots rejects paths outside the root."""
-    from agent_augury.agent.tools import ToolBox
+    from agent_augury.core.agent.tools import ToolBox
 
     server = MessageServer()
     server.register_agent("agent-1")
@@ -332,7 +332,7 @@ async def test_toolbox_rejects_path_outside_allowed_roots(tmp_path):
 
 async def test_toolbox_allows_path_within_allowed_roots(tmp_path):
     """ToolBox with allowed_roots permits paths within the root."""
-    from agent_augury.agent.tools import ToolBox
+    from agent_augury.core.agent.tools import ToolBox
 
     server = MessageServer()
     server.register_agent("agent-1")
@@ -350,7 +350,7 @@ async def test_toolbox_allows_path_within_allowed_roots(tmp_path):
 
 async def test_toolbox_none_allowed_roots_preserves_unrestricted(tmp_path):
     """allowed_roots=None preserves legacy unrestricted behavior (backward compat)."""
-    from agent_augury.agent.tools import ToolBox
+    from agent_augury.core.agent.tools import ToolBox
 
     server = MessageServer()
     server.register_agent("agent-1")
@@ -366,7 +366,7 @@ async def test_toolbox_none_allowed_roots_preserves_unrestricted(tmp_path):
 
 async def test_toolbox_list_directory_respects_allowed_roots(tmp_path):
     """list_directory also respects allowed_roots."""
-    from agent_augury.agent.tools import ToolBox
+    from agent_augury.core.agent.tools import ToolBox
 
     server = MessageServer()
     server.register_agent("agent-1")
@@ -385,7 +385,7 @@ async def test_toolbox_list_directory_respects_allowed_roots(tmp_path):
 
 async def test_toolbox_write_file_respects_allowed_roots(tmp_path):
     """write_file also respects allowed_roots."""
-    from agent_augury.agent.tools import ToolBox
+    from agent_augury.core.agent.tools import ToolBox
 
     server = MessageServer()
     server.register_agent("agent-1")
@@ -408,7 +408,7 @@ async def test_toolbox_write_file_respects_allowed_roots(tmp_path):
 
 async def test_toolbox_p11_rejects_sibling_root(tmp_path):
     """P11: allowed root '/root' 일 때 '/root2/...' 는 차단 (startswith 오매칭 방지)."""
-    from agent_augury.agent.tools import ToolBox
+    from agent_augury.core.agent.tools import ToolBox
 
     server = MessageServer()
     server.register_agent("agent-1")
@@ -433,25 +433,25 @@ async def test_toolbox_p11_rejects_sibling_root(tmp_path):
 
 
 def test_detect_language_korean():
-    from agent_augury.agent.system_prompt import detect_language
+    from agent_augury.core.agent.system_prompt import detect_language
     assert detect_language("안녕하세요") == "Korean"
     assert detect_language("Hello 세계") == "Korean"  # mixed → Korean wins
 
 
 def test_detect_language_english():
-    from agent_augury.agent.system_prompt import detect_language
+    from agent_augury.core.agent.system_prompt import detect_language
     assert detect_language("Hello world") == "English"
     assert detect_language("12345 !@#$%") == "English"  # no Hangul → English
 
 
 def test_detect_language_empty():
-    from agent_augury.agent.system_prompt import detect_language
+    from agent_augury.core.agent.system_prompt import detect_language
     assert detect_language("") == ""
     assert detect_language(None) == ""
 
 
 def test_render_system_prompt_with_language_korean():
-    from agent_augury.agent.system_prompt import render_system_prompt
+    from agent_augury.core.agent.system_prompt import render_system_prompt
     prompt = render_system_prompt("agent-1", language="Korean")
     assert "Language instruction" in prompt
     assert "Korean" in prompt
@@ -459,20 +459,20 @@ def test_render_system_prompt_with_language_korean():
 
 
 def test_render_system_prompt_with_language_english():
-    from agent_augury.agent.system_prompt import render_system_prompt
+    from agent_augury.core.agent.system_prompt import render_system_prompt
     prompt = render_system_prompt("agent-1", language="English")
     assert "Language instruction" in prompt
     assert "English" in prompt
 
 
 def test_render_system_prompt_without_language():
-    from agent_augury.agent.system_prompt import render_system_prompt
+    from agent_augury.core.agent.system_prompt import render_system_prompt
     prompt = render_system_prompt("agent-1")
     assert "Language instruction" not in prompt
 
 
 def test_render_system_prompt_language_with_phase():
-    from agent_augury.agent.system_prompt import render_system_prompt
+    from agent_augury.core.agent.system_prompt import render_system_prompt
     prompt = render_system_prompt("agent-1", phase="P1_EXPLORE", language="Korean")
     assert "Language instruction" in prompt
     assert "Korean" in prompt
@@ -481,7 +481,7 @@ def test_render_system_prompt_language_with_phase():
 
 def test_render_system_prompt_with_role_prompt():
     """role_prompt가 지정되면 시스템 프롬프트에 역할 블록이 포함됨."""
-    from agent_augury.agent.system_prompt import render_system_prompt
+    from agent_augury.core.agent.system_prompt import render_system_prompt
     prompt = render_system_prompt("agent-1", role_prompt="너는 오케스트레이터다.")
     assert "Your role:" in prompt
     assert "너는 오케스트레이터다." in prompt
@@ -489,7 +489,7 @@ def test_render_system_prompt_with_role_prompt():
 
 def test_render_system_prompt_with_role_and_phase():
     """role_prompt와 phase가 모두 지정되면 둘 다 포함됨."""
-    from agent_augury.agent.system_prompt import render_system_prompt
+    from agent_augury.core.agent.system_prompt import render_system_prompt
     prompt = render_system_prompt(
         "agent-1", phase="P1_EXPLORE", role_prompt="너는 오케스트레이터다."
     )
@@ -500,7 +500,7 @@ def test_render_system_prompt_with_role_and_phase():
 
 def test_render_system_prompt_without_role_prompt():
     """role_prompt가 없으면 역할 블록이 포함되지 않음 (하위호환)."""
-    from agent_augury.agent.system_prompt import render_system_prompt
+    from agent_augury.core.agent.system_prompt import render_system_prompt
     prompt = render_system_prompt("agent-1")
     assert "Your role:" not in prompt
 
@@ -511,7 +511,7 @@ def test_render_system_prompt_without_role_prompt():
 
 
 def test_render_tool_instructions_only_enabled_tools():
-    from agent_augury.agent.system_prompt import render_tool_instructions
+    from agent_augury.core.agent.system_prompt import render_tool_instructions
 
     # shell + web + edit 활성 → 해당 블록만
     specs = [
@@ -533,5 +533,5 @@ def test_render_tool_instructions_only_enabled_tools():
 
 
 def test_render_tool_instructions_empty_for_no_tools():
-    from agent_augury.agent.system_prompt import render_tool_instructions
+    from agent_augury.core.agent.system_prompt import render_tool_instructions
     assert render_tool_instructions([]) == ""

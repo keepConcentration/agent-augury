@@ -14,11 +14,12 @@ from typing import Any
 
 from agent_augury.gateway.types import WireEvent
 
-# Discord message limit 2000; stay under with headroom.
+# Discord message limit 2000; stay under with headroom (chunking is transport-side).
 _CHAT_MAX_CONTENT = 1800
 
 
 def _truncate(text: str) -> str:
+    """Legacy one-line clip for TUI/log helpers — not used for chat outbound."""
     if len(text) <= _CHAT_MAX_CONTENT:
         return text
     return text[:_CHAT_MAX_CONTENT] + "…"
@@ -45,18 +46,17 @@ def format_wire_for_chat_surface(
         name = str(event.get("name") or "?")
         parts = ", ".join(str(p) for p in (event.get("participants") or []))
         if parts:
-            return _truncate(f"Thread **{name}** ({parts})")
-        return _truncate(f"Thread **{name}** started")
+            return f"Thread **{name}** ({parts})"
+        return f"Thread **{name}** started"
 
     if etype == "message":
         content = str(event.get("content") or "")
         if content.startswith("[ask-user]"):
             return None
         author = str(event.get("author") or event.get("agent_id") or "?")
-        body = _truncate(content)
         if _label(author, recipient_agent_id=recipient_agent_id):
-            return f"**{author}**: {body}"
-        return body
+            return f"**{author}**: {content}"
+        return content
 
     if etype == "tool":
         agent_id = str(event.get("agent_id") or "?")
@@ -82,7 +82,7 @@ def format_wire_for_chat_surface(
         if not text:
             return None
         agent_id = str(event.get("agent_id") or "?")
-        body = _truncate(str(text))
+        body = str(text)
         if _label(agent_id, recipient_agent_id=recipient_agent_id):
             return f"{agent_id}: {body}"
         return body
@@ -100,8 +100,8 @@ def format_wire_for_chat_surface(
         q = str(event.get("question") or "")
         agent = str(event.get("agent_id") or "?")
         if _label(agent, recipient_agent_id=recipient_agent_id):
-            return _truncate(f"❓ {agent}: {q}")
-        return _truncate(q)
+            return f"❓ {agent}: {q}"
+        return q
 
     if etype == "approval.request":
         agent = str(event.get("agent_id") or "?")

@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..backend.base import Completion, ModelBackend
+from ...backend.base import Completion, ModelBackend
 from ..protocol.signals import is_ready_message
 from ..server import MessageServer
 from .approval import (
@@ -108,6 +108,7 @@ class AgentLoop:
         self._custom_system_prompt = system_prompt is not None
         self._role_prompt = role_prompt
         self._has_human = has_human
+        self._human_approval_phases: list[str] = []
         # thread ids this agent created, in creation order ($thread:N source)
         self.created_threads: list[str] = []
         # gate-aware execution state (injected by Session each step)
@@ -146,6 +147,7 @@ class AgentLoop:
                 self.agent_id, self.current_phase, self.language,
                 role_prompt=self._role_prompt, has_human=self._has_human,
                 tool_instructions=tool_instructions,
+                human_approval_phases=self._human_approval_phases or None,
             )
 
     async def step(self) -> StepResult:

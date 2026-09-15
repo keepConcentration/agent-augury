@@ -7,15 +7,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_augury.checkpoint import (
+from agent_augury.core.checkpoint import (
     CheckpointStore,
     bootstrap_session,
     config_fingerprint,
     parse_checkpoint_config,
 )
 from agent_augury.config import load_config
-from agent_augury.protocol.phases import P2_SPLIT, P3_EXECUTE
-from agent_augury.session import Session
+from agent_augury.core.protocol.phases import P2_SPLIT, P3_EXECUTE
+from agent_augury.core.session import Session
 
 
 def _cfg(tmp_path: Path, *, sessions_dir: Path, with_protocol: bool = True) -> dict:
@@ -99,7 +99,7 @@ def test_fingerprint_mismatch_falls_back(tmp_path: Path):
         protocol={"phase": "P1_EXPLORE"},
         inbox={},
     )
-    from agent_augury.checkpoint import write_latest
+    from agent_augury.core.checkpoint import write_latest
 
     write_latest(sessions, "old", "NOT-" + fp)
     boot = bootstrap_session(

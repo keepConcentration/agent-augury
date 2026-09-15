@@ -12,13 +12,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_augury.gateway.bus import SessionGateway, SurfaceSubscription
+from agent_augury.gateway.bus import SessionGateway
+from agent_augury.gateway.register import register_chat_surface
 from agent_augury.gateway.types import WireEvent
 
-from .chat_surface_format import format_wire_for_chat_surface
-from .discord_approval import ToolApprovalView, approval_prompt_text
-from .discord_bot import BotManager
-from .discord_mirror import DiscordWebhookMirror
+from ..chat_surface_format import format_wire_for_chat_surface
+from ..display import ChatDisplayPolicy
+from .approval import ToolApprovalView, approval_prompt_text
+from .bot import BotManager
+from .mirror import DiscordWebhookMirror
 
 _MIRROR_TYPES = frozenset({"message"})
 _BOT_TYPES = frozenset({
@@ -41,12 +43,16 @@ def attach_discord_mirror(
     mirror: DiscordWebhookMirror,
     *,
     name: str = "discord-mirror",
+    display: ChatDisplayPolicy | None = None,
 ) -> None:
     """Subscribe *mirror* to Wire ``message`` events (observe-only)."""
+    policy = display or ChatDisplayPolicy()
 
     def on_event(event: WireEvent) -> None:
         try:
             if event.get("type") != "message":
+                return
+            if not policy.allow(event):
                 return
             # D7: ask_user also emits human.question — skip the radio duplicate.
             if str(event.get("content") or "").startswith("[ask-user]"):
@@ -55,14 +61,12 @@ def attach_discord_mirror(
         except Exception as exc:  # noqa: BLE001 — observation must not kill sessions
             mirror.errors.append(exc)
 
-    gateway.attach(
-        SurfaceSubscription(
-            name=name,
-            mode="observe",
-            family="chat",
-            on_event=on_event,
-            event_types=_MIRROR_TYPES,
-        )
+    register_chat_surface(
+        gateway,
+        name=name,
+        mode="observe",
+        on_event=on_event,
+        event_types=_MIRROR_TYPES,
     )
 
 
@@ -71,11 +75,15 @@ def attach_discord_bots(
     bot_manager: BotManager,
     *,
     name: str = "discord-bots",
+    display: ChatDisplayPolicy | None = None,
 ) -> None:
     """Subscribe *bot_manager* to Wire events (observe-only, per-agent route)."""
+    policy = display or ChatDisplayPolicy()
 
     def on_event(event: WireEvent) -> None:
         try:
+            if not policy.allow(event):
+                return
             agent_id = event.get("agent_id") or event.get("author")
             if not agent_id:
                 return
@@ -92,21 +100,19 @@ def attach_discord_bots(
                     view_factory=lambda a=aid_local: ToolApprovalView(a),
                 )
                 return
-            content = format_wire_for_bot(event, recipient_agent_id=recipient)
+            content = policy.format_wire(event, recipient_agent_id=recipient)
             if not content:
                 return
             bot_manager.route_event(recipient, content)
         except Exception:  # noqa: BLE001, S110 — never break Core
             pass
 
-    gateway.attach(
-        SurfaceSubscription(
-            name=name,
-            mode="observe",
-            family="chat",
-            on_event=on_event,
-            event_types=_BOT_TYPES,
-        )
+    register_chat_surface(
+        gateway,
+        name=name,
+        mode="observe",
+        on_event=on_event,
+        event_types=_BOT_TYPES,
     )
 
 

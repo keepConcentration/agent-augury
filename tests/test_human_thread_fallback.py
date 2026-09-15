@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from agent_augury.agent.loop import AgentLoop
+from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.gateway import (
     SessionBridge,
@@ -14,8 +14,8 @@ from agent_augury.gateway import (
     SurfaceSubscription,
     make_command,
 )
-from agent_augury.server import MessageServer
-from agent_augury.session import HUMAN_CHAT_THREAD_NAME, Session
+from agent_augury.core.server import MessageServer
+from agent_augury.core.session import HUMAN_CHAT_THREAD_NAME, Session
 
 
 def _fake_agent(server: MessageServer, agent_id: str = "agent-1") -> AgentLoop:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_augury.session import Session
+from agent_augury.core.session import Session
 from tests.conftest import build_cfg
 
 

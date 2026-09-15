@@ -30,6 +30,14 @@
 - **you** as a first-class participant (`ask_user`, Ink UI, Discord/Slack mirrors)
 - **model-agnostic** backends (OpenAI-compatible, Nous API key / OAuth)
 
+Package layout (import paths; no legacy shims):
+
+```text
+agent_augury.core.*          # Session, MessageServer, agent/, protocol/, checkpoint
+agent_augury.channels.*      # discord/, slack/, chat formatting
+agent_augury.gateway.*       # Wire bus, Ink/headless bridges
+```
+
 Install it, configure agents in YAML (or the wizard), and run a session from the terminal.
 
 ```text
@@ -114,6 +122,21 @@ P1 EXPLORE → P2 SPLIT → P3 EXECUTE → P4 REVIEW → P5 SUBMIT
 ```
 
 Gates require explicit group approval before advancing. Use it when you want structured team work; omit it for free-form multi-agent sessions.
+
+Optional **human phase approval** (after agents agree, wait for you):
+
+```yaml
+protocol:
+  gates:
+    P2_SPLIT: plan
+    P3_EXECUTE: execution
+    P4_REVIEW: review
+    P5_SUBMIT: submission
+  human_approval:
+    P5_SUBMIT: true   # defaults: all phases false
+```
+
+Flow: agents `APPROVE:` among themselves → Wire `session.human_approval_pending` → you reply `APPROVE:` / `REJECT:` (Ink or Discord inbound). Separate from tool-approval buttons. See `docs/architecture/HUMAN_APPROVAL_GATE_DESIGN.md`.
 
 ---
 
@@ -212,6 +235,7 @@ session:
     compact:
       enabled: true
       soft_limit_chars: 200000
+      llm_summary: false   # optional: summarize via agent backend on async flush
 ```
 
 ```bash

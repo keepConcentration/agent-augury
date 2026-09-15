@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .checkpoint import (
+from .core.checkpoint import (
     DEFAULT_SESSIONS_DIR,
     CheckpointError,
     list_quarantine,

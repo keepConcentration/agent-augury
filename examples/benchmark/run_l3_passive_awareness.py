@@ -28,9 +28,9 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from agent_augury.core.agent.loop import AgentLoop, LocalTool
 from agent_augury.backend.base import Completion, ToolCall
 from agent_augury.backend.fake import FakeModelBackend
+from agent_augury.core.agent.loop import AgentLoop, LocalTool
 from agent_augury.core.server import MessageServer
 
 SEARCH_SCHEMA = {

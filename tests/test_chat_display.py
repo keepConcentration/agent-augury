@@ -6,17 +6,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agent_augury.channels.discord.bot import BotManager, DiscordBotAdapter
+from agent_augury.channels.discord.mirror import DiscordWebhookMirror
+from agent_augury.channels.discord.observe import attach_discord_bots, attach_discord_mirror
 from agent_augury.channels.display import (
     ChatDisplayPolicy,
     resolve_chat_display_policy,
 )
-from agent_augury.channels.discord.bot import BotManager, DiscordBotAdapter
-from agent_augury.channels.discord.mirror import DiscordWebhookMirror
-from agent_augury.channels.discord.observe import attach_discord_bots, attach_discord_mirror
 from agent_augury.channels.slack.mirror import SlackWebhookMirror
 from agent_augury.channels.slack.observe import attach_slack_mirror
 from agent_augury.config import ConfigError, load_config
 from agent_augury.gateway import SessionGateway, make_event
+
+
 def test_policy_summary_skips_tool_and_truncates_step():
     policy = ChatDisplayPolicy("summary")
     tool = make_event("tool", agent_id="a", tool="read_file")

@@ -14,6 +14,8 @@ from agent_augury.channels.discord.observe import (
 )
 from agent_augury.channels.slack.mirror import SlackWebhookMirror
 from agent_augury.channels.slack.observe import attach_slack_mirror
+from agent_augury.core.server import MessageServer
+from agent_augury.core.session import Session, _publish_session_error
 from agent_augury.gateway import (
     SessionBridge,
     SessionGateway,
@@ -28,8 +30,6 @@ from agent_augury.gateway.secrets import (
     scrub_env_for_ink,
 )
 from agent_augury.gateway.translate import translate_core_event
-from agent_augury.core.server import MessageServer
-from agent_augury.core.session import Session, _publish_session_error
 from tests.conftest import build_cfg
 
 

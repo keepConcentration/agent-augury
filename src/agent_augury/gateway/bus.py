@@ -156,7 +156,7 @@ class SessionGateway:
             return
         try:
             handler(event)
-        except Exception:  # noqa: BLE001 — D5: never abort fan-out for one surface
+        except Exception:
             log.exception("surface %r on_event failed", sub.name)
 
     def dispatch(self, command: WireCommand, *, surface: str) -> WireResult:

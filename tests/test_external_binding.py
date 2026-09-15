@@ -19,9 +19,9 @@ from agent_augury.core.external_binding import (
     record_platform_thread,
     save_bindings,
 )
+from agent_augury.core.session import Session
 from agent_augury.gateway import SessionBridge, SessionGateway
 from agent_augury.gateway.bridge import PendingQuestion
-from agent_augury.core.session import Session
 
 
 def test_platform_ref_key_discord_channel():

@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 import yaml
 
+from agent_augury.config import load_config
 from agent_augury.core.checkpoint import (
     CheckpointStore,
     bootstrap_session,
     config_fingerprint,
     parse_checkpoint_config,
 )
-from agent_augury.config import load_config
 from agent_augury.core.protocol.phases import P2_SPLIT, P3_EXECUTE
 from agent_augury.core.session import Session
 

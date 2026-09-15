@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agent_augury.channels.chunk import split_chat_content
-from agent_augury.channels.slack.mirror import SlackWebhookMirror, _MAX_CONTENT
+from agent_augury.channels.slack.mirror import _MAX_CONTENT, SlackWebhookMirror
 
 
 def test_short_message_unchanged():

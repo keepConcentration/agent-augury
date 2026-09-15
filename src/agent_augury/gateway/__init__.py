@@ -9,9 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 from .bridge import BridgeBindOptions, PendingApproval, PendingQuestion, SessionBridge
+from .bus import SessionGateway, SurfaceMode, SurfaceSubscription
 from .host import bootstrap_gateway_host
 from .register import register_chat_surface, register_ui_surface
-from .bus import SessionGateway, SurfaceMode, SurfaceSubscription
 from .stdio import JsonlStdioBridge, decode_line, encode_line, run_stdio_bridge
 from .translate import translate_core_event
 from .types import (
@@ -41,11 +41,10 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "BridgeBindOptions",
     "COMMAND_TYPES",
     "EVENT_TYPES",
+    "BridgeBindOptions",
     "HeadlessRunner",
-    "bootstrap_gateway_host",
     "JsonlStdioBridge",
     "PendingApproval",
     "PendingQuestion",
@@ -57,6 +56,7 @@ __all__ = [
     "WireEvent",
     "WireMessage",
     "WireResult",
+    "bootstrap_gateway_host",
     "decode_line",
     "emit_startup_warnings",
     "encode_line",

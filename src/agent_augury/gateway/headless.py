@@ -17,8 +17,8 @@ from typing import Any
 
 from agent_augury.channels.discord.bot import DiscordBotError
 from agent_augury.config import load_config
-from agent_augury.ink_front import resolve_project_root
 from agent_augury.core.session import Session
+from agent_augury.ink_front import resolve_project_root
 
 from .bridge import SessionBridge
 from .bus import SessionGateway, SurfaceSubscription

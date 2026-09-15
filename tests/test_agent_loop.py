@@ -8,9 +8,9 @@ v0.7 (AGENT_TOOLS_EXPANSION_DESIGN.md): 기본 활성 신규 도구로 도구 �
 
 import json
 
+from agent_augury.backend.base import Completion, ModelBackend, ToolCall
 from agent_augury.core.agent.loop import AgentLoop, LocalTool
 from agent_augury.core.agent.policy import ToolPolicy
-from agent_augury.backend.base import Completion, ModelBackend, ToolCall
 from agent_augury.core.server import MessageServer
 
 

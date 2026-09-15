@@ -32,7 +32,7 @@ _SUMMARY_TYPES = frozenset({
 
 def _parse_mode(value: Any, *, where: str) -> ChatDisplayMode:
     if not isinstance(value, str):
-        raise ValueError(f"{where} must be 'full', 'summary', or 'quiet'")
+        raise TypeError(f"{where} must be 'full', 'summary', or 'quiet'")
     mode = value.strip().lower()
     if mode not in CHAT_DISPLAY_MODES:
         raise ValueError(
@@ -86,7 +86,7 @@ def validate_display_config(data: dict[str, Any], *, config_error: type[Exceptio
         if display.get("chat") is not None:
             try:
                 _parse_mode(display["chat"], where="display.chat")
-            except ValueError as exc:
+            except (TypeError, ValueError) as exc:
                 raise config_error(str(exc)) from exc
 
     surfaces = data.get("surfaces")
@@ -105,14 +105,14 @@ def validate_display_config(data: dict[str, Any], *, config_error: type[Exceptio
         if surf_display.get("chat") is not None:
             try:
                 _parse_mode(surf_display["chat"], where="surfaces.display.chat")
-            except ValueError as exc:
+            except (TypeError, ValueError) as exc:
                 raise config_error(str(exc)) from exc
     for plat in ("discord", "slack"):
         plat_cfg = surfaces.get(plat)
         if isinstance(plat_cfg, dict) and plat_cfg.get("display") is not None:
             try:
                 _parse_mode(plat_cfg["display"], where=f"surfaces.{plat}.display")
-            except ValueError as exc:
+            except (TypeError, ValueError) as exc:
                 raise config_error(str(exc)) from exc
 
 
@@ -139,9 +139,7 @@ class ChatDisplayPolicy:
         if self.mode == "summary":
             if etype in ("log", "tool", "read_resource"):
                 return False
-            if etype.startswith("approval.") or etype in _SUMMARY_TYPES:
-                return True
-            return False
+            return etype.startswith("approval.") or etype in _SUMMARY_TYPES
         # quiet
         if etype == "message":
             return _is_human_message(event)

@@ -38,20 +38,20 @@ try:
 except ImportError:
     pass
 
+from ..auth.token_store import TokenStore
+from ..backends_factory import build_backend
+from ..channels.discord.bot import BotManager, DiscordBotAdapter
+from ..channels.discord.inbound import attach_discord_inbound
+from ..channels.discord.mirror import mirror_from_config
+from ..channels.discord.observe import attach_discord_bots, attach_discord_mirror
+from ..channels.display import resolve_chat_display_policy
+from ..channels.slack.mirror import slack_from_config
+from ..channels.slack.observe import attach_slack_mirror
+from ..gateway import SessionBridge, SessionGateway
 from .agent.approval import ApprovalStore, approval_notice_body
 from .agent.loop import AgentLoop, LocalTool
 from .agent.policy import ToolPolicy
 from .agent.web import build_search_provider
-from ..auth.token_store import TokenStore
-from ..backends_factory import build_backend
-from ..channels.discord.bot import BotManager, DiscordBotAdapter
-from ..channels.display import resolve_chat_display_policy
-from ..channels.discord.inbound import attach_discord_inbound
-from ..channels.discord.mirror import mirror_from_config
-from ..channels.discord.observe import attach_discord_bots, attach_discord_mirror
-from ..channels.slack.mirror import slack_from_config
-from ..channels.slack.observe import attach_slack_mirror
-from ..gateway import SessionBridge, SessionGateway
 from .protocol.approval import ConsensusGate
 from .protocol.collaboration import CollaborationProtocol
 from .protocol.phases import (

@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_augury.core.agent.approval import ApprovalStore
 from agent_augury.backend.base import Completion
+from agent_augury.config import load_config
+from agent_augury.core.agent.approval import ApprovalStore
 from agent_augury.core.checkpoint import (
     CheckpointStore,
     bootstrap_session,
@@ -23,7 +24,6 @@ from agent_augury.core.compact import (
     compact_conversation,
     compact_conversation_async,
 )
-from agent_augury.config import load_config
 from agent_augury.core.session import Session
 from agent_augury.sessions_cli import run_sessions_cli
 

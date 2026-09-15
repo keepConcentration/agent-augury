@@ -2,9 +2,9 @@
 
 import json
 
-from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.backend.base import Completion, ToolCall
 from agent_augury.backend.fake import FakeModelBackend
+from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.core.server import MessageServer
 
 

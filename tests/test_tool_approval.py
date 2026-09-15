@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from agent_augury.config import ConfigError, load_config
 from agent_augury.core.agent.approval import (
     ApprovalStore,
     args_digest,
@@ -17,7 +18,6 @@ from agent_augury.core.agent.approval import (
     tool_approval_class,
 )
 from agent_augury.core.agent.policy import ToolPolicy
-from agent_augury.config import ConfigError, load_config
 from agent_augury.gateway import SurfaceSubscription
 from tests.conftest import build_cfg
 
@@ -232,10 +232,10 @@ def test_session_has_approval_store_and_interact_detection():
 
 @pytest.mark.asyncio
 async def test_execute_tool_denies_without_interact_surface(tmp_path):
+    from agent_augury.backend.fake import FakeModelBackend
     from agent_augury.core.agent.approval import ApprovalStore
     from agent_augury.core.agent.loop import AgentLoop
     from agent_augury.core.agent.policy import ToolPolicy
-    from agent_augury.backend.fake import FakeModelBackend
     from agent_augury.core.server import MessageServer
 
     server = MessageServer()

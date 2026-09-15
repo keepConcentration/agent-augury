@@ -27,12 +27,12 @@ from .bot_token_env import (
     store_bot_token,
     validate_token_env_name,
 )
+from .core.protocol.defaults import DEFAULT_PROTOCOL
+from .core.server import RESERVED_NAMES
 from .model_config import (
     save_model_config,
 )
 from .model_listing import ModelInfo, format_aligned_labels
-from .core.protocol.defaults import DEFAULT_PROTOCOL
-from .core.server import RESERVED_NAMES
 
 # -- constants ---------------------------------------------------------------
 

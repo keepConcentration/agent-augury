@@ -39,4 +39,15 @@ describe("formatEvent approval", () => {
     assert.ok(line?.includes("write_file"));
     assert.ok(line?.includes("no_approval_channel"));
   });
+
+  it("skips session.checkpoint noise", () => {
+    assert.equal(
+      formatEvent({
+        dir: "event",
+        type: "session.checkpoint",
+        session_id: "abc",
+      }),
+      null,
+    );
+  });
 });

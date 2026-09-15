@@ -64,6 +64,306 @@ _VALID_SEARCH_PROVIDERS = frozenset({"duckduckgo", "serper", "tavily", "searxng"
 # IP 리터럴 / localhost — allow_domains에 넣으면 경고
 _LOCALHOST_NAMES = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 
+# ---------------------------------------------------------------------------
+# attention: 섹션 검증 (AGENT_RELEVANCE_BUDGET_DESIGN.md §6, agent-2 담당)
+# ---------------------------------------------------------------------------
+
+# attention: 최상위 허용 키
+_ATTENTION_TOP_KEYS = frozenset(
+    {"enabled", "mode", "floors", "tiers", "features", "schedule", "context"}
+)
+
+# attention.floors 허용 키
+_ATTENTION_FLOORS_KEYS = frozenset({"default", "near_gate", "p1_ready_pending"})
+
+# attention.tiers 허용 키
+_ATTENTION_TIERS_KEYS = frozenset({"ignore", "skim", "engage"})
+
+# attention.features 허용 키
+_ATTENTION_FEATURES_KEYS = frozenset(
+    {"mention_boost", "thread_participant", "recent_interact"}
+)
+
+# attention.schedule 허용 키
+_ATTENTION_SCHEDULE_KEYS = frozenset({"skip_t0_llm"})
+
+# attention.context 허용 키
+_ATTENTION_CONTEXT_KEYS = frozenset({"skim_max_chars", "t0_digest"})
+
+# per-agent attention override 허용 키 (간소화: floor만)
+_ATTENTION_AGENT_KEYS = frozenset({"floor"})
+
+# attention.mode 허용 값
+_VALID_ATTENTION_MODES = frozenset({"heuristic"})
+
+# 기본 attention 설정 (설계문서 §6)
+_ATTENTION_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "mode": "heuristic",
+    "floors": {
+        "default": 0.0,
+        "near_gate": 0.5,
+        "p1_ready_pending": 0.15,
+    },
+    "tiers": {
+        "ignore": 0.15,
+        "skim": 0.45,
+        "engage": 0.80,
+    },
+    "features": {
+        "mention_boost": 0.5,
+        "thread_participant": 0.25,
+        "recent_interact": 0.2,
+    },
+    "schedule": {
+        "skip_t0_llm": True,
+    },
+    "context": {
+        "skim_max_chars": 400,
+        "t0_digest": False,
+    },
+}
+
+
+def _validate_attention_section(
+    attention: Any, *, where: str = "attention"
+) -> None:
+    """Validate and normalize an ``attention:`` mapping.
+
+    - Unknown keys → ConfigError
+    - Missing sub-sections → filled from _ATTENTION_DEFAULTS
+    - Scalar value type checks
+    - Invariant: features.mention_boost >= tiers.skim
+      (``tiers.skim`` is the lower bound of T2 engage; ``tiers.engage`` is T3)
+    - Per-agent overrides: agent['attention'] only allows {'floor': float}
+
+    Mutates ``attention`` in-place (fills defaults).
+    Returns a dict suitable for ``RelevancePolicy.from_config()``.
+    """
+    if not isinstance(attention, dict):
+        raise ConfigError(f"'{where}' must be a mapping")
+
+    # 1. 최상위 키 검증
+    for key in attention:
+        if key not in _ATTENTION_TOP_KEYS:
+            raise ConfigError(
+                f"'{where}' contains unknown key {key!r} — "
+                f"only {sorted(_ATTENTION_TOP_KEYS)} are allowed"
+            )
+
+    # 2. enabled
+    enabled = attention.get("enabled")
+    if enabled is not None and not isinstance(enabled, bool):
+        raise ConfigError(f"'{where}.enabled' must be a boolean, got {type(enabled).__name__}")
+
+    # 3. mode
+    mode = attention.get("mode")
+    if mode is not None and mode not in _VALID_ATTENTION_MODES:
+        raise ConfigError(
+            f"'{where}.mode' must be one of {sorted(_VALID_ATTENTION_MODES)}, "
+            f"got {mode!r}"
+        )
+
+    # 4. floors
+    floors = attention.get("floors")
+    if floors is not None:
+        if not isinstance(floors, dict):
+            raise ConfigError(f"'{where}.floors' must be a mapping")
+        for key in floors:
+            if key not in _ATTENTION_FLOORS_KEYS:
+                raise ConfigError(
+                    f"'{where}.floors' contains unknown key {key!r} — "
+                    f"only {sorted(_ATTENTION_FLOORS_KEYS)} are allowed"
+                )
+            val = floors[key]
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                raise ConfigError(
+                    f"'{where}.floors.{key}' must be a float in [0.0, 1.0], "
+                    f"got {val!r}"
+                )
+            if not (0.0 <= val <= 1.0):
+                raise ConfigError(
+                    f"'{where}.floors.{key}' must be in [0.0, 1.0], got {val}"
+                )
+
+    # 5. tiers
+    tiers = attention.get("tiers")
+    if tiers is not None:
+        if not isinstance(tiers, dict):
+            raise ConfigError(f"'{where}.tiers' must be a mapping")
+        for key in tiers:
+            if key not in _ATTENTION_TIERS_KEYS:
+                raise ConfigError(
+                    f"'{where}.tiers' contains unknown key {key!r} — "
+                    f"only {sorted(_ATTENTION_TIERS_KEYS)} are allowed"
+                )
+            val = tiers[key]
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                raise ConfigError(
+                    f"'{where}.tiers.{key}' must be a float in [0.0, 1.0], "
+                    f"got {val!r}"
+                )
+            if not (0.0 <= val <= 1.0):
+                raise ConfigError(
+                    f"'{where}.tiers.{key}' must be in [0.0, 1.0], got {val}"
+                )
+        # 불변식: ignore < skim < engage (단조증가) — 설계문서 §6.2
+        ignore_v = tiers.get("ignore")
+        skim_v = tiers.get("skim")
+        engage_v = tiers.get("engage")
+        if ignore_v is not None and skim_v is not None and ignore_v > skim_v:
+            raise ConfigError(
+                f"'{where}.tiers.ignore' ({ignore_v}) must be <= "
+                f"tiers.skim ({skim_v})"
+            )
+        if skim_v is not None and engage_v is not None and skim_v > engage_v:
+            raise ConfigError(
+                f"'{where}.tiers.skim' ({skim_v}) must be <= "
+                f"tiers.engage ({engage_v})"
+            )
+
+    # 6. features
+    features = attention.get("features")
+    if features is not None:
+        if not isinstance(features, dict):
+            raise ConfigError(f"'{where}.features' must be a mapping")
+        for key in features:
+            if key not in _ATTENTION_FEATURES_KEYS:
+                raise ConfigError(
+                    f"'{where}.features' contains unknown key {key!r} — "
+                    f"only {sorted(_ATTENTION_FEATURES_KEYS)} are allowed"
+                )
+            val = features[key]
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                raise ConfigError(
+                    f"'{where}.features.{key}' must be a float in [0.0, 1.0], "
+                    f"got {val!r}"
+                )
+            if not (0.0 <= val <= 1.0):
+                raise ConfigError(
+                    f"'{where}.features.{key}' must be in [0.0, 1.0], got {val}"
+                )
+
+    # 7. schedule
+    schedule = attention.get("schedule")
+    if schedule is not None:
+        if not isinstance(schedule, dict):
+            raise ConfigError(f"'{where}.schedule' must be a mapping")
+        for key in schedule:
+            if key not in _ATTENTION_SCHEDULE_KEYS:
+                raise ConfigError(
+                    f"'{where}.schedule' contains unknown key {key!r} — "
+                    f"only {sorted(_ATTENTION_SCHEDULE_KEYS)} are allowed"
+                )
+        if "skip_t0_llm" in schedule and not isinstance(schedule["skip_t0_llm"], bool):
+            raise ConfigError(
+                f"'{where}.schedule.skip_t0_llm' must be a boolean"
+            )
+
+    # 8. context
+    context = attention.get("context")
+    if context is not None:
+        if not isinstance(context, dict):
+            raise ConfigError(f"'{where}.context' must be a mapping")
+        for key in context:
+            if key not in _ATTENTION_CONTEXT_KEYS:
+                raise ConfigError(
+                    f"'{where}.context' contains unknown key {key!r} — "
+                    f"only {sorted(_ATTENTION_CONTEXT_KEYS)} are allowed"
+                )
+        if "skim_max_chars" in context:
+            v = context["skim_max_chars"]
+            if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+                raise ConfigError(
+                    f"'{where}.context.skim_max_chars' must be a positive integer, "
+                    f"got {v!r}"
+                )
+        if "t0_digest" in context and not isinstance(context["t0_digest"], bool):
+            raise ConfigError(
+                f"'{where}.context.t0_digest' must be a boolean"
+            )
+
+
+def _normalize_attention(attention: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge ``attention`` mapping with ``_ATTENTION_DEFAULTS``.
+
+    Returns a *new* dict — does not mutate the input.
+    The caller has already validated keys/types via ``_validate_attention_section``.
+    """
+    import copy
+
+    merged: dict[str, Any] = copy.deepcopy(_ATTENTION_DEFAULTS)
+
+    for top_key in ("enabled", "mode"):
+        if top_key in attention:
+            merged[top_key] = attention[top_key]
+
+    for section_key in ("floors", "tiers", "features", "schedule", "context"):
+        if section_key in attention and isinstance(attention[section_key], dict):
+            merged[section_key] = {
+                **merged[section_key],
+                **attention[section_key],
+            }
+
+    # 불변식: mention_boost >= tiers.skim (설계 §4.2 — 멘션 = 최소 T2 engage)
+    # tiers.skim 은 T2 하한, tiers.engage 는 T3 하한이다.
+    mention_boost = merged["features"]["mention_boost"]
+    tiers_skim = merged["tiers"]["skim"]
+    if mention_boost < tiers_skim:
+        raise ConfigError(
+            f"attention.features.mention_boost ({mention_boost}) "
+            f"must be >= attention.tiers.skim ({tiers_skim}) — "
+            f"otherwise mentions alone can never reach ENGAGE (T2) tier"
+        )
+
+    return merged
+
+
+def _merge_agent_attention(
+    global_attention: dict[str, Any],
+    agent_override: Any,
+    agent_index: int,
+) -> dict[str, Any]:
+    """Per-agent attention override: only ``floor`` key is allowed.
+
+    Returns a new merged attention dict for the agent.
+    """
+    import copy
+
+    merged = copy.deepcopy(global_attention)
+
+    if agent_override is None:
+        return merged
+
+    if not isinstance(agent_override, dict):
+        raise ConfigError(
+            f"agents[{agent_index}].attention must be a mapping"
+        )
+
+    for key in agent_override:
+        if key not in _ATTENTION_AGENT_KEYS:
+            raise ConfigError(
+                f"agents[{agent_index}].attention contains unknown key {key!r} — "
+                f"only {sorted(_ATTENTION_AGENT_KEYS)} are allowed "
+                f"(per-agent overrides are minimal by design)"
+            )
+
+    if "floor" in agent_override:
+        floor_val = agent_override["floor"]
+        if not isinstance(floor_val, (int, float)) or isinstance(floor_val, bool):
+            raise ConfigError(
+                f"agents[{agent_index}].attention.floor must be a float "
+                f"in [0.0, 1.0], got {floor_val!r}"
+            )
+        if not (0.0 <= floor_val <= 1.0):
+            raise ConfigError(
+                f"agents[{agent_index}].attention.floor must be in "
+                f"[0.0, 1.0], got {floor_val}"
+            )
+        merged["floors"]["default"] = floor_val
+
+    return merged
+
 
 def _validate_tools_section(tools: Any, *, where: str) -> None:
     """Validate a ``tools:`` mapping (global or per-agent).
@@ -344,6 +644,16 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     agents = data.get("agents")
     if not isinstance(agents, list) or not agents:
         raise ConfigError("'agents' must be a non-empty list")
+
+    # attention: 섹션 (전역) 검증 + 정규화 — AGENT_RELEVANCE_BUDGET_DESIGN.md §6
+    # agents 루프보다 먼저 수행되어야 per-agent merge에서 참조 가능
+    attention = data.get("attention")
+    if attention is not None:
+        _validate_attention_section(attention, where="attention")
+        data["_attention_normalized"] = _normalize_attention(attention)
+    else:
+        data["_attention_normalized"] = _normalize_attention({})
+
     seen_ids: set[str] = set()
     for i, agent in enumerate(agents):
         if not isinstance(agent, dict) or "id" not in agent:
@@ -431,6 +741,19 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
         agent_tools = agent.get("tools")
         if agent_tools is not None:
             _validate_tools_section(agent_tools, where=f"agents[{i}].tools")
+
+        # attention: 섹션 (에이전트별 오버라이드) 검증 — per-agent minimal override
+        agent_attn = agent.get("attention")
+        if agent_attn is not None:
+            # agent attention override는 global attention이 있을 때만 의미 있음
+            if data.get("attention") is not None:
+                agent["_attention"] = _merge_agent_attention(
+                    data["_attention_normalized"], agent_attn, i
+                )
+            else:
+                raise ConfigError(
+                    f"agents[{i}].attention requires a global 'attention:' section"
+                )
 
     # human 섹션은 v1.0+ 코드에 내장 — config 키는 무시 (옵트인 폐기).
     human = data.get("human")

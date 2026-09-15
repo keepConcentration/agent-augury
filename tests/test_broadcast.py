@@ -207,6 +207,42 @@ def test_wizard_flow_quiet_false_by_default(tmp_path):
     assert calls[0]["quiet"] is False
 
 
+def test_wizard_flow_new_session_sets_env(tmp_path, monkeypatch):
+    """--new-session on the wizard path must reach the Ink/gateway child env."""
+    from agent_augury.cli import _run_wizard_flow
+
+    monkeypatch.delenv("AGENT_AUGURY_NEW_SESSION", raising=False)
+    out_path = tmp_path / "wizard_out.yaml"
+    calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink), \
+         patch("agent_augury.cli.check_tty", return_value=True), \
+         patch("agent_augury.cli.model_config_exists", return_value=True), \
+         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
+         patch("builtins.input", return_value=""):
+        result = _run_wizard_flow(output_path=out_path, new_session=True)
+
+    assert result == 0
+    assert len(calls) == 1
+    assert os.environ.get("AGENT_AUGURY_NEW_SESSION") == "1"
+
+
+def test_wizard_flow_without_new_session_clears_env(tmp_path, monkeypatch):
+    from agent_augury.cli import _run_wizard_flow
+
+    monkeypatch.setenv("AGENT_AUGURY_NEW_SESSION", "1")
+    out_path = tmp_path / "wizard_out.yaml"
+    _calls, fake_ink = _make_ink_recorder()
+    with patch("agent_augury.cli._run_ink_surface", fake_ink), \
+         patch("agent_augury.cli.check_tty", return_value=True), \
+         patch("agent_augury.cli.model_config_exists", return_value=True), \
+         patch("agent_augury.cli.load_model_config", return_value=VALID_MODEL_CONFIG), \
+         patch("builtins.input", return_value=""):
+        result = _run_wizard_flow(output_path=out_path, new_session=False)
+
+    assert result == 0
+    assert "AGENT_AUGURY_NEW_SESSION" not in os.environ
+
+
 def test_wizard_flow_stops_when_api_key_env_missing(tmp_path, monkeypatch):
     """Saved openai/openrouter config without env set must not start the session."""
     from agent_augury.cli import _run_wizard_flow

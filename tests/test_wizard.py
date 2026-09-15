@@ -895,10 +895,12 @@ def test_wizard_skips_messaging_by_default(tmp_path):
         # messaging: empty → default n
     ])
     with patch("builtins.input", side_effect=_feed(inputs)), \
-         patch("agent_augury.wizard.save_model_config"), \
+         patch("agent_augury.wizard.save_model_config") as mock_save, \
          patch("agent_augury.backends_factory.list_models_openai_compat", return_value=None):
         cfg = run_wizard()
     assert "bots" not in cfg
+    mock_save.assert_called_once()
+    assert mock_save.call_args.kwargs.get("bots") == []
 
 
 def test_wizard_discord_bots_per_agent(tmp_path, monkeypatch):
@@ -1017,7 +1019,8 @@ def test_wizard_stores_discord_bot_token_in_dotenv(tmp_path, monkeypatch):
     assert os.environ.get("BOT_TOKEN_SOLO") == token
 
 
-def test_wizard_messaging_reuse_model_config_still_asks(tmp_path, monkeypatch):
+def test_wizard_messaging_reuse_model_config_skips_prompt(tmp_path, monkeypatch):
+    """Saved model config reuses bots silently — no messaging prompts."""
     monkeypatch.delenv("BOT_TOKEN_A1", raising=False)
     existing = {
         "max_steps": 10,
@@ -1032,15 +1035,16 @@ def test_wizard_messaging_reuse_model_config_still_asks(tmp_path, monkeypatch):
                 },
             },
         ],
+        "bots": [
+            {
+                "agent_id": "a1",
+                "token_env": "BOT_TOKEN_A1",
+                "channel_id": 999,
+                "inbound": True,
+            }
+        ],
     }
-    inputs = iter([
-        "y",  # add messaging
-        "1",  # Discord
-        "y",  # connect a1
-        "BOT_TOKEN_A1",
-        "999",
-        "y",  # inbound
-    ])
+    inputs = iter([])  # must not prompt
     with patch("builtins.input", side_effect=_feed(inputs)), \
          patch("agent_augury.wizard.save_model_config") as mock_save, \
          patch("agent_augury.wizard.getpass.getpass", return_value=""):
@@ -1050,3 +1054,25 @@ def test_wizard_messaging_reuse_model_config_still_asks(tmp_path, monkeypatch):
     assert cfg["bots"][0]["agent_id"] == "a1"
     assert cfg["bots"][0]["token_env"] == "BOT_TOKEN_A1"
     assert cfg["bots"][0]["inbound"] is True
+
+
+def test_wizard_messaging_reuse_without_bots_skips_prompt():
+    existing = {
+        "max_steps": 10,
+        "agents": [
+            {
+                "id": "a1",
+                "backend": {
+                    "type": "openai",
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "model": "gpt-4o-mini",
+                },
+            },
+        ],
+    }
+    with patch("builtins.input", side_effect=_feed(iter([]))), \
+         patch("agent_augury.wizard.save_model_config") as mock_save:
+        cfg = run_wizard(existing_model_config=existing)
+    mock_save.assert_not_called()
+    assert "bots" not in cfg

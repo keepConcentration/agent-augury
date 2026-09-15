@@ -169,6 +169,8 @@ class Session:
         self._agent_tasks: list[asyncio.Task[None]] = []
         # P1: one READY reminder per agent before gate-wait park
         self._ready_nudged: set[str] = set()
+        # Gated phases (P2+): one reminder of the bound gate thread id per agent/phase
+        self._gate_thread_nudged: set[tuple[str, str]] = set()
         # Checkpoint / resume (SESSION_RESUME_DESIGN)
         self.session_id: str | None = None
         self._checkpoint_store: Any = None
@@ -399,6 +401,17 @@ class Session:
             # v0.7: 에이전트별 tools: 딥 병합 (agent-2, §4.7-6)
             agent_policy = global_policy.merge(spec.get("tools"))
             local_tools, provider = _build_local_tools(agent_policy)
+            # V1 relevance budget: attention 딥머지 + RelevancePolicy 생성
+            # 전역 _attention_normalized + per-agent _attention 오버라이드
+            from .attention import RelevancePolicy as _RelevancePolicy
+            _global_attn = cfg.get("_attention_normalized")
+            _agent_attn = spec.get("_attention")
+            if _agent_attn is not None and isinstance(_global_attn, dict):
+                from .attention import _deep_merge
+                _merged_attn = _deep_merge(dict(_global_attn), _agent_attn)
+            else:
+                _merged_attn = _global_attn if isinstance(_global_attn, dict) else None
+            _attn_policy = _RelevancePolicy.from_config(_merged_attn, server=server)
             agents.append(
                 AgentLoop(
                     agent_id=spec["id"],
@@ -426,6 +439,8 @@ class Session:
                             "timestamp": __import__("time").time(),
                         })
                     ),
+                    attention_policy=_attn_policy,
+                    attention_config=_merged_attn,
                 )
             )
             if provider is not None:
@@ -1177,10 +1192,14 @@ class Session:
                 if self.gate:
                     agent.gate_open = self.gate.is_open
                     agent.gate_thread_id = self.gate.thread_id
+                    agent.gate_thread_name = self.gate.thread_name
                 # v0.2: inject current protocol phase + gate state.
                 if self.protocol:
                     agent.current_phase = self.protocol.phase
                     _inject_protocol_gate_state(agent, self.protocol)
+                # V1 relevance budget: inject phase_floor for attention decisions
+                # (§5.3) near_gate / P1 READY pending / default
+                agent.phase_floor = _compute_phase_floor(agent, self.protocol)
 
                 try:
                     result = await agent.step()
@@ -1204,6 +1223,12 @@ class Session:
                         agent_id=agent.agent_id,
                     )
                     break
+
+                # V1 relevance budget: T0 ignore — drain 됐지만 complete 생략됨.
+                # step counter를 증가시키지 않고 다음 iteration으로 진행한다.
+                if getattr(result, "skipped", False):
+                    await asyncio.sleep(0)
+                    continue
 
                 # Increment step counter only after a successful step.
                 total_steps[0] += 1
@@ -1231,6 +1256,10 @@ class Session:
                 if self._is_gate_waiting():
                     # P1: remind once if this agent forgot READY: before parking.
                     if self._maybe_nudge_ready(agent):
+                        await asyncio.sleep(0)
+                        continue
+                    # P2+: remind once with the concrete gate thread id.
+                    if self._maybe_nudge_gate_thread(agent):
                         await asyncio.sleep(0)
                         continue
                     woke = await self._wait_for_gate_wakeup(
@@ -1290,6 +1319,38 @@ class Session:
                     "[protocol] You have not sent READY: yet. "
                     "Call send_message with content starting with READY: "
                     "(e.g. READY: or READY: done) to finish P1 exploration."
+                ),
+            }
+        )
+        return True
+
+    def _maybe_nudge_gate_thread(self, agent: AgentLoop) -> bool:
+        """Inject a one-shot reminder of the bound gate thread for P2+ phases.
+
+        Returns True if a nudge was injected (caller should step again).
+        """
+        protocol = self.protocol
+        if protocol is None:
+            return False
+        phase = protocol.phase
+        if phase in (P1_EXPLORE, COMPLETED, REJECTED):
+            return False
+        gate = protocol.gate_for(phase)
+        if gate is None or not gate.thread_id or gate.is_open:
+            return False
+        key = (agent.agent_id, phase)
+        if key in self._gate_thread_nudged:
+            return False
+        self._gate_thread_nudged.add(key)
+        agent.conversation.append(
+            {
+                "role": "user",
+                "content": (
+                    f"[protocol] Phase is {phase}. "
+                    f"The gate thread id is '{gate.thread_id}' "
+                    f"(name={gate.thread_name!r}). "
+                    "Send PROPOSE:/APPROVE: on that thread only. "
+                    f"Do not create another thread named {gate.thread_name!r}."
                 ),
             }
         )
@@ -1594,6 +1655,44 @@ def _publish_session_error(
         pass
 
 
+def _compute_phase_floor(agent, protocol: CollaborationProtocol | None) -> float:
+    """Compute the V1 relevance-budget floor for the agent's current context.
+
+    DESIGN.md §5.3 / §4.3: floor keys are conditions, not phase names:
+
+    - ``near_gate`` — closed gate with ≥1 approval (consensus window warming up).
+      Not simply ``not gate.is_open``: that would ban T0 for all of P2–P5 and
+      contradict §9 scenario A (P3 broadcast T0 savings).
+    - ``p1_ready_pending`` — P1 + this agent has not submitted READY/REJECT.
+    - ``default`` — everything else (incl. open gates / empty approval sets).
+
+    Returns ``0.0`` when protocol/attention is absent.
+    """
+    if protocol is None:
+        return 0.0
+
+    floors = {}
+    if agent._attention_policy is not None and agent._attention_config:
+        floors = agent._attention_config.get("floors", {}) or {}
+
+    phase = protocol.phase
+    gate = protocol.gate_for(phase)
+
+    # near_gate first (mutually exclusive with P1 — P1 has no gate; G6).
+    if (
+        gate is not None
+        and not gate.is_open
+        and len(gate.approvals) >= 1
+    ):
+        return float(floors.get("near_gate", floors.get("default", 0.0)))
+
+    # P1: proposal pending and I have not decided → attention required (T0 banned).
+    if phase == P1_EXPLORE and not protocol.has_ready(agent.agent_id):
+        return float(floors.get("p1_ready_pending", floors.get("default", 0.0)))
+
+    return float(floors.get("default", 0.0))
+
+
 def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
     """Inject the current phase's gate state into an agent.
 
@@ -1609,11 +1708,14 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
     if gate is not None:
         agent.gate_open = gate.is_open
         agent.gate_thread_id = gate.thread_id
+        agent.gate_thread_name = gate.thread_name
     elif protocol.phase == P1_EXPLORE:
         # P1: only READY: messages allowed to finish exploration
         agent.gate_open = False
         agent.gate_thread_id = None
+        agent.gate_thread_name = None
     else:
         # Other phases without a gate — no restriction
         agent.gate_open = True
         agent.gate_thread_id = None
+        agent.gate_thread_name = None

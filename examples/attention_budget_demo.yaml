@@ -1,0 +1,273 @@
+# agent-augury — Attention Budget 예시 설정 (V1)
+#
+# AGENT_RELEVANCE_BUDGET_DESIGN.md §6 기반.
+# 이 파일은 attention.enabled: true 로 옵트인된 전체 설정 예시입니다.
+# 기본값은 enabled: false (기존 동작과 완전히 동일).
+#
+# 사용법:
+#   agent-augury --demo --config examples/attention_budget_demo.yaml
+#
+# 비활성화 상태로도 사용 가능 (baseline 비교용):
+#   attention.enabled: false → 모든 에이전트가 동등하게 full context 처리
+
+max_steps: 50
+
+protocol:
+  participants:
+    - agent-1
+    - agent-2
+    - agent-3
+    - agent-4
+  assembler_id: agent-1
+  gates:
+    P2_SPLIT: plan
+    P3_EXECUTE: execution
+    P4_REVIEW: review
+    P5_SUBMIT: submission
+
+# ── Attention Budget ──
+attention:
+  enabled: true              # 기본 false; true로 옵트인
+  mode: heuristic            # V1 고정
+
+  # ── 페이즈 floor ──
+  # 특정 구간에서 relevance floor를 올려 silent ignore 방지
+  floors:
+    default: 0.0             # 기본: floor 없음 (T0 허용)
+    near_gate: 0.5           # 게이트 임박 시 → 전원 최소 T1 skim
+    p1_ready_pending: 0.15   # P1 + READY 미제출 → 최소 T1 skim (T0 금지)
+
+  # ── Tier 경계 ──
+  tiers:
+    ignore: 0.15             # r < 0.15 → T0: complete 스킵
+    skim:   0.45             # 0.15 ≤ r < 0.45 → T1: digest+최신1메시지
+    engage: 0.80             # 0.45 ≤ r < 0.80 → T2: 정상
+                              # r ≥ 0.80 → T3: full+tools
+
+  # ── 피처 가중치 ──
+  # F3 phase_role 은 V1에서 제거 (assembler → per-agent attention.floor)
+  features:
+    mention_boost: 0.5       # 명시 멘션 → 즉시 최소 T2 engage ( ≥ tiers.skim )
+    thread_participant: 0.25 # 같은 스레드 참여자
+    recent_interact: 0.2     # 최근 k턴 내 왕복
+
+  # ── 스케줄 ──
+  schedule:
+    skip_t0_llm: true        # T0: drain 후 complete 스킵 (절감 핵심)
+
+  # ── Context ──
+  context:
+    skim_max_chars: 400      # T1 skim 시 주입 최대 문자 수
+    t0_digest: false         # T0에서 [digest] 1줄 conversation 주입 여부
+    # engage_max_chars: V1 unused (T2/T3 unlimited)
+agents:
+  - id: agent-1
+    backend:
+      type: fake
+      script:
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:plan
+                content: 'READY: done'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:plan
+                content: 'PROPOSE: agent-1→분석, agent-2→검증, agent-3→정리, agent-4→문서'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:plan
+                content: 'APPROVE: ok'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:execution
+                content: '(FYI) agent-1 분석 완료'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:execution
+                content: 'APPROVE: ok'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:review
+                content: 'RESULT: 완료'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:review
+                content: 'APPROVE: ok'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:submission
+                content: 'FINAL: done'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:submission
+                content: 'APPROVE: ok'
+                mentions: []
+        - text: done
+    # assembler → 항상 T2 engage 이상
+    attention:
+      floor: 0.8
+
+  - id: agent-2
+    backend:
+      type: fake
+      script:
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:plan
+                content: 'READY: done'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:plan
+                content: 'APPROVE: ok'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:execution
+                content: '(FYI) agent-2 검증 완료'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:execution
+                content: 'APPROVE: ok'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:review
+                content: 'RESULT: 완료'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:review
+                content: 'APPROVE: ok'
+                mentions: []
+        - text: waiting for final
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:submission
+                content: 'APPROVE: ok'
+                mentions: []
+        - text: done
+    # per-agent override 없음 → 전역 설정 상속
+
+  - id: agent-3
+    backend:
+      type: fake
+      script:
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:plan
+                content: 'READY: done'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:plan
+                content: 'APPROVE: ok'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:execution
+                content: '(FYI) agent-3 정리 완료'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:execution
+                content: 'APPROVE: ok'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:review
+                content: 'RESULT: 완료'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:review
+                content: 'APPROVE: ok'
+                mentions: []
+        - text: waiting for final
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:submission
+                content: 'APPROVE: ok'
+                mentions: []
+        - text: done
+
+  - id: agent-4
+    backend:
+      type: fake
+      script:
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:plan
+                content: 'READY: done'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:plan
+                content: 'APPROVE: ok'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:execution
+                content: '(FYI) agent-4 문서화 완료'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:execution
+                content: 'APPROVE: ok'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:review
+                content: 'RESULT: 완료'
+                mentions: []
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:review
+                content: 'APPROVE: ok'
+                mentions: []
+        - text: waiting for final
+        - tool_calls:
+            - name: send_message
+              arguments:
+                thread: $thread_by_name:submission
+                content: 'APPROVE: ok'
+                mentions: []
+        - text: done

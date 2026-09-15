@@ -61,21 +61,22 @@ async def test_gate_wait_parks_without_spam_then_wakes_on_inbox():
     session._setup = _setup  # type: ignore[method-assign]
 
     async def inject_then_interrupt() -> None:
+        # Filler step + one-shot gate-thread nudge, then park.
         for _ in range(200):
-            if b1.calls >= 1:
+            if b1.calls >= 2 and ("a1", P2_SPLIT) in session._gate_thread_nudged:
                 await asyncio.sleep(0.15)
-                if b1.calls == 1:
+                if b1.calls == 2:
                     break
             await asyncio.sleep(0.05)
-        assert b1.calls == 1, f"expected park after 1 call, got {b1.calls}"
+        assert b1.calls == 2, f"expected park after 2 calls, got {b1.calls}"
         await server.human_send(
             tid, author="human", content="ping a1", mentions=["a1"]
         )
         for _ in range(200):
-            if b1.calls >= 2:
+            if b1.calls >= 3:
                 break
             await asyncio.sleep(0.05)
-        assert b1.calls == 2
+        assert b1.calls == 3
         session.request_interrupt()
 
     injector = asyncio.create_task(inject_then_interrupt())

@@ -121,6 +121,10 @@ export function formatEvent(event: WireMessage): string | null {
   if (t === "session.ended") {
     return `[session] ended (${String(event.reason ?? "done")})`;
   }
+  // Debounced checkpoint noise — too noisy for the live log.
+  if (t === "session.checkpoint") {
+    return null;
+  }
   if (t === "error") {
     return `[error] ${String(event.message ?? event.text ?? "")}`;
   }

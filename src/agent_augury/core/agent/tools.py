@@ -272,10 +272,19 @@ class ToolBox:
 
     async def execute(self, agent_id: str, name: str, args: dict[str, Any]) -> str:
         if name == "create_thread":
+            name_arg = str(args.get("name") or "")
+            preexisting = self.server.resolve_thread_id(name_arg)
             tid = await self.server.create_thread(
-                args["name"], participants=list(args["participants"])
+                name_arg, participants=list(args["participants"])
             )
-            return _json({"thread_id": tid})
+            payload: dict[str, Any] = {"thread_id": tid}
+            if preexisting is not None and preexisting == tid:
+                payload["reused"] = True
+                payload["note"] = (
+                    f"Thread named {name_arg!r} already exists — reuse this id; "
+                    "do not assume a new gate thread was created."
+                )
+            return _json(payload)
         if name == "send_message":
             mid = await self.server.send_message(
                 args["thread"],

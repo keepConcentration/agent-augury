@@ -95,3 +95,30 @@ L2(블로킹 수신)보다 작업을 덜 방해한다는 것을 보여주고 싶
   정정 흡수까지의 wall-step이 더 큼.
 - 이는 `MessageServer`에 "push 억제 플래그"를 추가하는 코드 변경이 필요.
   Phase 2 로드맵 항목으로 남겨둔다 (필수 아님 — 논문 수치로 대체 가능).
+
+## Attention Budget 벤치마크 (V1)
+
+`AGENT_RELEVANCE_BUDGET_DESIGN.md` §9. 단위·통합 단언은
+`tests/test_attention_budget.py` (+ `examples/attention_budget_demo.yaml`).
+전체 세션 수치 벤치는 선택 — FakeModelBackend `calls`로 동일 축 측정 가능.
+
+### 측정 축 (V1)
+- `backend.complete` 호출 횟수 (T0 skip → 호출 감소)
+- 주입 context char 수 (T1 skim → chars 감소)
+- (`max_tokens` 합 비교는 V1.1 이월 — `complete(messages, tools)` 시그니처에 max_tokens 인자 없음)
+
+### 시나리오
+| # | 시나리오 | 기대 효과 | 테스트 |
+|---|---------|-----------|--------|
+| A | 4에이전트 P3 broadcast (`mentions: []`) | T0 수신자 비율 ≥ 50%, complete 감소 | `test_scenario_a_*` |
+| B | near_gate floor 활성 | T0 금지, complete 유지 | `test_near_gate_floor_*` |
+| 3 | 멘션된 수신자 | T2+ (최소 engage) | `test_t2_engage_*` / batch max |
+| 4 | P1 + READY 미제출 | T0 금지 | `test_compute_phase_floor_p1_*` |
+| 5 | Assembler floor | T2 engage 이상 | `test_agent_floor_*` |
+| 6 | T0 drain 불변식 | inbox size == 0 | `test_t0_drain_*` |
+| 7 | 배치 max | 멘션 1개 → tier ≥ engage | `test_batch_max_*` |
+| 8 | enabled=false 회귀 | 기존 동작 | `test_attention_disabled_*` |
+| 9 | human 메시지 | 항상 T2+ | `test_human_message_*` |
+
+### Baseline
+`attention.enabled: false` + 동일 시나리오 3회 평균 complete 횟수 / 주입 chars.

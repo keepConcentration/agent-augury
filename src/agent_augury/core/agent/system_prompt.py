@@ -179,6 +179,26 @@ Current phase: **P5 SUBMIT**
 }
 
 
+def _phase_instructions_with_gate(
+    phase: str,
+    *,
+    gate_thread_id: str | None = None,
+    gate_thread_name: str | None = None,
+) -> str:
+    """Phase block plus concrete gate thread id when a consensus gate is bound."""
+    base = _PHASE_INSTRUCTIONS.get(phase, "")
+    if not gate_thread_id:
+        return base
+    name = gate_thread_name or "gate"
+    extra = (
+        f"\n- Gate thread id: `{gate_thread_id}` (name: {name}). "
+        f"While the gate is closed, send `PROPOSE:` / `APPROVE:` only to this "
+        f"thread id — other threads are blocked. "
+        f"Do not create another thread named {name!r}; reuse this id."
+    )
+    return f"{base}{extra}" if base else extra.lstrip("\n")
+
+
 def render_system_prompt(
     agent_id: str,
     phase: str = "",
@@ -187,6 +207,8 @@ def render_system_prompt(
     has_human: bool = False,
     tool_instructions: str = "",
     human_approval_phases: list[str] | None = None,
+    gate_thread_id: str | None = None,
+    gate_thread_name: str | None = None,
 ) -> str:
     """Render the system prompt for an agent.
 
@@ -203,6 +225,8 @@ def render_system_prompt(
         tool_instructions: Dynamically rendered tool block (P6). Empty when
             no tools are active (defensive).
         human_approval_phases: Protocol phases with ``human_approval: true``.
+        gate_thread_id: Bound consensus-gate thread id for the current phase.
+        gate_thread_name: Human-readable gate thread name (e.g. ``plan``).
     """
     role_instructions = ""
     if role_prompt:
@@ -212,7 +236,11 @@ def render_system_prompt(
         human_instructions += _HUMAN_APPROVAL_INSTRUCTIONS.format(
             phases=", ".join(human_approval_phases)
         )
-    phase_instructions = _PHASE_INSTRUCTIONS.get(phase, "")
+    phase_instructions = _phase_instructions_with_gate(
+        phase,
+        gate_thread_id=gate_thread_id,
+        gate_thread_name=gate_thread_name,
+    )
     language_instruction = ""
     if language:
         language_instruction = (

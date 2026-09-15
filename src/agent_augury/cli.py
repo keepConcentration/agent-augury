@@ -129,8 +129,12 @@ def _launch_session(
     del force_ink  # Ink is the default non-headless path
     if session_id:
         os.environ["AGENT_AUGURY_SESSION"] = session_id
+    else:
+        os.environ.pop("AGENT_AUGURY_SESSION", None)
     if new_session:
         os.environ["AGENT_AUGURY_NEW_SESSION"] = "1"
+    else:
+        os.environ.pop("AGENT_AUGURY_NEW_SESSION", None)
     if headless:
         from .gateway.headless import run_headless_session
 
@@ -212,6 +216,8 @@ def _run_wizard_flow(
     allow_fake: bool = False,
     headless: bool = False,
     auto_start: bool = True,
+    new_session: bool = False,
+    session_id: str | None = None,
 ) -> int:
     """Run the interactive wizard, save the YAML, then start Ink or headless."""
     del force_ink  # Ink is the default non-headless path
@@ -231,8 +237,7 @@ def _run_wizard_flow(
             if existing is None:
                 existing = None
 
-        # Always go through run_wizard so messaging-app prompts run even when
-        # model settings are reused from disk.
+        # Reuse saved model + messaging (bots) without re-prompting.
         cfg = run_wizard(
             existing_model_config=existing if not force_reconfigure else None,
             force_reconfigure=force_reconfigure,
@@ -276,21 +281,14 @@ def _run_wizard_flow(
             )
         return 1
 
-    if headless:
-        from .gateway.headless import run_headless_session
-
-        return run_headless_session(
-            str(output_path),
-            demo=allow_fake,
-            quiet=quiet,
-            auto_start=auto_start,
-        )
-
-    return _run_ink_surface(
-        mode="session",
-        config=str(output_path),
-        demo=allow_fake,
+    return _launch_session(
+        str(output_path),
         quiet=quiet,
+        allow_fake=allow_fake,
+        headless=headless,
+        auto_start=auto_start,
+        new_session=new_session,
+        session_id=session_id,
     )
 
 
@@ -486,6 +484,8 @@ def main(argv: list[str] | None = None) -> int:
                 allow_fake=args.demo,
                 headless=True,
                 auto_start=not args.no_auto_start,
+                new_session=bool(args.new_session),
+                session_id=args.session,
             )
         except Exception as exc:  # noqa: BLE001 — CLI boundary
             print(f"error: {exc}", file=sys.stderr)
@@ -531,6 +531,8 @@ def main(argv: list[str] | None = None) -> int:
             force_ink=args.ink,
             allow_fake=args.demo,
             headless=False,
+            new_session=bool(args.new_session),
+            session_id=args.session,
         )
     except Exception as exc:  # noqa: BLE001 — CLI boundary
         print(f"error: {exc}", file=sys.stderr)

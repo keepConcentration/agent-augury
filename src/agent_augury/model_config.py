@@ -1,10 +1,10 @@
 """Model config persistence — stores agent/backend settings between runs.
 
 Model settings (max_steps, agent IDs, backend types, model names,
-base URLs, env-var names) are separated from the session-level task
-description and persisted to ``~/.agent-augury/model_config.json``.  This
-lets subsequent runs skip the model-configuration phase and go straight to
-the task description.
+base URLs, env-var names) and optional messaging ``bots`` bindings are
+separated from the per-run session YAML and persisted to
+``~/.agent-augury/model_config.json``.  Subsequent wizard runs reuse these
+and skip both the model-configuration and messaging-app prompts.
 """
 
 from __future__ import annotations
@@ -27,15 +27,24 @@ def save_model_config(
     max_steps: int,
     agents: list[dict[str, Any]],
     path: Path | None = None,
+    *,
+    bots: list[dict[str, Any]] | None = None,
 ) -> Path:
-    """Persist model settings (max_steps, agents) to disk.
+    """Persist model settings (and optional Discord ``bots``) to disk.
 
     Returns the path written.  The file is written as JSON with
     ``ensure_ascii=False`` so Unicode agent IDs are human-readable.
+
+    ``bots`` is always written (default ``[]``) so later wizard runs know
+    messaging was already decided and can skip the prompt.
     """
     target = _resolve_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    data = {"max_steps": max_steps, "agents": agents}
+    data: dict[str, Any] = {
+        "max_steps": max_steps,
+        "agents": agents,
+        "bots": list(bots) if bots is not None else [],
+    }
     target.write_text(
         json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
     )
@@ -49,6 +58,8 @@ def load_model_config(path: Path | None = None) -> dict[str, Any] | None:
     missing required keys.  A saved config whose ``agents`` is not a
     non-empty list is treated as invalid (None) so callers re-collect
     model settings instead of failing late in ``load_config`` (N2-A).
+
+    Missing ``bots`` (older files) is treated as ``[]``.
     """
     target = _resolve_path(path)
     if not target.exists():
@@ -64,7 +75,12 @@ def load_model_config(path: Path | None = None) -> dict[str, Any] | None:
     agents = data["agents"]
     if not isinstance(agents, list) or not agents:
         return None
-    return data
+    bots = data.get("bots", [])
+    if not isinstance(bots, list):
+        bots = []
+    out = dict(data)
+    out["bots"] = bots
+    return out
 
 
 def model_config_exists(path: Path | None = None) -> bool:

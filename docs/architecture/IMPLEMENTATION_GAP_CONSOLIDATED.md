@@ -6,11 +6,11 @@
 > **검증 방식:** 실제 소스(`src/agent_augury/**`, `fronts/ink/**`, `schemas/wire/**`,
 > `tests/**`) 기준. 판정은 **코드 존재 여부**.
 >
-> **작성 시점:** M0–M7 landed · 패키지 `0.6.8` (`pyproject.toml`).
+> **작성 시점:** M0–M7 landed · 패키지 `0.7.0` (`pyproject.toml`).
 > **갱신 (2026-09-15):** A2/A4/A5/A7/A10, B1–B4/B6, C1–C4, D1–D7 landed.
+> **P3 landed:** AGENT_RELEVANCE_BUDGET V1 (V1a–V1f) — `core/attention.py` · `loop.py` · `session.py` · `config.py` · `tests/test_attention_budget.py` · `examples/attention_budget_demo.yaml`.
 > 잔여: **A1(M8), A8(Slack inbound), A9(다중 human), B5(Gateway agent 필터)**;  
-> A3=`log.summary`는 A6로 대체·deferred.
-
+> A3=`log.summary`는 A6로 대체·deferred. V1.1+ (`max_tokens`/tools 캡)는 별 트랙.
 ---
 
 ## 0. 한 줄 결론
@@ -196,6 +196,30 @@ bot/mirror/slack enqueue가 분할 (절단만 하던 경로 제거).
 
 ---
 
+## 5.3 `AGENT_RELEVANCE_BUDGET_DESIGN.md` (V1 — landed)
+
+> **설계문서:** [`AGENT_RELEVANCE_BUDGET_DESIGN.md`](./AGENT_RELEVANCE_BUDGET_DESIGN.md)  
+> **리뷰:** [`AGENT_RELEVANCE_BUDGET_REVIEW.md`](./AGENT_RELEVANCE_BUDGET_REVIEW.md) (G1~G9 / P0 반영)
+
+**V1 구현 단계:**
+
+| ID | 파일 | 내용 | 판정 |
+|----|------|------|------|
+| V1a | `core/attention.py` | `RelevancePolicy`, `BudgetDecision`, human/URGENT boost, F3 제거 | ✅ |
+| V1b | `config.py` | `attention:` 검증 + per-agent floor + `mention_boost >= tiers.skim` | ✅ |
+| V1c | `core/agent/loop.py` | T0/T1/T2 분기, `StepResult.skipped`, `format_radio_block_skim` (seq) | ✅ |
+| V1d | `core/session.py` | `phase_floor` (near_gate≥1승인 / P1 READY), skipped→continue | ✅ |
+| V1e | `tests/test_attention_budget.py` | T0 drain, batch max, human, near_gate, 시나리오 A | ✅ |
+| V1f | docs + `examples/attention_budget_demo.yaml` | 갭 문서·예시 YAML | ✅ |
+
+**핵심 계약:**
+- V1c+V1d는 같은 변경 집합 (floor 없이 T0만 켜면 합의/READY 회귀)
+- 기본 `attention.enabled: false` — 옵트인, 기존 데모·테스트 불변
+- T0 = drain 필수 + `backend.complete` 스킵 (`step()` 호출 생략 단독 금지)
+- 배치 r = `max(r(m))` (멘션 하나라도 있으면 engage 이상)
+- V1 측정 축: `complete` 호출 횟수 + 주입 context chars (max_tokens 합 비교는 V1.1 이월)
+---
+
 ## 6. 우선순위별 권장 조치
 
 ### P0 — 동작·무결성·감사·보안 (대부분 landed)
@@ -280,6 +304,7 @@ bot/mirror/slack enqueue가 분할 (절단만 하던 경로 제거).
 | `GATEWAY_BACKPRESSURE_DESIGN.md` | A7/D5 mailbox·예외 격리 (구현됨) |
 | `EXTERNAL_BINDING_DESIGN.md` | A5 bindings.json (v1 구현됨) |
 | `SURFACE_DISPLAY_DESIGN.md` | 채팅 display/delivery 노브 (A6 V1 ✅; A3 deferred) |
+| `AGENT_RELEVANCE_BUDGET_DESIGN.md` | 에이전트 인지 예산 배분 · reasoning budget 설계 (V1 구현 중 — P3) |
 | `IMPLEMENTATION_GAP_CONSOLIDATED.md` | 통합 격차 분석 정본 (본 문서) |
 
 중복 gap 분석·pt TUI 아카이브·루트 비교 문서는 삭제됨.

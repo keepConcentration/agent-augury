@@ -46,6 +46,9 @@ class StepResult:
     tool_calls: list[Any] = field(default_factory=list)
     drained_count: int = 0
     usage: dict[str, Any] | None = None
+    # V1 relevance budget: True when T0 ignore — drain performed, complete skipped.
+    # session.run_agent() must check this BEFORE incrementing total_steps.
+    skipped: bool = False
 
 
 def format_radio_block(messages: list[Message]) -> str:
@@ -56,6 +59,39 @@ def format_radio_block(messages: list[Message]) -> str:
     """
     lines = ["[radio]"]
     lines.extend(f"from {m['author']}: {m['content']}".rstrip() for m in messages)
+    return "\n".join(lines)
+
+
+def format_radio_block_skim(
+    messages: list[Message],
+    max_chars: int = 400,
+) -> str:
+    """V1 T1 skim: digest summary + latest 1 message, truncated to *max_chars*.
+
+    "Latest" is chosen by ``seq`` (review P2-1), falling back to list order
+    when ``seq`` is absent. Only that one message is included in full
+    (trimmed to *max_chars* if needed).
+    """
+    if not messages:
+        return "[radio — skim]\n(skim: 0 messages)"
+
+    authors = sorted({m["author"] for m in messages})
+    lines = [
+        "[radio — skim]",
+        f"(skim: {len(messages)} message(s) from {', '.join(authors)})",
+    ]
+    latest = max(
+        enumerate(messages),
+        key=lambda pair: (
+            pair[1].get("seq") is not None,
+            pair[1].get("seq", -1),
+            pair[0],
+        ),
+    )[1]
+    content = latest.get("content") or ""
+    if len(content) > max_chars:
+        content = content[:max_chars] + "…"
+    lines.append(f"from {latest['author']}: {content}")
     return "\n".join(lines)
 
 
@@ -87,6 +123,11 @@ class AgentLoop:
         approvals: ApprovalStore | None = None,
         has_interact_surface: Callable[[], bool] | None = None,
         on_approval_request: Callable[[Any], None] | None = None,
+        # V1 relevance budget (AGENT_RELEVANCE_BUDGET_DESIGN.md §5)
+        # attention_policy: RelevancePolicy | None — injected by Session.from_config
+        # attention_config: dict — deep-merged attention section for this agent
+        attention_policy: Any | None = None,
+        attention_config: dict[str, Any] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.server = server
@@ -114,12 +155,20 @@ class AgentLoop:
         # gate-aware execution state (injected by Session each step)
         self.gate_open: bool = True
         self.gate_thread_id: str | None = None
+        self.gate_thread_name: str | None = None
         # v0.2: current protocol phase (injected by Session each step)
         self.current_phase: str = ""
         # v0.3: user language (injected by Session at start, propagated to all agents)
         self.language: str = ""
         # Real-time tool event callback (fires immediately on each tool execution)
         self.on_tool_call = on_tool_call
+        # V1 relevance budget (AGENT_RELEVANCE_BUDGET_DESIGN.md §5)
+        # attention_policy: injected by Session.from_config when attention.enabled=true
+        # attention_config: deep-merged attention section (dict; supports .get())
+        # phase_floor: injected by Session.run_agent() before each step
+        self._attention_policy: Any | None = attention_policy  # RelevancePolicy | None
+        self._attention_config: dict[str, Any] = dict(attention_config or {})
+        self.phase_floor: float = 0.0
 
     # -- tool spec passthrough (mode-aware) ---------------------------------
 
@@ -148,15 +197,75 @@ class AgentLoop:
                 role_prompt=self._role_prompt, has_human=self._has_human,
                 tool_instructions=tool_instructions,
                 human_approval_phases=self._human_approval_phases or None,
+                gate_thread_id=self.gate_thread_id,
+                gate_thread_name=self.gate_thread_name,
             )
 
     async def step(self) -> StepResult:
-        """One model turn. Drains the inbox first; injects a [radio] user turn."""
+        """One model turn. Drains the inbox first; injects a [radio] user turn.
+
+        V1 attention budget (AGENT_RELEVANCE_BUDGET_DESIGN.md §5):
+        - T0 ignore: drain performed, backend.complete **skipped**, early return
+          with ``skipped=True`` (session MUST NOT increment total_steps).
+        - T1 skim: drain + format_radio_block_skim (digest + latest msg only).
+        - T2-T3 engage: drain + format_radio_block (unchanged from baseline).
+
+        When ``_attention_policy`` is None or drained is empty, the method
+        behaves exactly as before (backward compat).
+        """
         # Update system prompt with current phase + active tools
         self._update_phase_in_prompt()
         drained = await self.server.drain_inbox(self.agent_id)
 
-        if drained:
+        # ── V1 relevance budget branch ────────────────────────────────
+        if drained and self._attention_policy is not None:
+            scores = self._attention_policy.score_batch(
+                self.agent_id, drained, phase=self.current_phase
+            )
+            agent_floor = float(
+                self._attention_config.get("floors", {}).get("default", 0.0)
+            )
+            decision = self._attention_policy.decide(
+                self.agent_id,
+                scores,
+                phase=self.current_phase,
+                phase_floor=self.phase_floor,
+                agent_floor=agent_floor,
+            )
+
+            if not decision.run_llm:
+                # T0 ignore: drain 했으나 complete 스킵 (§4.3 불변식 2)
+                if self._attention_config.get("context", {}).get("t0_digest", False):
+                    self.conversation.append(
+                        {
+                            "role": "user",
+                            "content": f"[digest] {len(drained)} message(s) skipped (low relevance)",
+                        }
+                    )
+                return StepResult(
+                    text=None,
+                    drained_count=len(drained),
+                    skipped=True,
+                )
+
+            if decision.tier == "skim":
+                # T1: digest + 최신 1메시지만
+                skim_max = decision.context_max_chars or int(
+                    self._attention_config.get("context", {}).get("skim_max_chars", 400)
+                )
+                self.conversation.append(
+                    {
+                        "role": "user",
+                        "content": format_radio_block_skim(drained, max_chars=skim_max),
+                    }
+                )
+            else:
+                # T2 engage / T3 intervene: full radio block (기존 동작)
+                self.conversation.append(
+                    {"role": "user", "content": format_radio_block(drained)}
+                )
+        elif drained:
+            # attention disabled 또는 policy 없음 → 기존 동작
             self.conversation.append(
                 {"role": "user", "content": format_radio_block(drained)}
             )
@@ -232,7 +341,8 @@ class AgentLoop:
                             "phase": self.current_phase or "?",
                             "message": (
                                 f"Gate is CLOSED. Work-share on thread '{thread_id}' is blocked. "
-                                f"Post APPROVE on the gate thread '{self.gate_thread_id}' to open the gate."
+                                f"Post PROPOSE:/APPROVE: on the gate thread "
+                                f"'{self.gate_thread_id}' to open the gate."
                             ),
                         },
                         ensure_ascii=False,

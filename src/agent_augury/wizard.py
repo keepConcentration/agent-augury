@@ -1,9 +1,9 @@
 """Interactive setup wizard for agent-augury.
 
 Runs when ``agent-augury`` is invoked without ``--config``.  Collects
-model settings (mode, max_steps, agent/backend configuration) and
-persists them to ``~/.agent-augury/model_config.json`` so subsequent
-runs can skip this phase.
+model settings (mode, max_steps, agent/backend configuration) and optional
+messaging (Discord ``bots``), then persists them to
+``~/.agent-augury/model_config.json`` so subsequent runs skip those prompts.
 
 After provider selection and authentication, the wizard attempts to fetch
 the available model list from the provider's ``/models`` endpoint.  If
@@ -646,11 +646,12 @@ def run_wizard(
 
     Collects model settings from the user (or loads from
     *existing_model_config* when provided), then persists them to disk.
-    Optionally collects Discord (messaging) bot bindings for the session YAML.
+    Messaging (Discord ``bots``) is asked only on a fresh model configure;
+    reused model configs apply saved ``bots`` without prompting.
 
     Args:
-        existing_model_config: If provided, the model-settings phase is
-            skipped and these values are reused.
+        existing_model_config: If provided, the model-settings and messaging
+            phases are skipped and these values are reused.
         force_reconfigure: If True, always run OAuth authentication even
             if a valid token exists.
     """
@@ -662,21 +663,24 @@ def run_wizard(
     print("No API keys or bot tokens are stored — only environment variable names.")
 
     if existing_model_config is not None:
-        # Reuse saved model settings — skip directly to messaging + config generation.
+        # Reuse saved model + messaging — skip prompts.
         max_steps = existing_model_config.get("max_steps", 0)
         agents = existing_model_config["agents"]
+        bots = list(existing_model_config.get("bots") or [])
         print(
             f"\nUsing saved model config: max_steps={max_steps}, "
             f"{len(agents)} agent(s)."
         )
+        if bots:
+            print(f"Reusing saved messaging: {len(bots)} Discord bot(s).")
+        else:
+            print("No messaging apps in saved config (skipping prompts).")
     else:
         # Phase 1: collect model settings from user.
         max_steps, agents = _collect_model_settings(force_reconfigure=force_reconfigure)
-        # Persist model settings immediately (path is internal to save_model_config).
-        save_model_config(max_steps, agents)
-
-    # Phase 2: optional messaging apps (session YAML only; not model_config.json).
-    bots = _collect_messaging_apps(agents)
+        # Phase 2: optional messaging apps (asked once, then persisted).
+        bots = _collect_messaging_apps(agents)
+        save_model_config(max_steps, agents, bots=bots)
 
     cfg: dict[str, Any] = {
         "max_steps": max_steps,

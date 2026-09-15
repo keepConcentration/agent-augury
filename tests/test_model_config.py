@@ -37,7 +37,7 @@ SAMPLE_AGENTS = [
 
 
 def test_save_model_config_writes_json(tmp_path):
-    """save_model_config writes a JSON file with max_steps, agents."""
+    """save_model_config writes a JSON file with max_steps, agents, bots."""
     path = tmp_path / "config.json"
     result = save_model_config(25, SAMPLE_AGENTS, path=path)
 
@@ -47,7 +47,27 @@ def test_save_model_config_writes_json(tmp_path):
     raw = json.loads(path.read_text(encoding="utf-8"))
     assert raw["max_steps"] == 25
     assert raw["agents"] == SAMPLE_AGENTS
+    assert raw["bots"] == []
 
+
+def test_save_model_config_persists_bots(tmp_path):
+    path = tmp_path / "config.json"
+    bots = [{"agent_id": "a1", "token_env": "BOT_TOKEN_A1", "channel_id": 1}]
+    save_model_config(25, SAMPLE_AGENTS, path=path, bots=bots)
+    loaded = load_model_config(path=path)
+    assert loaded is not None
+    assert loaded["bots"] == bots
+
+
+def test_load_model_config_defaults_missing_bots(tmp_path):
+    path = tmp_path / "legacy.json"
+    path.write_text(
+        json.dumps({"max_steps": 10, "agents": SAMPLE_AGENTS}),
+        encoding="utf-8",
+    )
+    loaded = load_model_config(path=path)
+    assert loaded is not None
+    assert loaded["bots"] == []
 
 def test_save_model_config_creates_parent_dir(tmp_path):
     """save_model_config creates missing parent directories."""

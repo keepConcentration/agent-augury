@@ -283,6 +283,67 @@ class ApprovalStore:
             return False
         return rec.tool == tool and rec.args_digest == args_digest(tool, args)
 
+    def export_pending(self, *, now: float | None = None) -> list[dict[str, Any]]:
+        """Serialize unexpired pending records for checkpoint (M4a)."""
+        now = time.time() if now is None else now
+        out: list[dict[str, Any]] = []
+        for rec in self._by_id.values():
+            if rec.state != "pending":
+                continue
+            if rec.expires_at <= now:
+                continue
+            out.append(
+                {
+                    "approval_id": rec.approval_id,
+                    "agent_id": rec.agent_id,
+                    "tool": rec.tool,
+                    "args_digest": rec.args_digest,
+                    "args_snapshot": dict(rec.args_snapshot),
+                    "created_at": rec.created_at,
+                    "expires_at": rec.expires_at,
+                    "state": "pending",
+                    "reason": rec.reason,
+                }
+            )
+        return out
+
+    def import_pending(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        now: float | None = None,
+    ) -> tuple[list[ApprovalRecord], list[ApprovalRecord]]:
+        """Load pending records. Returns ``(alive, expired_on_import)``."""
+        now = time.time() if now is None else now
+        alive: list[ApprovalRecord] = []
+        expired: list[ApprovalRecord] = []
+        for raw in records:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                rec = ApprovalRecord(
+                    approval_id=str(raw["approval_id"]),
+                    agent_id=str(raw["agent_id"]),
+                    tool=str(raw["tool"]),
+                    args_digest=str(raw.get("args_digest") or ""),
+                    args_snapshot=dict(raw.get("args_snapshot") or {}),
+                    created_at=float(raw.get("created_at") or now),
+                    expires_at=float(raw.get("expires_at") or now),
+                    state="pending",
+                    reason=raw.get("reason"),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            if rec.expires_at <= now:
+                rec.state = "expired"
+                rec.reason = "expired"
+                self._by_id[rec.approval_id] = rec
+                expired.append(rec)
+            else:
+                self._by_id[rec.approval_id] = rec
+                alive.append(rec)
+        return alive, expired
+
 
 def gate_decision(
     *,

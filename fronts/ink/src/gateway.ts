@@ -54,6 +54,16 @@ export function resolveGatewayArgs(): string[] {
     ) {
       args.push("--no-auto-start");
     }
+    if (
+      process.env.AGENT_AUGURY_NEW_SESSION === "1" ||
+      process.env.AGENT_AUGURY_NEW_SESSION === "true"
+    ) {
+      args.push("--new-session");
+    }
+    const sessionId = process.env.AGENT_AUGURY_SESSION;
+    if (sessionId) {
+      args.push("--session", sessionId);
+    }
     return args;
   }
   return ["-m", "agent_augury.gateway.hello_demo"];

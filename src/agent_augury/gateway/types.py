@@ -14,6 +14,9 @@ WireDir = Literal["event", "cmd", "result"]
 EVENT_TYPES = frozenset({
     "session.started",
     "session.phase",
+    "session.checkpoint",
+    "session.resumed",
+    "session.resume_failed",
     "agent.step",
     "tool",
     "human.question",

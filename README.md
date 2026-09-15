@@ -190,6 +190,37 @@ channel messages start the next turn after idle. Stop with Ctrl+C.
 Use `--no-auto-start` to wait for the first inbound message instead of running
 the config `task` immediately.
 
+### Session resume (checkpoint)
+
+Interrupt + process exit used to wipe agent memory. Checkpoints now persist under
+`~/.agent-augury/sessions/<id>/` (conversation, protocol phase, MessageServer DB,
+pending approvals).
+
+- **Default on** for headless and Ink (`--demo` disables)
+- Reboot → hydrate → **idle-wait**; next message is **appended** (even if identical)
+- Fresh work: `--new-session` or `AGENT_AUGURY_NEW_SESSION=1`
+- Pin id: `--session <id>` / `AGENT_AUGURY_SESSION`
+- Manage: `agent-augury sessions list|show|rm` · corrupt → `sessions/quarantine/`
+
+```yaml
+session:
+  checkpoint:
+    enabled: true
+    resume: auto          # auto | ask | never
+    dir: ~/.agent-augury/sessions
+    approvals_persist: true
+    compact:
+      enabled: true
+      soft_limit_chars: 200000
+```
+
+```bash
+agent-augury sessions list
+agent-augury sessions show <id>
+agent-augury sessions rm <id> --yes
+agent-augury sessions quarantine list
+```
+
 ---
 
 ## Tool approval (shell / file write)
@@ -240,6 +271,8 @@ Design notes: [`docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`](docs/architect
 | `--ink-hello` | Ink hello against the Gateway (no full session) |
 | `--headless` | Boot Core without Ink (default: wizard session YAML) |
 | `--no-auto-start` | With `--headless`: wait for `human.send` before first run |
+| `--new-session` | Ignore LATEST checkpoint; start fresh |
+| `--session <id>` | Resume or bind to this session id |
 
 ---
 

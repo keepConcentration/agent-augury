@@ -6,7 +6,7 @@
 > **검증 방식:** 실제 소스(`src/agent_augury/**`, `fronts/ink/**`, `schemas/wire/**`,
 > `tests/**`) 기준. 판정은 **코드 존재 여부**.
 >
-> **작성 시점:** M0–M7 landed · 패키지 `0.6.5` (`pyproject.toml`).
+> **작성 시점:** M0–M7 landed · 패키지 `0.6.8` (`pyproject.toml`).
 > **갱신:** B1/B2/B3, C1–C4, D1/D3/D6/D7, DESIGN D5(aiosqlite) landed.
 > A2 (`surfaces:` YAML) 본 문서와 함께 착수.
 

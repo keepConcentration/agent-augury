@@ -168,6 +168,24 @@ class Session:
         self._agent_tasks: list[asyncio.Task[None]] = []
         # P1: one READY reminder per agent before gate-wait park
         self._ready_nudged: set[str] = set()
+        # Checkpoint / resume (SESSION_RESUME_DESIGN)
+        self.session_id: str | None = None
+        self._checkpoint_store: Any = None
+        self._checkpoint_enabled: bool = False
+        self._checkpoint_fingerprint: str = ""
+        self._checkpoint_created_at: float | None = None
+        self._pending_bootstrap: Any = None
+        self._resuming: bool = False
+        self._flush_task: asyncio.Task | None = None
+        self._flush_interval_task: asyncio.Task | None = None
+        self._flush_debounce_ms: int = 1000
+        self._flush_interval_s: float = 30.0
+        self._exit_reason: str | None = None
+        self._checkpoint_lock = asyncio.Lock()
+        self._approvals_persist: bool = True
+        self._compact_opts: Any = None
+        self._compactions_this_flush: list[dict[str, Any]] = []
+        self._restored_pending_approvals: list[Any] = []
 
     def has_interact_surface(self) -> bool:
         """True when an Interactive Surface can answer approval prompts."""
@@ -343,8 +361,9 @@ class Session:
         token_store: TokenStore | None = None,
         on_user_code: Callable[[str, str], None] | None = None,
         approval_bypass: bool = False,
+        db_path: str | None = None,
     ) -> Session:
-        server = MessageServer()
+        server = MessageServer(db_path=db_path)
         agents: list[AgentLoop] = []
         pending_providers: list[Any] = []
         # Shared token store so all backends use the same OAuth tokens
@@ -493,6 +512,69 @@ class Session:
         server.subscribe_events(session._on_server_event)
         return session
 
+    @classmethod
+    def open_from_config(
+        cls,
+        cfg: dict[str, Any],
+        *,
+        config_path: str | None = None,
+        demo: bool = False,
+        new_session: bool = False,
+        cli_session_id: str | None = None,
+        on_step=None,
+        on_tool_event=None,
+        allowed_roots: list[str] | None = None,
+        token_store: TokenStore | None = None,
+        on_user_code: Callable[[str, str], None] | None = None,
+        approval_bypass: bool = False,
+    ) -> Session:
+        """Build a Session with optional checkpoint resume (preferred entry)."""
+        from .checkpoint import (
+            CheckpointStore,
+            bootstrap_session,
+            config_fingerprint,
+            parse_checkpoint_config,
+        )
+
+        boot = bootstrap_session(
+            cfg,
+            config_path=config_path,
+            demo=demo,
+            new_session=new_session,
+            cli_session_id=cli_session_id,
+        )
+        opts = parse_checkpoint_config(
+            cfg,
+            demo=demo,
+            new_session=new_session,
+            cli_session_id=cli_session_id,
+        )
+        db_path = str(boot.db_path) if boot.enabled else None
+        session = cls.from_config(
+            cfg,
+            on_step=on_step,
+            on_tool_event=on_tool_event,
+            allowed_roots=allowed_roots,
+            token_store=token_store,
+            on_user_code=on_user_code,
+            approval_bypass=approval_bypass or bool(demo),
+            db_path=db_path,
+        )
+        session.session_id = boot.session_id
+        session._checkpoint_enabled = boot.enabled
+        session._checkpoint_fingerprint = config_fingerprint(
+            cfg, config_path=config_path
+        )
+        session._flush_debounce_ms = opts.flush_debounce_ms
+        session._flush_interval_s = opts.flush_interval_s
+        session._approvals_persist = opts.approvals_persist
+        session._compact_opts = opts.compact
+        session._pending_bootstrap = boot
+        if boot.enabled:
+            session._checkpoint_store = CheckpointStore(boot.session_dir, boot.session_id)
+            session._checkpoint_store.ensure_dir()
+        return session
+
     # -- lifecycle -----------------------------------------------------------
 
     async def _setup(self) -> None:
@@ -504,8 +586,19 @@ class Session:
             return
         self._setup_done = True
 
+        boot = self._pending_bootstrap
+        if boot is not None and boot.resumed:
+            await self.server.load()
+            self._apply_resume_payload(boot)
+            self._resuming = True
+            self._publish_resume_events(boot)
+        elif boot is not None and boot.resume_failed:
+            self._publish_resume_failed(boot.resume_failed)
+
         # Start unified output consumer task
         self._output_task = asyncio.create_task(self._output_consumer())
+        if self._checkpoint_enabled and self._flush_interval_s > 0:
+            self._flush_interval_task = asyncio.create_task(self._checkpoint_interval_loop())
 
         # v0.3: start bots (login to Discord) — same asyncio loop
         if self.bot_manager:
@@ -513,35 +606,286 @@ class Session:
 
         # gate-aware: inject gate state into agents
         if self.gate:
-            # Pre-create the gate thread and bind it
-            participant_ids = [a.agent_id for a in self.agents]
-            tid = await self.server.create_thread(
-                self.gate.thread_name, participants=participant_ids
-            )
-            self.gate.bind_to_thread(tid)
-            for agent in self.agents:
-                agent.gate_open = self.gate.is_open
-                agent.gate_thread_id = self.gate.thread_id
+            if self._resuming and self.gate.thread_id:
+                for agent in self.agents:
+                    agent.gate_open = self.gate.is_open
+                    agent.gate_thread_id = self.gate.thread_id
+            else:
+                participant_ids = [a.agent_id for a in self.agents]
+                tid = await self.server.create_thread(
+                    self.gate.thread_name, participants=participant_ids
+                )
+                self.gate.bind_to_thread(tid)
+                for agent in self.agents:
+                    agent.gate_open = self.gate.is_open
+                    agent.gate_thread_id = self.gate.thread_id
 
         # v0.2: start the collaboration protocol
         if self.protocol:
-            # Pre-create threads for each gate and bind them explicitly.
-            for gate in self.protocol._gates.values():
-                if gate is not None:
-                    tid = await self.server.create_thread(
-                        gate.thread_name, participants=self.protocol.participants
-                    )
-                    gate.bind_to_thread(tid)
-            self.protocol.start()
-            # Inject initial phase context + gate state
-            for agent in self.agents:
-                agent.current_phase = self.protocol.phase
-                _inject_protocol_gate_state(agent, self.protocol)
+            if self._resuming:
+                for agent in self.agents:
+                    agent.current_phase = self.protocol.phase
+                    _inject_protocol_gate_state(agent, self.protocol)
+            else:
+                for gate in self.protocol._gates.values():
+                    if gate is not None:
+                        tid = await self.server.create_thread(
+                            gate.thread_name, participants=self.protocol.participants
+                        )
+                        gate.bind_to_thread(tid)
+                self.protocol.start()
+                for agent in self.agents:
+                    agent.current_phase = self.protocol.phase
+                    _inject_protocol_gate_state(agent, self.protocol)
 
         # Always have a durable chat thread for human.send (Discord / Ink mid-run).
         human_tid = await self.ensure_human_thread()
         if self.bridge is not None and not self.bridge.recent_thread:
             self.bridge._recent_thread = human_tid
+
+        # M4a: re-publish pending approvals after surfaces/bots are up
+        if self._resuming and self._restored_pending_approvals:
+            self._republish_pending_approvals(self._restored_pending_approvals)
+            self._restored_pending_approvals = []
+
+    def _apply_resume_payload(self, boot: Any) -> None:
+        """Inject conversations / protocol / inbox / approvals from a checkpoint."""
+        conversations = boot.conversations or {}
+        for agent in self.agents:
+            blob = conversations.get(agent.agent_id) or {}
+            conv = blob.get("conversation")
+            if isinstance(conv, list) and conv:
+                agent.conversation = list(conv)
+            threads = blob.get("created_threads")
+            if isinstance(threads, list):
+                agent.created_threads = list(threads)
+            lang = blob.get("language")
+            if isinstance(lang, str):
+                agent.language = lang
+        proto = boot.protocol or {}
+        if self.protocol and proto:
+            self.protocol.restore(proto)
+        if self.gate and isinstance(proto.get("legacy_gate"), dict):
+            try:
+                self.gate.restore_state(proto["legacy_gate"])
+            except KeyError:
+                pass
+        if boot.inbox:
+            self.server.restore_inbox_ids(boot.inbox)
+        if boot.meta:
+            self._checkpoint_created_at = boot.meta.get("created_at")
+
+        if getattr(boot, "approvals_corrupt", False):
+            try:
+                from .gateway.types import make_event
+
+                self.gateway.publish(
+                    make_event(
+                        "log",
+                        text="approvals.json corrupt — pending approvals dropped",
+                    )
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+        elif self._approvals_persist and boot.approvals:
+            alive, expired = self.approvals.import_pending(list(boot.approvals))
+            self._restored_pending_approvals = list(alive)
+            for rec in expired:
+                try:
+                    from .gateway.types import make_event
+
+                    self.gateway.publish(
+                        make_event(
+                            "approval.expired",
+                            approval_id=rec.approval_id,
+                            agent_id=rec.agent_id,
+                            tool=rec.tool,
+                        )
+                    )
+                except Exception:  # noqa: BLE001, S110
+                    pass
+
+    def _republish_pending_approvals(self, records: list[Any]) -> None:
+        """Re-emit Wire approval.request for restored pending tokens (same ids)."""
+        for rec in records:
+            try:
+                self._on_approval_request(rec)
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+    def _publish_resume_events(self, boot: Any) -> None:
+        from .gateway.types import make_event
+
+        phase = None
+        if self.protocol:
+            phase = self.protocol.phase
+        try:
+            self.gateway.publish(
+                make_event(
+                    "session.resumed",
+                    session_id=self.session_id,
+                    phase=phase,
+                    agents=[a.agent_id for a in self.agents],
+                )
+            )
+            self.gateway.publish(
+                make_event(
+                    "log",
+                    text=(
+                        f"resumed session {self.session_id} "
+                        f"(phase={phase or 'n/a'})"
+                    ),
+                )
+            )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    def _publish_resume_failed(self, reason: str) -> None:
+        from .gateway.types import make_event
+
+        try:
+            self.gateway.publish(
+                make_event("session.resume_failed", reason=reason)
+            )
+            self.gateway.publish(
+                make_event("log", text=f"resume failed — fresh session: {reason}")
+            )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    def _maybe_compact_conversations(self) -> list[dict[str, Any]]:
+        """Apply M4b compact in-place; return compaction meta entries."""
+        opts = self._compact_opts
+        if opts is None or not getattr(opts, "enabled", False):
+            return []
+        from .compact import compact_conversation
+
+        phase = self.protocol.phase if self.protocol else ""
+        metas: list[dict[str, Any]] = []
+        for agent in self.agents:
+            new_conv, meta = compact_conversation(
+                agent.conversation,
+                soft_limit_chars=int(opts.soft_limit_chars),
+                keep_tail_chars=int(opts.keep_tail_chars),
+                keep_tail_messages=int(opts.keep_tail_messages),
+                agent_id=agent.agent_id,
+                phase=str(phase or ""),
+            )
+            if meta is not None:
+                agent.conversation = new_conv
+                metas.append(meta)
+        return metas
+
+    def _collect_conversations(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for agent in self.agents:
+            out[agent.agent_id] = {
+                "conversation": list(agent.conversation),
+                "created_threads": list(agent.created_threads),
+                "language": agent.language,
+            }
+        return out
+
+    def _collect_protocol_snapshot(self) -> dict[str, Any]:
+        snap: dict[str, Any] = {}
+        if self.protocol is not None:
+            snap = self.protocol.snapshot()
+        if self.gate is not None:
+            snap["legacy_gate"] = self.gate.snapshot()
+        return snap
+
+    def flush_checkpoint_sync(self, *, exit_reason: str | None = None) -> None:
+        """Best-effort synchronous checkpoint write (interrupt / close)."""
+        if not self._checkpoint_enabled or self._checkpoint_store is None:
+            return
+        from .checkpoint import write_latest
+
+        reason = exit_reason or self._exit_reason
+        phase = self.protocol.phase if self.protocol else None
+        compactions = self._maybe_compact_conversations()
+        approvals = (
+            self.approvals.export_pending() if self._approvals_persist else []
+        )
+        try:
+            self._checkpoint_store.save(
+                fingerprint=self._checkpoint_fingerprint,
+                conversations=self._collect_conversations(),
+                protocol=self._collect_protocol_snapshot(),
+                inbox=self.server.export_inbox_ids(),
+                exit_reason=reason,
+                phase=phase,
+                created_at=self._checkpoint_created_at,
+                approvals=approvals,
+                compactions=compactions,
+                pending_approvals=len(approvals),
+            )
+            write_latest(
+                self._checkpoint_store.session_dir.parent,
+                self.session_id or self._checkpoint_store.session_id,
+                self._checkpoint_fingerprint,
+            )
+            if self._checkpoint_created_at is None:
+                self._checkpoint_created_at = __import__("time").time()
+        except Exception as exc:  # noqa: BLE001 — never break Core for checkpoint
+            try:
+                from .gateway.types import make_event
+
+                self.gateway.publish(
+                    make_event("log", text=f"checkpoint save failed: {exc}")
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+    async def flush_checkpoint(self, *, exit_reason: str | None = None) -> None:
+        async with self._checkpoint_lock:
+            self.flush_checkpoint_sync(exit_reason=exit_reason)
+            if self._checkpoint_enabled:
+                try:
+                    from .gateway.types import make_event
+
+                    self.gateway.publish(
+                        make_event(
+                            "session.checkpoint",
+                            session_id=self.session_id,
+                        )
+                    )
+                except Exception:  # noqa: BLE001, S110
+                    pass
+
+    def schedule_checkpoint(self) -> None:
+        """Debounced async checkpoint (after steps)."""
+        if not self._checkpoint_enabled:
+            return
+        if self._flush_task and not self._flush_task.done():
+            self._flush_task.cancel()
+
+        async def _debounced() -> None:
+            try:
+                delay = max(0, self._flush_debounce_ms) / 1000.0
+                if delay:
+                    await asyncio.sleep(delay)
+                await self.flush_checkpoint()
+            except asyncio.CancelledError:
+                return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.flush_checkpoint_sync()
+            return
+        self._flush_task = loop.create_task(_debounced())
+
+    async def _checkpoint_interval_loop(self) -> None:
+        try:
+            while not self._closed:
+                await asyncio.sleep(self._flush_interval_s)
+                if self._closed:
+                    break
+                await self.flush_checkpoint()
+        except asyncio.CancelledError:
+            return
+
+    # -- lifecycle (run) -----------------------------------------------------
 
     async def ensure_human_thread(self) -> str:
         """Create or reuse the ``human`` collaboration thread (all agents)."""
@@ -590,10 +934,12 @@ class Session:
         ``step()`` (model HTTP / long tool) can unwind. Safe to call when no
         run is active. Cleared automatically at the start of the next ``run()``.
         """
+        self._exit_reason = "interrupted"
         self._interrupt.set()
         for task in list(self._agent_tasks):
             if not task.done():
                 task.cancel()
+        self.flush_checkpoint_sync(exit_reason="interrupted")
 
     def interrupted(self) -> bool:
         """True if ``request_interrupt()`` was called for the current/last run."""
@@ -703,6 +1049,7 @@ class Session:
 
                 # Increment step counter only after a successful step.
                 total_steps[0] += 1
+                self.schedule_checkpoint()
 
                 # Step summary queued for display.
                 await self._output_queue.put({
@@ -842,6 +1189,13 @@ class Session:
         if self._closed:
             return
         self._closed = True
+        if self._exit_reason is None:
+            self._exit_reason = "quit"
+        if self._flush_task and not self._flush_task.done():
+            self._flush_task.cancel()
+        if self._flush_interval_task and not self._flush_interval_task.done():
+            self._flush_interval_task.cancel()
+        self.flush_checkpoint_sync(exit_reason=self._exit_reason)
 
         # Shutdown unified output consumer.
         await self._output_queue.put(None)
@@ -865,6 +1219,11 @@ class Session:
             aclose = getattr(agent.backend, "aclose", None)
             if aclose is not None:
                 await aclose()
+        close = getattr(self.server, "close", None)
+        if close is not None:
+            result = close()
+            if asyncio.iscoroutine(result):
+                await result
 
     def _on_server_event(self, event: dict[str, Any]) -> None:
         """Capture server events and queue them for unified output.

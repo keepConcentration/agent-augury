@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agent_augury.session import Session
 
 
+def _mock_server() -> MagicMock:
+    server = MagicMock()
+    server.create_thread = AsyncMock(return_value="thread-human")
+    server.close = AsyncMock()
+    return server
+
+
 @pytest.mark.asyncio
 async def test_session_setup_called_once():
     """Session._setup() must be called only once even if run() is called multiple times."""
-    session = Session(server=MagicMock(), agents=[])
+    session = Session(server=_mock_server(), agents=[])
     session._setup_done = False
     session._closed = False
 
@@ -42,7 +49,7 @@ async def test_session_setup_called_once():
 @pytest.mark.asyncio
 async def test_session_close_called_once():
     """Session.close() must be idempotent — subsequent calls are no-ops."""
-    session = Session(server=MagicMock(), agents=[])
+    session = Session(server=_mock_server(), agents=[])
     session._closed = False
 
     close_called = [0]

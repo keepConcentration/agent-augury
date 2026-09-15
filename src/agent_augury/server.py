@@ -470,6 +470,36 @@ class MessageServer:
         self._require_participant(agent_id)
         return self._inboxes[agent_id].qsize()
 
+    def export_inbox_ids(self) -> dict[str, list[str]]:
+        """Snapshot undrained inbox message ids (non-destructive)."""
+        out: dict[str, list[str]] = {}
+        for agent_id, q in self._inboxes.items():
+            ids: list[str] = []
+            while True:
+                try:
+                    ids.append(q.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+            for mid in ids:
+                q.put_nowait(mid)
+            out[agent_id] = ids
+        return out
+
+    def restore_inbox_ids(self, mapping: dict[str, list[str]]) -> None:
+        """Replace inboxes with the given message-id lists (missing ids skipped)."""
+        for agent_id, ids in mapping.items():
+            if agent_id not in self._inboxes:
+                continue
+            q = self._inboxes[agent_id]
+            while True:
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            for mid in ids:
+                if mid in self._message_index:
+                    q.put_nowait(mid)
+
     async def drain_inbox(self, agent_id: str) -> list[dict[str, Any]]:
         """Drain the caller's inbox FIFO. The only inbox consumer is step()."""
         self._require_participant(agent_id)

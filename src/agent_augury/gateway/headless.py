@@ -283,6 +283,8 @@ def run_headless_session(
     demo: bool = False,
     quiet: bool = False,
     auto_start: bool = True,
+    new_session: bool = False,
+    session_id: str | None = None,
 ) -> int:
     """Load YAML and run :class:`HeadlessRunner` (CLI entry)."""
     cfg_path = Path(config).expanduser().resolve()
@@ -291,11 +293,19 @@ def run_headless_session(
         return 1
 
     cfg = load_config(str(cfg_path), allow_fake=demo)
-    session = Session.from_config(
+    session = Session.open_from_config(
         cfg,
+        config_path=str(cfg_path),
+        demo=demo,
+        new_session=new_session,
+        cli_session_id=session_id,
         allowed_roots=[str(PROJECT_ROOT)],
         approval_bypass=bool(demo),
     )
+    # D1: after hydrate, idle-wait for next human message (no auto-continue).
+    boot = session._pending_bootstrap
+    if boot is not None and boot.resumed:
+        auto_start = False
     runner = HeadlessRunner(
         session,
         quiet=quiet,
@@ -304,6 +314,7 @@ def run_headless_session(
     try:
         return asyncio.run(runner.run())
     except KeyboardInterrupt:
+        session.request_interrupt()
         return 130
     except DiscordBotError as exc:
         print(f"error: {exc}", file=sys.stderr)

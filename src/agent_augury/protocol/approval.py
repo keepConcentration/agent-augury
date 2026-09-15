@@ -116,6 +116,31 @@ class ConsensusGate:
 
     # -- views -----------------------------------------------------------------
 
+    def snapshot(self) -> dict[str, Any]:
+        """Serializable gate state for checkpoints."""
+        return {
+            "thread_name": self.thread_name,
+            "thread_id": self.thread_id,
+            "approvals": sorted(self.approvals),
+            "opened_at_seq": self.opened_at_seq,
+            "proposal_received": self._proposal_received,
+            "require_proposal": self.require_proposal,
+        }
+
+    def restore_state(self, snap: dict[str, Any]) -> None:
+        """Restore approvals / open flag after ``bind_to_thread`` (or with thread_id)."""
+        tid = snap.get("thread_id")
+        if tid and self.thread_id is None:
+            self.bind_to_thread(str(tid))
+        elif tid:
+            self.thread_id = str(tid)
+            thread = self._server.get_thread(str(tid))
+            self.participants = list(thread["participants"])
+        self.approvals = {str(a) for a in (snap.get("approvals") or [])}
+        opened = snap.get("opened_at_seq")
+        self.opened_at_seq = int(opened) if opened is not None else None
+        self._proposal_received = bool(snap.get("proposal_received", False))
+
     @property
     def is_open(self) -> bool:
         return self.opened_at_seq is not None

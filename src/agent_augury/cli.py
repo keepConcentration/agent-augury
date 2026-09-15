@@ -122,9 +122,15 @@ def _launch_session(
     force_ink: bool = False,
     headless: bool = False,
     auto_start: bool = True,
+    new_session: bool = False,
+    session_id: str | None = None,
 ) -> int:
     """Start Ink or headless Core for a session config."""
     del force_ink  # Ink is the default non-headless path
+    if session_id:
+        os.environ["AGENT_AUGURY_SESSION"] = session_id
+    if new_session:
+        os.environ["AGENT_AUGURY_NEW_SESSION"] = "1"
     if headless:
         from .gateway.headless import run_headless_session
 
@@ -133,6 +139,8 @@ def _launch_session(
             demo=allow_fake,
             quiet=quiet,
             auto_start=auto_start,
+            new_session=new_session,
+            session_id=session_id,
         )
     return _run_ink_surface(
         mode="session",
@@ -351,6 +359,12 @@ def _run_ink_hello() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "sessions":
+        from .sessions_cli import run_sessions_cli
+
+        return run_sessions_cli(argv[1:])
+
     parser = argparse.ArgumentParser(prog="agent-augury")
     parser.add_argument(
         "--config",
@@ -408,6 +422,17 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="with --headless: do not auto-run config task; wait for human.send",
     )
+    parser.add_argument(
+        "--new-session",
+        action="store_true",
+        default=False,
+        help="start a fresh session (ignore LATEST checkpoint)",
+    )
+    parser.add_argument(
+        "--session",
+        default=None,
+        help="resume or bind to this session id",
+    )
     args = parser.parse_args(argv)
 
     if args.headless and args.ink:
@@ -422,6 +447,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_auto_start and not args.headless:
         print(
             "error: --no-auto-start is only valid with --headless",
+            file=sys.stderr,
+        )
+        return 1
+    if args.new_session and args.session:
+        print(
+            "error: --new-session cannot be combined with --session",
             file=sys.stderr,
         )
         return 1
@@ -487,6 +518,8 @@ def main(argv: list[str] | None = None) -> int:
             force_ink=args.ink,
             headless=args.headless,
             auto_start=not args.no_auto_start,
+            new_session=bool(args.new_session),
+            session_id=args.session,
         )
 
     output_path = Path(args.output) if args.output else None

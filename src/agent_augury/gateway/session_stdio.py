@@ -320,6 +320,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="do not auto-run config task; wait for human.send",
     )
+    p.add_argument(
+        "--new-session",
+        action="store_true",
+        default=False,
+        help="ignore LATEST checkpoint; start a fresh session id",
+    )
+    p.add_argument(
+        "--session",
+        default=None,
+        help="resume or create the given session id",
+    )
     return p
 
 
@@ -335,21 +346,30 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_config(cfg_path, allow_fake=args.demo)
     auth_relay = _WireAuthNoticeRelay()
-    session = Session.from_config(
+    session = Session.open_from_config(
         cfg,
+        config_path=cfg_path,
+        demo=args.demo,
+        new_session=bool(args.new_session),
+        cli_session_id=args.session,
         allowed_roots=[str(PROJECT_ROOT)],
         on_user_code=auth_relay,
         approval_bypass=bool(args.demo),
     )
+    auto_start = not args.no_auto_start
+    boot = session._pending_bootstrap
+    if boot is not None and boot.resumed:
+        auto_start = False  # D1 idle-wait
     runner = SessionStdioRunner(
         session,
         quiet=args.quiet,
-        auto_start=not args.no_auto_start,
+        auto_start=auto_start,
         auth_relay=auth_relay,
     )
     try:
         return asyncio.run(runner.run())
     except KeyboardInterrupt:
+        session.request_interrupt()
         return 130
 
 

@@ -69,5 +69,9 @@ class PhaseManager:
         for cb in self._on_transition:
             cb(frm, to)
 
+    def restore(self, phase: Phase) -> None:
+        """Set phase without firing callbacks (checkpoint hydrate)."""
+        self._phase = phase
+
     def __repr__(self) -> str:
         return f"PhaseManager(phase={self._phase!r})"

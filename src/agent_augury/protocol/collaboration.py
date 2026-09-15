@@ -116,6 +116,44 @@ class CollaborationProtocol:
     def start(self) -> None:
         """Begin the protocol at P1_EXPLORE."""
         self.phase_manager.advance(P1_EXPLORE)
+
+    def snapshot(self) -> dict[str, Any]:
+        """Checkpoint payload for protocol + gates."""
+        gates: dict[str, Any] = {}
+        for phase, gate in self._gates.items():
+            if gate is not None:
+                gates[phase] = gate.snapshot()
+        return {
+            "phase": self.phase,
+            "participants": list(self.participants),
+            "current_gate_phase": self._current_gate_phase,
+            "gate_open_fired": sorted(self._gate_open_fired),
+            "gates": gates,
+        }
+
+    def restore(self, data: dict[str, Any]) -> None:
+        """Hydrate phase and gate state from a checkpoint (no P1 reset)."""
+        phase = data.get("phase") or P1_EXPLORE
+        self.phase_manager.restore(str(phase))
+        self._gate_open_fired = {str(x) for x in (data.get("gate_open_fired") or [])}
+        gates_data = data.get("gates") or {}
+        for phase_name, snap in gates_data.items():
+            if not isinstance(snap, dict):
+                continue
+            gate = self._gates.get(str(phase_name))
+            if gate is None:
+                continue
+            try:
+                gate.restore_state(snap)
+            except KeyError:
+                # Thread missing from MessageServer — leave unbound
+                continue
+        cgp = data.get("current_gate_phase")
+        if cgp:
+            self._current_gate_phase = str(cgp)
+            self._setup_gate_for_phase(str(cgp))
+        else:
+            self._setup_gate_for_phase(self.phase)
         # Subscribe to server messages to track READY states
         self._server.subscribe(self._on_message)
 

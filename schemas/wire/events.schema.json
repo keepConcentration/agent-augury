@@ -27,6 +27,38 @@
     },
     {
       "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "session.checkpoint" },
+        "session_id": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "session.resumed" },
+        "session_id": { "type": "string" },
+        "phase": { "type": "string" },
+        "agents": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "session.resume_failed" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
       "required": ["dir", "type", "agent_id"],
       "properties": {
         "dir": { "const": "event" },

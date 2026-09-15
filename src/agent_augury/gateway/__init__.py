@@ -6,9 +6,10 @@ Wire schemas: schemas/wire/.
 
 from __future__ import annotations
 
+from typing import Any
+
 from .bridge import PendingApproval, PendingQuestion, SessionBridge
 from .bus import SessionGateway, SurfaceMode, SurfaceSubscription
-from .headless import HeadlessRunner, emit_startup_warnings, run_headless_session
 from .stdio import JsonlStdioBridge, decode_line, encode_line, run_stdio_bridge
 from .translate import translate_core_event
 from .types import (
@@ -22,6 +23,20 @@ from .types import (
     make_event,
     make_result,
 )
+
+# headless imports Session — keep lazy to avoid session↔gateway circular import
+_HEADLESS_EXPORTS = frozenset(
+    {"HeadlessRunner", "emit_startup_warnings", "run_headless_session"}
+)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _HEADLESS_EXPORTS:
+        from . import headless
+
+        return getattr(headless, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "COMMAND_TYPES",

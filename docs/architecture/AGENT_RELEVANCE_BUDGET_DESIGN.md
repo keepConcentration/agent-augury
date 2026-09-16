@@ -1,13 +1,14 @@
 # Agent relevance · reasoning budget 설계
 
-> **Status:** V1 landed (2026-09-15) — `core/attention.py` · loop/session/config · `tests/test_attention_budget.py`  
+> **Status:** **V1 ✅ landed** — `core/attention.py` · loop/session/config · `tests/test_attention_budget.py`  
 > **잔여:** V1.1 (`max_tokens`/tools 캡), V2 sparse 송신, V3 Wire `log.attention`  
 > **Date:** 2026-09-15  
 > **Parent:** P1–P5 collaboration (`core/protocol`), agent loop (`core/agent/loop.py`)  
 > **인접:** `SESSION_RESUME_M4_DESIGN.md` (conversation compact), `MULTI_FRONT_DESIGN.md` (표면≠인지)  
 > **전제:** Core·Wire·게이트 계약은 SSOT. 본 설계는 **에이전트 간 인지 자원 배분**이며  
-> 채팅 surface display(A6) · Gateway fan-out(A7)과 **축이 다르다**.
-> **리뷰:** `AGENT_RELEVANCE_BUDGET_REVIEW.md` (P0 반영: skip≠종료, human 강제 engage, F3 제거).
+> 채팅 surface display(A6) · Gateway fan-out(A7)과 **축이 다르다**.  
+> **V1 반영:** T0=`StepResult.skipped`(종료와 분리), human/`URGENT` → r=1.0, F3 제거(assembler=`attention.floor`).
+
 ---
 
 ## 0. 한 줄

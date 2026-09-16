@@ -238,6 +238,7 @@ def _run_wizard_flow(
                 existing = None
 
         # Reuse saved model + messaging (bots) without re-prompting.
+        reused = existing is not None and not force_reconfigure
         cfg = run_wizard(
             existing_model_config=existing if not force_reconfigure else None,
             force_reconfigure=force_reconfigure,
@@ -247,7 +248,10 @@ def _run_wizard_flow(
         else:
             output_path = _resolve_output_path(str(output_path))
         _save_config(cfg, output_path)
-        print(f"\nConfig saved to: {output_path}")
+        # First-time / --reconfigure wizard: confirm where YAML landed.
+        # Silent reuse: Ink clears the TTY next — no pre-UI chatter.
+        if not reused:
+            print(f"\nConfig saved to: {output_path}")
     except WizardCancelled:
         print("\nWizard cancelled.")
         return 130
@@ -292,6 +296,32 @@ def _run_wizard_flow(
     )
 
 
+def _clear_tty() -> None:
+    """Clear viewport (+ scrollback when the host supports ESC[3J)."""
+    if not sys.stdout.isatty():
+        return
+    try:
+        sys.stdout.write("\033[3J\033[2J\033[H")
+        sys.stdout.flush()
+    except OSError:
+        pass
+
+
+def _ink_tsx_command(ink_dir: Path) -> list[str] | None:
+    """Prefer local ``node_modules/.bin/tsx`` over ``npm start`` (no npm banners)."""
+    bin_dir = ink_dir / "node_modules" / ".bin"
+    if sys.platform == "win32":
+        for name in ("tsx.cmd", "tsx.exe", "tsx"):
+            candidate = bin_dir / name
+            if candidate.is_file():
+                return [str(candidate), "src/cli.tsx"]
+    else:
+        candidate = bin_dir / "tsx"
+        if candidate.is_file():
+            return [str(candidate), "src/cli.tsx"]
+    return None
+
+
 def _run_ink_surface(
     *,
     mode: str = "hello",
@@ -299,7 +329,7 @@ def _run_ink_surface(
     demo: bool = False,
     quiet: bool = False,
 ) -> int:
-    """Spawn ``npm start`` in fronts/ink (M2 hello / M7 real session).
+    """Spawn Ink (M2 hello / M7 real session).
 
     Ink owns the TTY and spawns a Python Gateway child over JSONL stdio.
     """
@@ -309,16 +339,6 @@ def _run_ink_surface(
     ink_dir, ink_err = ensure_ink_front()
     if ink_dir is None:
         print(f"error: {ink_err}", file=sys.stderr)
-        return 1
-    npm = shutil.which("npm")
-    if npm is None:
-        print(
-            "error: Ink Surface requires Node.js >= 22 (`npm` on PATH).\n"
-            "Install from https://nodejs.org/ then re-run `agent-augury`.\n"
-            "Or set AUGURY_INK_DIR to a fronts/ink tree that already has "
-            "node_modules.",
-            file=sys.stderr,
-        )
         return 1
     from .gateway.secrets import scrub_env_for_ink
 
@@ -348,7 +368,24 @@ def _run_ink_surface(
             env["AUGURY_DEMO"] = "1"
         if quiet:
             env["AUGURY_QUIET"] = "1"
-    return subprocess.call([npm, "start"], cwd=ink_dir, env=env)
+
+    cmd = _ink_tsx_command(ink_dir)
+    if cmd is None:
+        npm = shutil.which("npm")
+        if npm is None:
+            print(
+                "error: Ink Surface requires Node.js >= 22 (`npm` on PATH).\n"
+                "Install from https://nodejs.org/ then re-run `agent-augury`.\n"
+                "Or set AUGURY_INK_DIR to a fronts/ink tree that already has "
+                "node_modules.",
+                file=sys.stderr,
+            )
+            return 1
+        # Fallback: silent npm so lifecycle banners do not pollute the TTY.
+        cmd = [npm, "run", "start", "--silent"]
+
+    _clear_tty()
+    return subprocess.call(cmd, cwd=ink_dir, env=env)
 
 
 def _run_ink_hello() -> int:

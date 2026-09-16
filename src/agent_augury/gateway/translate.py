@@ -43,13 +43,17 @@ def translate_core_event(event: dict[str, Any]) -> WireEvent | None:
             result=payload,
         )
     if etype == "create_thread":
-        return make_event(
-            "thread.created",
-            thread_id=event.get("thread_id"),
-            agent_id=event.get("agent_id"),
-            name=event.get("name"),
-            participants=list(event.get("participants") or []),
-        )
+        fields: dict[str, Any] = {
+            "thread_id": event.get("thread_id"),
+            "agent_id": event.get("agent_id"),
+            "name": event.get("name"),
+            "participants": list(event.get("participants") or []),
+        }
+        if event.get("bootstrap"):
+            fields["bootstrap"] = True
+        if event.get("reused"):
+            fields["reused"] = True
+        return make_event("thread.created", **fields)
     if etype in ("send_message", "message"):
         author = event.get("author") or event.get("agent_id")
         fields: dict[str, Any] = {

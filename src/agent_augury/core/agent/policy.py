@@ -122,9 +122,10 @@ class ToolPolicy:
             approval_ttl_seconds=_as_float(approval.get("ttl_seconds"), 600.0),
         )
 
-        # agent-1 feedback #5: enabled shell with empty allowlist → warn.
+        # agent-1 feedback #5: enabled shell with empty allowlist → debug only
+        # (default UX: do not dump into Ink stderr / session log).
         if policy.shell_enabled and not policy.shell_allowed:
-            logger.warning(
+            logger.debug(
                 "tools.shell.enabled=true with empty 'allowed' list — ALL commands "
                 "except the built-in blocklist are permitted. Consider setting "
                 "tools.shell.allowed for defense in depth."

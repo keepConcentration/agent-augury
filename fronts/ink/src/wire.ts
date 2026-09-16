@@ -19,6 +19,8 @@ export type WireMessage = {
   thread_id?: string;
   name?: string;
   participants?: string[];
+  bootstrap?: boolean;
+  reused?: boolean;
   delivered_to?: string[];
   tool?: string;
   args?: Record<string, unknown>;
@@ -110,13 +112,8 @@ export function formatEvent(event: WireMessage): string | null {
     return event.text;
   }
   if (t === "session.started") {
-    const note = event.note ? ` - ${String(event.note)}` : "";
-    const roster = Array.isArray(event.agents)
-      ? event.agents.map(String).filter(Boolean)
-      : [];
-    const agents =
-      roster.length > 0 ? ` — agents: ${roster.map((a) => `@${a}`).join(" ")}` : "";
-    return `[session] started${note}${agents}`;
+    // Roster is applied in App state; skip noisy log line.
+    return null;
   }
   if (t === "session.ended") {
     return `[session] ended (${String(event.reason ?? "done")})`;
@@ -165,7 +162,9 @@ export function formatEvent(event: WireMessage): string | null {
     const participants = Array.isArray(event.participants)
       ? event.participants.map(String).join(", ")
       : "";
-    return `🧵 [${tid}] create_thread ${name} (${participants})`;
+    const verb = event.bootstrap ? "opened" : "create_thread";
+    const reused = event.reused ? " (reused)" : "";
+    return `🧵 [${tid}] ${verb} ${name}${reused} (${participants})`;
   }
 
   if (t === "message") {

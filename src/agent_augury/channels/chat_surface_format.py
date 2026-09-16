@@ -45,9 +45,13 @@ def format_wire_for_chat_surface(
     if etype == "thread.created":
         name = str(event.get("name") or "?")
         parts = ", ".join(str(p) for p in (event.get("participants") or []))
+        if event.get("bootstrap"):
+            label = f"opened **{name}**"
+        else:
+            label = f"Thread **{name}**"
         if parts:
-            return f"Thread **{name}** ({parts})"
-        return f"Thread **{name}** started"
+            return f"{label} ({parts})"
+        return f"{label} started"
 
     if etype == "message":
         content = str(event.get("content") or "")

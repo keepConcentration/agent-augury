@@ -192,6 +192,13 @@ class AgentLoop:
             return  # user-supplied prompt — don't overwrite
         if self.conversation and self.conversation[0]["role"] == "system":
             tool_instructions = render_tool_instructions(self.tool_specs)
+            snap = self.server.snapshot()
+            threads = [
+                {"thread_id": t.get("thread_id"), "name": t.get("name")}
+                for t in (snap.get("threads") or [])
+                if isinstance(t, dict)
+            ]
+            ready_tid = self.server.resolve_thread_id("human")
             self.conversation[0]["content"] = render_system_prompt(
                 self.agent_id, self.current_phase, self.language,
                 role_prompt=self._role_prompt, has_human=self._has_human,
@@ -199,6 +206,8 @@ class AgentLoop:
                 human_approval_phases=self._human_approval_phases or None,
                 gate_thread_id=self.gate_thread_id,
                 gate_thread_name=self.gate_thread_name,
+                session_threads=threads or None,
+                ready_thread_id=ready_tid,
             )
 
     async def step(self) -> StepResult:
@@ -294,7 +303,10 @@ class AgentLoop:
             try:
                 result = await self._execute_tool(call.name, args)
                 if call.name == "create_thread":
-                    self.created_threads.append(json.loads(result)["thread_id"])
+                    parsed = json.loads(result)
+                    tid = parsed.get("thread_id")
+                    if tid:
+                        self.created_threads.append(tid)
             except Exception as exc:  # noqa: BLE001 — surfaced to the model verbatim
                 result = json.dumps({"error": repr(exc)}, ensure_ascii=False)
             # Fire real-time tool event callback immediately
@@ -329,6 +341,9 @@ class AgentLoop:
             if hasattr(value, "__await__"):
                 value = await value
             return json.dumps(value, ensure_ascii=False, default=str)
+        # Protocol sessions: soft-block inventing new threads (reuse by name OK).
+        if name == "create_thread" and self._protocol_create_thread_blocked(args):
+            return self._protocol_create_thread_denied(args)
         # gate-aware execution: block work-share on non-gate threads while gate is closed
         if name == "send_message" and not self.gate_open:
             thread_id = args.get("thread")
@@ -366,6 +381,43 @@ class AgentLoop:
                             ensure_ascii=False,
                         )
         return await self.tools.execute(self.agent_id, name, args)
+
+    def _protocol_active(self) -> bool:
+        """True while a P1–P5 collaboration phase is in progress."""
+        phase = (self.current_phase or "").strip()
+        if not phase or phase in ("COMPLETED", "REJECTED"):
+            return False
+        return phase.startswith("P")
+
+    def _protocol_create_thread_blocked(self, args: dict[str, Any]) -> bool:
+        if not self._protocol_active():
+            return False
+        name_arg = str(args.get("name") or "").strip()
+        if not name_arg:
+            return True
+        # Same name → MessageServer reuses; allow that path.
+        return self.server.resolve_thread_id(name_arg) is None
+
+    def _protocol_create_thread_denied(self, args: dict[str, Any]) -> str:
+        snap = self.server.snapshot()
+        roster = [
+            {"thread_id": t.get("thread_id"), "name": t.get("name")}
+            for t in (snap.get("threads") or [])
+            if isinstance(t, dict)
+        ]
+        return json.dumps(
+            {
+                "error": "protocol_threads_fixed",
+                "phase": self.current_phase or "?",
+                "message": (
+                    f"Do not create a new thread named {args.get('name')!r} "
+                    "during P1-P5. Reuse an open session thread id from the "
+                    "system prompt (or call create_thread with an existing name)."
+                ),
+                "threads": roster,
+            },
+            ensure_ascii=False,
+        )
 
     async def _maybe_gate_approval(self, name: str, args: dict[str, Any]) -> str | None:
         """Return a JSON tool result when approval blocks execution; else None."""

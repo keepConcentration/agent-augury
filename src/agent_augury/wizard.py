@@ -655,27 +655,21 @@ def run_wizard(
         force_reconfigure: If True, always run OAuth authentication even
             if a valid token exists.
     """
-    print("=" * 50)
-    print("  agent-augury setup wizard")
-    print("=" * 50)
-    print()
-    print("This wizard generates a YAML config file for agent-augury.")
-    print("No API keys or bot tokens are stored — only environment variable names.")
-
     if existing_model_config is not None:
-        # Reuse saved model + messaging — skip prompts.
+        # Reuse saved model + messaging — skip prompts and banner noise
+        # (Ink clears the TTY right after; chatter only slows startup).
         max_steps = existing_model_config.get("max_steps", 0)
         agents = existing_model_config["agents"]
         bots = list(existing_model_config.get("bots") or [])
-        print(
-            f"\nUsing saved model config: max_steps={max_steps}, "
-            f"{len(agents)} agent(s)."
-        )
-        if bots:
-            print(f"Reusing saved messaging: {len(bots)} Discord bot(s).")
-        else:
-            print("No messaging apps in saved config (skipping prompts).")
     else:
+        print("=" * 50)
+        print("  agent-augury setup wizard")
+        print("=" * 50)
+        print()
+        print("This wizard generates a YAML config file for agent-augury.")
+        print(
+            "No API keys or bot tokens are stored — only environment variable names."
+        )
         # Phase 1: collect model settings from user.
         max_steps, agents = _collect_model_settings(force_reconfigure=force_reconfigure)
         # Phase 2: optional messaging apps (asked once, then persisted).

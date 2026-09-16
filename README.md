@@ -121,7 +121,19 @@ A five-phase flow is available when you enable `protocol:` in config:
 P1 EXPLORE → P2 SPLIT → P3 EXECUTE → P4 REVIEW → P5 SUBMIT
 ```
 
-Gates require explicit group approval before advancing. Use it when you want structured team work; omit it for free-form multi-agent sessions.
+Gates require explicit group approval (`PROPOSE:` / `APPROVE:` via `send_message` on the gate thread — prose alone does not count) before advancing. Use it when you want structured team work; omit it for free-form multi-agent sessions.
+
+When `protocol:` is enabled, the runtime **pre-opens** gate threads (`plan`, `execution`, …) and `human`. Agents should **reuse those thread ids**; inventing new thread names during P1–P5 is rejected.
+
+Optional token-saving **attention budget** (off by default):
+
+```yaml
+attention:
+  enabled: true          # default false
+  # display.chat / surfaces.* are separate (chat UI density)
+```
+
+See [`docs/architecture/AGENT_RELEVANCE_BUDGET_DESIGN.md`](docs/architecture/AGENT_RELEVANCE_BUDGET_DESIGN.md).
 
 Optional **human phase approval** (after agents agree, wait for you):
 

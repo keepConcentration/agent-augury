@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -115,6 +116,20 @@ def test_cli_ink_missing_prints_helpful_error(capsys, monkeypatch):
     err = capsys.readouterr().err
     assert "error:" in err
     assert "Node.js >= 22" in err
+
+
+def test_ink_tsx_command_prefers_local_bin(tmp_path):
+    """Prefer node_modules/.bin/tsx over npx (avoids npm banner noise)."""
+    from agent_augury.cli import _ink_tsx_command
+
+    ink = tmp_path
+    bin_dir = ink / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    tsx = bin_dir / ("tsx.cmd" if os.name == "nt" else "tsx")
+    tsx.write_text("", encoding="utf-8")
+    cmd = _ink_tsx_command(ink)
+    assert cmd[0] == str(tsx)
+    assert "npx" not in cmd
 
 
 def test_pythonpath_src_entry_none_without_repo(monkeypatch):

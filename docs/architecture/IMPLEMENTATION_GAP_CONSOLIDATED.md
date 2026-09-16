@@ -7,10 +7,10 @@
 > `tests/**`) 기준. 판정은 **코드 존재 여부**.
 >
 > **작성 시점:** M0–M7 landed · 패키지 `0.7.0` (`pyproject.toml`).
-> **갱신 (2026-09-15):** A2/A4/A5/A7/A10, B1–B4/B6, C1–C4, D1–D7 landed.
-> **P3 landed:** AGENT_RELEVANCE_BUDGET V1 (V1a–V1f) — `core/attention.py` · `loop.py` · `session.py` · `config.py` · `tests/test_attention_budget.py` · `examples/attention_budget_demo.yaml`.
+> **갱신 (2026-09-16):** A2/A4/A5/A6/A7/A10, B1–B4/B6, C1–C4, D1–D7 landed;
+> AGENT_RELEVANCE_BUDGET V1; protocol 스레드 재사용·Ink quiet start.
 > 잔여: **A1(M8), A8(Slack inbound), A9(다중 human), B5(Gateway agent 필터)**;  
-> A3=`log.summary`는 A6로 대체·deferred. V1.1+ (`max_tokens`/tools 캡)는 별 트랙.
+> A3=`log.summary` deferred (A6). Attention V1.1+ (`max_tokens`/tools 캡)는 별 트랙.
 ---
 
 ## 0. 한 줄 결론
@@ -198,8 +198,7 @@ bot/mirror/slack enqueue가 분할 (절단만 하던 경로 제거).
 
 ## 5.3 `AGENT_RELEVANCE_BUDGET_DESIGN.md` (V1 — landed)
 
-> **설계문서:** [`AGENT_RELEVANCE_BUDGET_DESIGN.md`](./AGENT_RELEVANCE_BUDGET_DESIGN.md)  
-> **리뷰:** [`AGENT_RELEVANCE_BUDGET_REVIEW.md`](./AGENT_RELEVANCE_BUDGET_REVIEW.md) (G1~G9 / P0 반영)
+> **설계문서:** [`AGENT_RELEVANCE_BUDGET_DESIGN.md`](./AGENT_RELEVANCE_BUDGET_DESIGN.md)
 
 **V1 구현 단계:**
 
@@ -218,6 +217,23 @@ bot/mirror/slack enqueue가 분할 (절단만 하던 경로 제거).
 - T0 = drain 필수 + `backend.complete` 스킵 (`step()` 호출 생략 단독 금지)
 - 배치 r = `max(r(m))` (멘션 하나라도 있으면 engage 이상)
 - V1 측정 축: `complete` 호출 횟수 + 주입 context chars (max_tokens 합 비교는 V1.1 이월)
+
+---
+
+## 5.4 Protocol 스레드 재사용 · Ink UX (2026-09-16)
+
+| 항목 | 상태 | 근거 |
+|------|------|------|
+| Session 부트 스레드 `bootstrap` + Ink `opened` 표시 | ✅ | `server.create_thread(..., bootstrap=True)`, `fronts/ink/src/wire.ts` |
+| P1–P5 중 신규 `create_thread` 소프트 차단 | ✅ | `AgentLoop` → `protocol_threads_fixed`; 기존 이름 재사용 허용 |
+| 시스템 프롬프트에 열린 스레드 목록 + P1 READY→`human` | ✅ | `system_prompt.format_session_threads_block` |
+| 저장 설정 재사용 시 위저드/npm 배너 억제 + TTY clear | ✅ | `wizard.py`, `cli.py`, `fronts/ink/src/cli.tsx` |
+| shell empty-allowlist 경고 → debug (Ink 미표시) | ✅ | `policy.py`, `gateway.ts` |
+
+테스트: `tests/test_protocol_thread_reuse.py`, ink `wire.test.ts`.
+
+**열린 후속 (미구현):** 대기 서술/`sleep` 억제, 중복 APPROVE no-op, 게이트 상태 Ink 표시, light protocol.
+
 ---
 
 ## 6. 우선순위별 권장 조치
@@ -275,21 +291,11 @@ bot/mirror/slack enqueue가 분할 (절단만 하던 경로 제거).
 
 ---
 
-## 부록 — 원본 문서별 정밀도 비교 (통합 근거)
+## 부록 — 문서 계보
 
-| 문서 | 성격 | 정밀도 | 비고 |
-|------|------|--------|------|
-| `MULTI_FRONT_DESIGN.md` | 핵심 설계(원본) | — | §10 로드맵, §13 결정(D1–D3) 기준 |
-| `PROTOCOL_GATE_WAIT_PARK_DESIGN.md` | 구현 설계 | — | **구현 완료** (`session.py`, `test_gate_wait_park.py`) |
-| `IMPLEMENTATION_GAP_REPORT.md` | 격차(가장 포괄) | 높음 | MULTI_FRONT + AGENT_TOOLS + USER_INTERVENTION 3종 전수 |
-| `ARCHITECTURE_DOCS_VS_IMPLEMENTATION_ANALYSIS.md` | 격차 + 재검증 | 높음 | 스키마 드리프트(G17~G20) 신규 발굴 |
-| `DESIGN_VS_IMPLEMENTATION_GAP_VERIFIED.md` | 격차 + 재검증 | 높음 | `attach_session_callbacks` 데드코드 발굴 |
-| `ARCHITECTURE_VS_IMPLEMENTATION.md` | 격차 | 중~높음 | 우선순위 P0/P1/P2 정리 양호 |
-| `DESIGN_IMPL_AUDIT.md` | 격차 | 중 | G1~G17 + B1~B2 |
-| `DESIGN_IMPLEMENTATION_ANALYSIS.md` | 격차 | 중 | G1~G16 + 추가 발견(§6) |
-| `MULTI_FRONT_DESIGN_IMPLEMENTATION_GAP.md` | 격차 | 중 | G1~G16 (초기 격차 목록) |
-| `implementation_gap_analysis.md` | 격차 | 중 | 명확 미구현/선언만/구조차이 분류 |
-| `implement_comparison_analysis.md` | 초기 요약 | 낮음 | 상위 수준, 정밀도 낮음 |
+구 격차 초안들(`IMPLEMENTATION_GAP_REPORT`, `ARCHITECTURE_*_ANALYSIS` 등)은  
+본 문서([`IMPLEMENTATION_GAP_CONSOLIDATED.md`](./IMPLEMENTATION_GAP_CONSOLIDATED.md))로 **통합·대체**되었다.  
+개별 초안 파일은 보관하지 않는다.
 
 ---
 
@@ -304,7 +310,8 @@ bot/mirror/slack enqueue가 분할 (절단만 하던 경로 제거).
 | `GATEWAY_BACKPRESSURE_DESIGN.md` | A7/D5 mailbox·예외 격리 (구현됨) |
 | `EXTERNAL_BINDING_DESIGN.md` | A5 bindings.json (v1 구현됨) |
 | `SURFACE_DISPLAY_DESIGN.md` | 채팅 display/delivery 노브 (A6 V1 ✅; A3 deferred) |
-| `AGENT_RELEVANCE_BUDGET_DESIGN.md` | 에이전트 인지 예산 배분 · reasoning budget 설계 (V1 구현 중 — P3) |
+| `AGENT_RELEVANCE_BUDGET_DESIGN.md` | 에이전트 relevance → reasoning budget (V1 ✅) |
 | `IMPLEMENTATION_GAP_CONSOLIDATED.md` | 통합 격차 분석 정본 (본 문서) |
+| `DESIGN.md` (repo root) | 제품 런타임 개념 SSOT · 초기 로드맵 기록 |
 
 중복 gap 분석·pt TUI 아카이브·루트 비교 문서는 삭제됨.

@@ -1,15 +1,15 @@
 # Multi-front architecture — Python Core + UI & Chat surfaces
 
-> **Status:** **M0–M7 landed** · v0.2.7 (primary=UI, chat=observe-only default)  
-> **Date:** 2026-09-13  
+> **Status:** **M0–M7 landed** · package `0.7.0` (primary=UI, chat=observe-only default)  
+> **Date:** 2026-09-13 · **갱신:** 2026-09-16 (A5/A6/A7, attention V1, protocol thread reuse)  
 > **Goal:** Python **core 유지**. Surface = Ink/Desktop/Web **+** Discord/Slack/…  
 > **Not:** 전면 Node화(엔진 TS 재작성).  
 > **Related:** `USER_INTERVENTION_DESIGN.md`, `channels/discord/*`, `channels/slack/*`  
 > **Schemas:** `schemas/wire/` · **Code:** `src/agent_augury/gateway/`  
-> **Ink hello+HITL:** `fronts/ink/` (`agent-augury --ink-hello`)  
-> **Ink real session (M7):** `agent-augury --ink --demo --config examples/demo.yaml`  
+> **Ink:** `fronts/ink/` — quiet start (TTY clear, no npm banner); hello: `--ink-hello`  
 > **Discord:** observe (M4); inbound opt-in `bots[].inbound` (M5)  
-> **Slack:** Incoming Webhook observe `slack.url_env` (M6 spike)
+> **Slack:** Incoming Webhook observe `slack.url_env` (M6 spike)  
+> **격차 정본:** [`IMPLEMENTATION_GAP_CONSOLIDATED.md`](./IMPLEMENTATION_GAP_CONSOLIDATED.md)
 
 ---
 

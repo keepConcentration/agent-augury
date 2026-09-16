@@ -224,7 +224,13 @@ class MessageServer:
 
     # -- primitives ---------------------------------------------------------
 
-    async def create_thread(self, name: str, *, participants: list[str]) -> str:
+    async def create_thread(
+        self,
+        name: str,
+        *,
+        participants: list[str],
+        bootstrap: bool = False,
+    ) -> str:
         await self._ensure_db()
         # Return existing thread with the same name if it exists
         for thread in self._threads.values():
@@ -245,14 +251,17 @@ class MessageServer:
                         )
                     # Emit an event so broadcast observers see the expansion
                     # (D7 — reuse with a participant change must be observable).
-                    self._emit_event({
+                    evt: dict[str, Any] = {
                         "type": "create_thread",
                         "thread_id": thread["thread_id"],
                         "name": name,
                         "participants": list(thread["participants"]),
                         "reused": True,
                         "timestamp": int(time.time()),
-                    })
+                    }
+                    if bootstrap:
+                        evt["bootstrap"] = True
+                    self._emit_event(evt)
                 return thread["thread_id"]
         for p in participants:
             self.register_agent(p)
@@ -264,13 +273,16 @@ class MessageServer:
         }
         if self._db is not None:
             await self._persist_thread(thread_id, name, list(participants))
-        self._emit_event({
+        created: dict[str, Any] = {
             "type": "create_thread",
             "thread_id": thread_id,
             "name": name,
             "participants": list(participants),
             "timestamp": int(time.time()),
-        })
+        }
+        if bootstrap:
+            created["bootstrap"] = True
+        self._emit_event(created)
         return thread_id
 
     async def send_message(

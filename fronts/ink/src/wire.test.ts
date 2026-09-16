@@ -50,4 +50,28 @@ describe("formatEvent approval", () => {
       null,
     );
   });
+
+  it("formats bootstrap thread.created as opened", () => {
+    const line = formatEvent({
+      dir: "event",
+      type: "thread.created",
+      thread_id: "thread-1",
+      name: "plan",
+      participants: ["a1", "a2"],
+      bootstrap: true,
+    });
+    assert.ok(line?.includes("opened"));
+    assert.ok(!line?.includes("create_thread"));
+  });
+
+  it("skips session.started log (status bar owns roster)", () => {
+    assert.equal(
+      formatEvent({
+        dir: "event",
+        type: "session.started",
+        agents: ["a1", "a2"],
+      }),
+      null,
+    );
+  });
 });

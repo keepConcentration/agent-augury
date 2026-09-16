@@ -689,7 +689,9 @@ class Session:
             else:
                 participant_ids = [a.agent_id for a in self.agents]
                 tid = await self.server.create_thread(
-                    self.gate.thread_name, participants=participant_ids
+                    self.gate.thread_name,
+                    participants=participant_ids,
+                    bootstrap=True,
                 )
                 self.gate.bind_to_thread(tid)
                 for agent in self.agents:
@@ -706,7 +708,9 @@ class Session:
                 for gate in self.protocol._gates.values():
                     if gate is not None:
                         tid = await self.server.create_thread(
-                            gate.thread_name, participants=self.protocol.participants
+                            gate.thread_name,
+                            participants=self.protocol.participants,
+                            bootstrap=True,
                         )
                         gate.bind_to_thread(tid)
                 self.protocol.start()
@@ -1038,7 +1042,9 @@ class Session:
         """Create or reuse the ``human`` collaboration thread (all agents)."""
         participants = [a.agent_id for a in self.agents]
         return await self.server.create_thread(
-            HUMAN_CHAT_THREAD_NAME, participants=participants
+            HUMAN_CHAT_THREAD_NAME,
+            participants=participants,
+            bootstrap=True,
         )
 
     async def human_send(
@@ -1312,13 +1318,20 @@ class Session:
         if agent.agent_id in self._ready_nudged:
             return False
         self._ready_nudged.add(agent.agent_id)
+        human_tid = self.server.resolve_thread_id(HUMAN_CHAT_THREAD_NAME)
+        where = (
+            f" on thread '{human_tid}' (name={HUMAN_CHAT_THREAD_NAME!r})"
+            if human_tid
+            else ""
+        )
         agent.conversation.append(
             {
                 "role": "user",
                 "content": (
                     "[protocol] You have not sent READY: yet. "
-                    "Call send_message with content starting with READY: "
-                    "(e.g. READY: or READY: done) to finish P1 exploration."
+                    f"Call send_message{where} with content starting with READY: "
+                    "(e.g. READY: or READY: done) to finish P1 exploration. "
+                    "Do not create_thread — reuse the open session threads."
                 ),
             }
         )
@@ -1515,13 +1528,18 @@ class Session:
                 pass
         elif event_type == "create_thread":
             try:
-                self._output_queue.put_nowait({
+                payload: dict[str, Any] = {
                     "type": "create_thread",
                     "thread_id": event["thread_id"],
                     "name": event["name"],
                     "participants": event["participants"],
                     "timestamp": event.get("timestamp", __import__("time").time()),
-                })
+                }
+                if event.get("bootstrap"):
+                    payload["bootstrap"] = True
+                if event.get("reused"):
+                    payload["reused"] = True
+                self._output_queue.put_nowait(payload)
             except asyncio.QueueFull:
                 pass
         elif event_type == "send_message":

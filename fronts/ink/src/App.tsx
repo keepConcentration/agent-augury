@@ -87,6 +87,11 @@ export default function App() {
             if (roster.length > 0) {
               setAgents(roster);
             }
+            setStatus(
+              roster.length > 0
+                ? `ready · ${roster.map((a) => `@${a}`).join(" ")}`
+                : "ready",
+            );
           }
           if (msg.type === "approval.request") {
             const approvalId = String(msg.approval_id ?? "");

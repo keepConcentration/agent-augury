@@ -31,7 +31,10 @@ SYSTEM_PROMPT_TEMPLATE = """\
 You are `{agent_id}`, one agent in a multi-agent team sharing collaboration threads.
 
 Communication rules:
-- You may open threads (`create_thread`) and post messages (`send_message`).
+- Prefer **existing** session threads listed below. Call `send_message` with those
+  thread ids — do **not** invent new threads for the same work.
+- `create_thread` is only for a genuinely new topic outside the protocol roster.
+  During P1-P5, new thread names are rejected; reuse the listed ids.
 - `send_message` is fire-and-forget. It returns immediately — never wait after sending.
 - To address teammates use mentions: `"mentions": ["agent-2"]` in send_message.
   In message text, write mentions as @agent-2 (surface syntax).
@@ -48,7 +51,7 @@ Communication rules:
   reply (e.g. waiting for `APPROVE:` / `READY:`), output NO text and NO tool
   calls. Stay silent — the runtime resumes you when new messages arrive.
   Never say "대기", "waiting", "I'll wait", or similar filler.
-
+{session_threads_block}
 {tool_instructions}{role_instructions}{human_instructions}{phase_instructions}{language_instruction}
 """
 
@@ -143,13 +146,12 @@ _PHASE_INSTRUCTIONS = {
 Current phase: **P1 EXPLORE**
 - Independently explore the task and gather information.
 - Formulate sub-questions and draft initial findings.
-- Do NOT send messages to teammates yet — exploration is silent.
-- When you are done exploring, send ``READY:`` to signal completion
-  (``READY:`` or ``READY: done`` — must start with ``READY:``;
+- Do NOT open new threads. Do NOT chat with teammates yet — exploration is silent.
+- When you are done exploring, send ``READY:`` (or ``READY: done``) on the
+  **human** thread id listed above (must start with ``READY:``;
   ``READYFOO`` / bare ``READY`` are ignored).
   P1 finishes automatically once ALL participants have sent ``READY:``.
-  Note: READY: is the ONLY message allowed during P1 — all other
-  send_message calls will be blocked by the gate.""",
+  READY: is the ONLY ``send_message`` allowed during P1 — other content is blocked.""",
     "P2_SPLIT": """\
 Current phase: **P2 SPLIT**
 - Pool your discoveries with teammates on the plan thread.
@@ -177,6 +179,27 @@ Current phase: **P5 SUBMIT**
 - Broadcast the final answer for review.
 - Approve with `APPROVE:` to submit, or request changes with `REJECT:`.""",
 }
+
+
+def format_session_threads_block(
+    threads: list[dict] | None,
+    *,
+    ready_thread_id: str | None = None,
+) -> str:
+    """Render the open-session thread roster for the system prompt."""
+    if not threads:
+        return ""
+    lines = ["\nOpen session threads (reuse these ids — do not recreate):"]
+    for t in threads:
+        tid = t.get("thread_id") or "?"
+        name = t.get("name") or "?"
+        lines.append(f"- `{tid}` name={name!r}")
+    if ready_thread_id:
+        lines.append(
+            f"For P1 ``READY:``, use thread id `{ready_thread_id}` "
+            f"(name='human') unless a gate thread is bound for later phases."
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _phase_instructions_with_gate(
@@ -209,6 +232,8 @@ def render_system_prompt(
     human_approval_phases: list[str] | None = None,
     gate_thread_id: str | None = None,
     gate_thread_name: str | None = None,
+    session_threads: list[dict] | None = None,
+    ready_thread_id: str | None = None,
 ) -> str:
     """Render the system prompt for an agent.
 
@@ -227,6 +252,8 @@ def render_system_prompt(
         human_approval_phases: Protocol phases with ``human_approval: true``.
         gate_thread_id: Bound consensus-gate thread id for the current phase.
         gate_thread_name: Human-readable gate thread name (e.g. ``plan``).
+        session_threads: Open threads from MessageServer snapshot (id + name).
+        ready_thread_id: Preferred thread for P1 ``READY:`` (usually ``human``).
     """
     role_instructions = ""
     if role_prompt:
@@ -247,8 +274,13 @@ def render_system_prompt(
             f"\nLanguage instruction: Respond to the user and communicate "
             f"with teammates in {language}. Match the user's language in all messages.\n"
         )
+    session_threads_block = format_session_threads_block(
+        session_threads,
+        ready_thread_id=ready_thread_id,
+    )
     return SYSTEM_PROMPT_TEMPLATE.format(
         agent_id=agent_id,
+        session_threads_block=session_threads_block,
         tool_instructions=tool_instructions,
         role_instructions=role_instructions,
         human_instructions=human_instructions,

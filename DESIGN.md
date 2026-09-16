@@ -375,4 +375,6 @@ agent-augury/
 
 - 학술 관련 인용: [`NOTICE`](NOTICE) (arXiv:2607.28430)
 - Wire / Gateway: `docs/architecture/MULTI_FRONT_DESIGN.md`
+- 구현 격차 정본: `docs/architecture/IMPLEMENTATION_GAP_CONSOLIDATED.md`
 - 도구 승인: `docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`
+- 인지 budget: `docs/architecture/AGENT_RELEVANCE_BUDGET_DESIGN.md`

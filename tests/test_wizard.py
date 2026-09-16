@@ -307,7 +307,7 @@ def test_wizard_cancels_on_eof():
 # ---------------------------------------------------------------------------
 
 
-def test_wizard_reuses_existing_model_config_skips_model_settings(tmp_path):
+def test_wizard_reuses_existing_model_config_skips_model_settings(tmp_path, capsys):
     """When existing_model_config is provided, model settings are reused."""
     existing = {
         "max_steps": 50,
@@ -326,6 +326,10 @@ def test_wizard_reuses_existing_model_config_skips_model_settings(tmp_path):
     assert cfg["agents"][0]["id"] == "a1"
     # save_model_config should NOT be called (we reused existing).
     mock_save.assert_not_called()
+    # Quiet reuse — no wizard banner (Ink clears TTY next).
+    out = capsys.readouterr().out
+    assert "setup wizard" not in out
+    assert "Using saved model config" not in out
 
 
 # ---------------------------------------------------------------------------

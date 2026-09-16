@@ -102,17 +102,13 @@ export class GatewayChild {
       if (!text) {
         return;
       }
-      // Config/policy warnings and OAuth fallbacks — not fatal gateway errors.
+      // Drop known non-fatal noise (policy hints, OAuth helpers) — do not
+      // surface in the Ink log. Real gateway failures still go to onError.
       if (
         text.includes("tools.shell.enabled=true with empty") ||
         text.includes("To authenticate, enter code:") ||
         text.includes("Verification URL:")
       ) {
-        handlers.onMessage({
-          dir: "event",
-          type: "log",
-          text: text.replace(/\s+/g, " "),
-        });
         return;
       }
       handlers.onError(new Error(`[gateway stderr] ${text}`));

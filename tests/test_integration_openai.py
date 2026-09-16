@@ -41,7 +41,6 @@ def _load_p1_p5_cfg():
 def test_p1_to_p5_protocol_yaml_loads():
     """YAML mirror of p1_to_p5_demo.py must validate."""
     cfg = _load_p1_p5_cfg()
-    assert cfg["protocol"]["assembler_id"] == "agent-1"
     assert set(cfg["protocol"]["gates"]) == {
         "P2_SPLIT",
         "P3_EXECUTE",

@@ -11,7 +11,7 @@ Extends the v0.1b consensus gate with the complete five-phase protocol:
 4. **P4 REVIEW** — agents broadcast results with evidence. Reviewers flag
    conflicts, insufficient evidence, or omissions.
 5. **P5 SUBMIT** — the team elects who drafts the final answer (no fixed
-   assembler), broadcasts it for final approval, and submits.
+   drafter), broadcasts it for final approval, and submits.
 
 The ``CollaborationProtocol`` class drives the phase transitions using a
 ``PhaseManager`` and one ``ConsensusGate`` per approval point. It exposes
@@ -56,7 +56,6 @@ class CollaborationProtocol:
 
     Usage:
         protocol = CollaborationProtocol(server, participants=["a1","a2","a3"])
-        protocol.bind_assembler("a1")
         protocol.start()  # → P1_EXPLORE
 
         # The orchestrator drives phase transitions:
@@ -67,7 +66,7 @@ class CollaborationProtocol:
         protocol.advance(P4_REVIEW)
         # ... agents review ...
         protocol.advance(P5_SUBMIT)
-        # ... assembler submits ...
+        # ... team posts FINAL: and approves ...
         protocol.advance(COMPLETED)
     """
 
@@ -76,14 +75,12 @@ class CollaborationProtocol:
         server: MessageServer,
         participants: list[str],
         *,
-        assembler_id: str | None = None,
         mode: str = "full",
     ) -> None:
         self._server = server
         # "light" skips P2-P4: explore, then one final consensus gate.
         self.mode = mode
         self.participants = list(participants)
-        self.assembler_id = assembler_id or participants[0]
 
         self.phase_manager = PhaseManager(initial=P1_EXPLORE)
         self._gates: dict[Phase, ConsensusGate | None] = {
@@ -103,10 +100,6 @@ class CollaborationProtocol:
         self._server.subscribe(self._on_message)
 
     # -- configuration --------------------------------------------------------
-
-    def bind_assembler(self, agent_id: str) -> None:
-        """Set the assembler agent (defaults to first participant)."""
-        self.assembler_id = agent_id
 
     def on_phase_change(self, callback: PhaseCallback) -> None:
         """Register a callback for any phase transition."""
@@ -323,6 +316,7 @@ class CollaborationProtocol:
         thread_name: str,
         *,
         require_proposal: bool = True,
+        entry_prefix: str = "PROPOSE:",
         await_human_after_agents: bool = False,
     ) -> ConsensusGate:
         """Bind a gate for the given phase to a thread with the given name."""
@@ -333,6 +327,7 @@ class CollaborationProtocol:
             self._server,
             thread_name=thread_name,
             require_proposal=require_proposal,
+            entry_prefix=entry_prefix,
             await_human_after_agents=await_human_after_agents,
         )
         self._server.subscribe(gate.on_message)
@@ -381,7 +376,6 @@ class CollaborationProtocol:
         return {
             "phase": self.phase,
             "participants": self.participants,
-            "assembler_id": self.assembler_id,
             "current_gate_phase": self._current_gate_phase,
             "current_gate_open": (
                 self._current_gate.is_open if self._current_gate else None

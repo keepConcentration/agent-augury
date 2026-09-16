@@ -11,6 +11,9 @@ reference to resolve it at bind time).
 
 v0.2: ``require_proposal=False`` allows gates to bind without a PROPOSE
 message (used for P3+ gates where work logs start immediately).
+
+v0.8 (PHASE_ENTRY_SIGNAL_DESIGN): the required signal is per-gate
+(``entry_prefix``) — P2 opens on ``PROPOSE:``, P5 on ``FINAL:``.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ class ConsensusGate:
         thread_name: str,
         *,
         require_proposal: bool = True,
-        bind_prefixes: list[str] | None = None,
+        entry_prefix: str = "PROPOSE:",
         await_human_after_agents: bool = False,
     ) -> None:
         self._server = server
@@ -41,9 +44,9 @@ class ConsensusGate:
         self.participants: list[str] = []
         self.approvals: set[str] = set()
         self.require_proposal = require_proposal
-        self.bind_prefixes = bind_prefixes or (
-            ["PROPOSE:"] if require_proposal else None
-        )
+        # The signal that must appear before votes can open this gate
+        # (P2 negotiates a plan with PROPOSE:, P5 drafts an answer with FINAL:).
+        self.entry_prefix = entry_prefix
         self.opened_at_seq: int | None = None
         self._bound: bool = False
         self._on_open: GateCallback | None = None
@@ -89,13 +92,12 @@ class ConsensusGate:
                 return
             if thread["name"] != self.thread_name:
                 return
-            # Bind based on bind_prefixes:
-            # - None: any message to the matching thread binds it (require_proposal=False)
-            # - list: only messages starting with one of the prefixes bind it
-            if self.bind_prefixes is not None:
-                if not any(message["content"].startswith(p) for p in self.bind_prefixes):
-                    return  # waiting for a binding message
-                # PROPOSE message binds AND marks proposal received
+            # Name-based binding (no explicit bind_to_thread):
+            # - require_proposal=False: any message on the matching thread binds
+            # - require_proposal=True: only the entry signal binds, and it counts
+            if self.require_proposal:
+                if not message["content"].startswith(self.entry_prefix):
+                    return  # waiting for the entry signal
                 self._proposal_received = True
             self.thread_id = thread_id
             self.participants = list(thread["participants"])
@@ -118,7 +120,7 @@ class ConsensusGate:
                 self._open_gate(message)
             return
 
-        if content.startswith("PROPOSE:"):
+        if content.startswith(self.entry_prefix):
             self._proposal_received = True
             # A PROPOSE may arrive AFTER everyone already voted (agents on a
             # pre-bound thread can APPROVE before any proposal exists). Without

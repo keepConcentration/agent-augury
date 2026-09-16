@@ -525,19 +525,21 @@ class Session:
             session.protocol = CollaborationProtocol(
                 server=server,
                 participants=protocol_spec.get("participants", participant_ids),
-                assembler_id=protocol_spec.get("assembler_id"),
                 mode=str(protocol_spec.get("mode", "full")),
             )
             # Wire up gates for each phase
             for phase_name, thread_name in protocol_spec.get("gates", {}).items():
                 phase = _phase_from_string(phase_name)
-                # P2 requires proposal; P3+ do not (work logs start immediately)
-                require_proposal = phase == P2_SPLIT
+                # What must exist on the thread before votes can open the gate.
+                require_proposal, entry_prefix = _PHASE_GATE_ENTRY.get(
+                    phase, (False, "")
+                )
                 await_human = bool(ha_map.get(phase_name, False))
                 gate = session.protocol.bind_gate(
                     phase,
                     thread_name,
                     require_proposal=require_proposal,
+                    entry_prefix=entry_prefix or "PROPOSE:",
                     await_human_after_agents=await_human,
                 )
                 if await_human:
@@ -1639,6 +1641,16 @@ def _phase_from_string(name: str) -> Phase:
     return mapping[name]
 
 
+# PHASE_ENTRY_SIGNAL_DESIGN §3.3 — the signal each phase's gate waits for.
+# P3/P4 stay free-form: the first APPROVE: doubles as the proposal.
+_PHASE_GATE_ENTRY: dict[Phase, tuple[bool, str]] = {
+    P2_SPLIT: (True, "PROPOSE:"),
+    P3_EXECUTE: (False, ""),
+    P4_REVIEW: (False, ""),
+    P5_SUBMIT: (True, "FINAL:"),
+}
+
+
 def _on_protocol_gate_open(session: Session, phase: Phase) -> None:
     """Handle gate open events from the collaboration protocol."""
     # Auto-advance to the next phase when a gate opens (mode-aware).
@@ -1662,6 +1674,7 @@ def _gate_wire_payload(phase: Phase, gate: ConsensusGate) -> dict[str, Any]:
         "open": gate.is_open,
         "has_proposal": gate.has_proposal,
         "require_proposal": gate.require_proposal,
+        "entry_prefix": gate.entry_prefix,
         "human_pending": gate.human_pending,
     }
 
@@ -1810,6 +1823,12 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
         agent.gate_thread_name = gate.thread_name
         agent.gate_approvals = gate.approvals
         agent.ready_states = protocol.ready_states
+        agent.gate_entry_prefix = gate.entry_prefix
+        agent.gate_needs_signal = (
+            gate.entry_prefix
+            if (gate.require_proposal and not gate.has_proposal)
+            else None
+        )
     elif protocol.phase == P1_EXPLORE:
         # P1: only READY: messages allowed to finish exploration
         agent.gate_open = False
@@ -1817,6 +1836,8 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
         agent.gate_thread_name = None
         agent.gate_approvals = frozenset()
         agent.ready_states = protocol.ready_states
+        agent.gate_entry_prefix = None
+        agent.gate_needs_signal = None
     else:
         # Other phases without a gate — no restriction
         agent.gate_open = True
@@ -1826,3 +1847,5 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
         # soft-block a legitimate vote here.
         agent.gate_approvals = frozenset()
         agent.ready_states = frozenset()
+        agent.gate_entry_prefix = None
+        agent.gate_needs_signal = None

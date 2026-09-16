@@ -178,6 +178,12 @@ class AgentLoop:
         # Sets (never None) so ``in`` is always safe.
         self.gate_approvals: AbstractSet[str] = frozenset()
         self.ready_states: AbstractSet[str] = frozenset()
+        # Signal the current gate still needs before any vote counts (e.g.
+        # "FINAL:" on P5). None once it has arrived / is not required.
+        self.gate_needs_signal: str | None = None
+        # The gate's entry signal regardless of whether it has arrived
+        # (prompt wording); gate_needs_signal is the "still missing" view.
+        self.gate_entry_prefix: str | None = None
         # waiting-at-a-gate AND this agent already signalled — Session computes
         # it; the loop never re-derives it.
         self.protocol_done: bool = False
@@ -231,6 +237,7 @@ class AgentLoop:
                 human_approval_phases=self._human_approval_phases or None,
                 gate_thread_id=self.gate_thread_id,
                 gate_thread_name=self.gate_thread_name,
+                gate_entry_prefix=self.gate_entry_prefix,
                 session_threads=threads or None,
                 ready_thread_id=ready_tid,
             )
@@ -467,6 +474,23 @@ class AgentLoop:
     def _duplicate_signal_denied(self, args: dict[str, Any]) -> str | None:
         """Soft-block a re-``APPROVE:``/``READY:`` from an agent already counted."""
         content = str(args.get("content") or "")
+        if content.startswith("APPROVE:") and self.gate_needs_signal:
+            # Voting before the gate's entry signal exists cannot open it, and
+            # a pile of votes on a gate that will not move reads like a stall.
+            needs = self.gate_needs_signal
+            return json.dumps(
+                {
+                    "error": "entry_signal_required",
+                    "phase": self.current_phase or "?",
+                    "needs": needs,
+                    "message": (
+                        f"Nothing to approve yet: this gate has no {needs} "
+                        f"message. Post the content itself starting with "
+                        f"{needs} (anyone may), then approve it."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         if content.startswith("APPROVE:"):
             if self.gate_open or self.agent_id not in self.gate_approvals:
                 return None

@@ -340,7 +340,6 @@ PROTOCOL_PHASE_GATE_CFG = build_cfg(
     max_steps=30,
     protocol={
         "participants": ["a1", "a2"],
-        "assembler_id": "a1",
         "gates": {
             "P2_SPLIT": "plan",
             "P3_EXECUTE": "execution",

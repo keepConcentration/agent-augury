@@ -1,7 +1,7 @@
 """v0.2 E2E — P1~P5 full collaboration protocol (DESIGN.md §2.3, §6).
 
 Scenario with 3 agents using FakeModelBackend:
-- agent-1: assembler (proposes split, composes final answer)
+- agent-1: proposes the split and drafts the final answer (no fixed role)
 - agent-2: executor A
 - agent-3: executor B
 
@@ -36,7 +36,6 @@ CFG = {
     "max_steps": 50,
     "protocol": {
         "participants": AGENTS,
-        "assembler_id": "agent-1",
         "gates": {
             "P2_SPLIT": "plan",
             "P3_EXECUTE": "execution",
@@ -179,7 +178,7 @@ CFG = {
                             "mentions": [],
                         }},
                     ]},
-                    # P5: wait for assembler to post FINAL first
+                    # P5: wait for someone to post FINAL first
                     {"text": "waiting for final answer"},
                     # P5: approve submission
                     {"tool_calls": [
@@ -246,7 +245,7 @@ CFG = {
                             "mentions": [],
                         }},
                     ]},
-                    # P5: wait for assembler to post FINAL first
+                    # P5: wait for someone to post FINAL first
                     {"text": "waiting for final answer"},
                     # P5: approve submission
                     {"tool_calls": [

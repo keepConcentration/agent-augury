@@ -172,19 +172,6 @@ class TestP1Finish:
             p.finish_p1()
 
 
-class TestAssembler:
-    """Assembler defaults to first participant."""
-
-    def test_default_assembler(self):
-        p = make_protocol("a1", "a2", "a3")
-        assert p.assembler_id == "a1"
-
-    def test_bind_assembler(self):
-        p = make_protocol("a1", "a2", "a3")
-        p.bind_assembler("a2")
-        assert p.assembler_id == "a2"
-
-
 class TestStatus:
     """Status snapshot for observability."""
 
@@ -194,4 +181,3 @@ class TestStatus:
         status = p.status()
         assert status["phase"] == P1_EXPLORE
         assert status["participants"] == ["a1", "a2"]
-        assert status["assembler_id"] == "a1"

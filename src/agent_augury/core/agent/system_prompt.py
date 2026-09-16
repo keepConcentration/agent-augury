@@ -176,10 +176,11 @@ Current phase: **P4 REVIEW**
   or omissions. Flag issues explicitly.""",
     "P5_SUBMIT": """\
 Current phase: **P5 SUBMIT**
-- The team freely decides who drafts the final answer — there is no fixed
-  assembler role; anyone may compose and post it.
-- Broadcast the final answer for review.
-- Approve with `APPROVE:` to submit, or request changes with `REJECT:`.""",
+- Anyone may compose the final answer; no agent is designated to do it.
+- Post it on the gate thread starting with `FINAL:`. The gate CANNOT open
+  until a `FINAL:` message exists; approving before that is rejected.
+- Once a `FINAL:` draft is posted, everyone approves it with `APPROVE:`,
+  or asks for a redo with `REJECT:`.""",
 }
 
 
@@ -209,15 +210,17 @@ def _phase_instructions_with_gate(
     *,
     gate_thread_id: str | None = None,
     gate_thread_name: str | None = None,
+    gate_entry_prefix: str | None = None,
 ) -> str:
     """Phase block plus concrete gate thread id when a consensus gate is bound."""
     base = _PHASE_INSTRUCTIONS.get(phase, "")
     if not gate_thread_id:
         return base
     name = gate_thread_name or "gate"
+    entry = gate_entry_prefix or "PROPOSE:"
     extra = (
         f"\n- Gate thread id: `{gate_thread_id}` (name: {name}). "
-        f"While the gate is closed, send `PROPOSE:` / `APPROVE:` only to this "
+        f"While the gate is closed, send `{entry}` / `APPROVE:` only to this "
         f"thread id — other threads are blocked. "
         f"Do not create another thread named {name!r}; reuse this id."
     )
@@ -234,6 +237,7 @@ def render_system_prompt(
     human_approval_phases: list[str] | None = None,
     gate_thread_id: str | None = None,
     gate_thread_name: str | None = None,
+    gate_entry_prefix: str | None = None,
     session_threads: list[dict] | None = None,
     ready_thread_id: str | None = None,
 ) -> str:
@@ -269,6 +273,7 @@ def render_system_prompt(
         phase,
         gate_thread_id=gate_thread_id,
         gate_thread_name=gate_thread_name,
+        gate_entry_prefix=gate_entry_prefix,
     )
     language_instruction = ""
     if language:

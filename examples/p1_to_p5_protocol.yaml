@@ -12,7 +12,6 @@ protocol:
   - agent-1
   - agent-2
   - agent-3
-  assembler_id: agent-1
   gates:
     P2_SPLIT: plan
     P3_EXECUTE: execution

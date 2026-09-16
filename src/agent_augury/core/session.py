@@ -526,6 +526,7 @@ class Session:
                 server=server,
                 participants=protocol_spec.get("participants", participant_ids),
                 assembler_id=protocol_spec.get("assembler_id"),
+                mode=str(protocol_spec.get("mode", "full")),
             )
             # Wire up gates for each phase
             for phase_name, thread_name in protocol_spec.get("gates", {}).items():
@@ -545,13 +546,20 @@ class Session:
                             session, ph, g
                         )
                     )
+            # C0a: gate vote snapshots on the Wire bus. Subscribed AFTER every
+            # bind_gate() above so each gate has already counted the message
+            # we are about to snapshot.
+            server.subscribe(lambda _m: _publish_session_gate(session))
             # Auto-advance on gate open
             session.protocol.on_gate_open(
                 lambda phase: _on_protocol_gate_open(session, phase)
             )
             # B1: expose phase transitions on the Wire bus for surfaces.
             session.protocol.on_phase_change(
-                lambda _frm, to: _publish_session_phase(session, to)
+                lambda _frm, to: (
+                    _publish_session_phase(session, to),
+                    _publish_session_gate(session),
+                )
             )
         discord_display = resolve_chat_display_policy(cfg, "discord")
         slack_display = resolve_chat_display_policy(cfg, "slack")
@@ -1203,9 +1211,26 @@ class Session:
                 if self.protocol:
                     agent.current_phase = self.protocol.phase
                     _inject_protocol_gate_state(agent, self.protocol)
+                    # Done-set: waiting at a gate AND this agent already
+                    # signalled. Computed here so the loop never re-derives it.
+                    agent.protocol_done = (
+                        self._is_gate_waiting()
+                        and self.protocol.is_agent_done(agent.agent_id)
+                    )
                 # V1 relevance budget: inject phase_floor for attention decisions
                 # (§5.3) near_gate / P1 READY pending / default
                 agent.phase_floor = _compute_phase_floor(agent, self.protocol)
+
+                # C2: this agent already signalled and the gate has not moved —
+                # park without a model call. Must sit at the TOP of the loop so
+                # a D5 `skipped` continue lands here instead of on step().
+                if agent.protocol_done and self.server.inbox_size(agent.agent_id) == 0:
+                    woke = await self._wait_for_gate_wakeup(
+                        agent, steps_done=lambda: total_steps[0]
+                    )
+                    if not woke:
+                        break
+                    continue
 
                 try:
                     result = await agent.step()
@@ -1603,16 +1628,39 @@ def _phase_from_string(name: str) -> Phase:
 
 def _on_protocol_gate_open(session: Session, phase: Phase) -> None:
     """Handle gate open events from the collaboration protocol."""
-    # Auto-advance to the next phase when a gate opens
-    transitions = {
-        P2_SPLIT: P3_EXECUTE,
-        P3_EXECUTE: P4_REVIEW,
-        P4_REVIEW: P5_SUBMIT,
-        P5_SUBMIT: COMPLETED,
-    }
-    next_phase = transitions.get(phase)
-    if next_phase and session.protocol:
+    # Auto-advance to the next phase when a gate opens (mode-aware).
+    if session.protocol is None:
+        return
+    next_phase = session.protocol.next_phase_after_gate(phase)
+    if next_phase:
         session.protocol.advance(next_phase)
+
+
+def _publish_session_gate(session: Session) -> None:
+    """C0a: emit ``session.gate`` so surfaces can show why a gate is closed."""
+    protocol = session.protocol
+    if protocol is None:
+        return
+    gate = protocol.gate_for(protocol.phase)
+    if gate is None:
+        return
+    try:
+        session.bridge.publish_core_event(
+            {
+                "type": "session.gate",
+                "phase": protocol.phase,
+                "thread_id": gate.thread_id,
+                "thread_name": gate.thread_name,
+                "approvals": sorted(gate.approvals),
+                "pending": sorted(set(gate.participants) - gate.approvals),
+                "open": gate.is_open,
+                "has_proposal": gate.has_proposal,
+                "require_proposal": gate.require_proposal,
+                "human_pending": gate.human_pending,
+            }
+        )
+    except Exception:  # noqa: BLE001, S110 — never break Core for Wire
+        pass
 
 
 def _publish_session_phase(session: Session, phase: Phase) -> None:
@@ -1727,13 +1775,21 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
         agent.gate_open = gate.is_open
         agent.gate_thread_id = gate.thread_id
         agent.gate_thread_name = gate.thread_name
+        agent.gate_approvals = gate.approvals
+        agent.ready_states = protocol.ready_states
     elif protocol.phase == P1_EXPLORE:
         # P1: only READY: messages allowed to finish exploration
         agent.gate_open = False
         agent.gate_thread_id = None
         agent.gate_thread_name = None
+        agent.gate_approvals = frozenset()
+        agent.ready_states = protocol.ready_states
     else:
         # Other phases without a gate — no restriction
         agent.gate_open = True
         agent.gate_thread_id = None
         agent.gate_thread_name = None
+        # Reset both: a stale approvals view from the previous phase would
+        # soft-block a legitimate vote here.
+        agent.gate_approvals = frozenset()
+        agent.ready_states = frozenset()

@@ -232,7 +232,9 @@ bot/mirror/slack enqueue가 분할 (절단만 하던 경로 제거).
 
 테스트: `tests/test_protocol_thread_reuse.py`, ink `wire.test.ts`.
 
-**열린 후속 (미구현):** 대기 서술/`sleep` 억제, 중복 APPROVE no-op, 게이트 상태 Ink 표시, light protocol.
+**열린 후속:** [`PROTOCOL_CHATTER_REDUCTION_DESIGN.md`](./PROTOCOL_CHATTER_REDUCTION_DESIGN.md) **rev.6**  
+착수: **C1-prereq → ready 스냅샷 → C1 → C3-sleep → C0a(`session.gate`) → C2+D5 → C0b(Ink) → C4/C5**  
+C2는 step 로그 무음(의도). 관측은 C0a가 먼저. not-done 0명 park 행은 별 이슈.
 
 ---
 

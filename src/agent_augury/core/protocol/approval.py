@@ -120,6 +120,12 @@ class ConsensusGate:
 
         if content.startswith("PROPOSE:"):
             self._proposal_received = True
+            # A PROPOSE may arrive AFTER everyone already voted (agents on a
+            # pre-bound thread can APPROVE before any proposal exists). Without
+            # this re-check the gate would never open, and duplicate-vote
+            # soft-blocking removes the accidental re-APPROVE that used to
+            # rescue it.
+            self._maybe_open(message)
         elif content.startswith("REJECT:"):
             self.approvals.clear()
             self.human_pending = False
@@ -132,16 +138,23 @@ class ConsensusGate:
                 self._proposal_received = True
             if author in self.participants:
                 self.approvals.add(author)
-                if set(self.participants) <= self.approvals and (
-                    not self.require_proposal or self.has_proposal
-                ):
-                    if self.await_human_after_agents:
-                        if not self.human_pending:
-                            self.human_pending = True
-                            if self._on_human_pending:
-                                self._on_human_pending()
-                    else:
-                        self._open_gate(message)
+                self._maybe_open(message)
+
+    def _maybe_open(self, message: dict[str, Any]) -> None:
+        """Open (or park for human) once every participant has approved."""
+        if not self.participants:
+            return
+        if not (set(self.participants) <= self.approvals):
+            return
+        if self.require_proposal and not self.has_proposal:
+            return
+        if self.await_human_after_agents:
+            if not self.human_pending:
+                self.human_pending = True
+                if self._on_human_pending:
+                    self._on_human_pending()
+        else:
+            self._open_gate(message)
 
     def _open_gate(self, message: dict[str, Any]) -> None:
         self.human_pending = False

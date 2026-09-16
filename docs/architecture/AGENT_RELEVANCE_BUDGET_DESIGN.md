@@ -2,6 +2,9 @@
 
 > **Status:** **V1 ✅ landed** — `core/attention.py` · loop/session/config · `tests/test_attention_budget.py`  
 > **잔여:** V1.1 (`max_tokens`/tools 캡), V2 sparse 송신, V3 Wire `log.attention`  
+> **알려진 갭:** T0 `skipped` 후 Session `continue` → 다음 iteration empty-inbox로  
+> `complete`가 한 번 더 돈다 (radio 본문만 아끼고 모델 콜은 미룸). chatter 설계의  
+> done-set park(C2)와 별개 — 여기선 V1.1/후속으로 추적.
 > **Date:** 2026-09-15  
 > **Parent:** P1–P5 collaboration (`core/protocol`), agent loop (`core/agent/loop.py`)  
 > **인접:** `SESSION_RESUME_M4_DESIGN.md` (conversation compact), `MULTI_FRONT_DESIGN.md` (표면≠인지)  

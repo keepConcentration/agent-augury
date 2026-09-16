@@ -4,7 +4,7 @@ import TextInput from "ink-text-input";
 import {GatewayChild} from "./gateway.js";
 import Markdown from "./markdown.js";
 import {parseHumanMentions} from "./mentions.js";
-import {formatEvent, makeCommand, type WireMessage} from "./wire.js";
+import {formatEvent, formatGate, makeCommand, type WireMessage} from "./wire.js";
 
 type LogItem = {
   id: number;
@@ -69,6 +69,7 @@ export default function App() {
     null,
   );
   const [agents, setAgents] = useState<string[]>([]);
+  const [gate, setGate] = useState<string | null>(null);
   const gwRef = useRef<GatewayChild | null>(null);
   const lastCtrlC = useRef(0);
 
@@ -92,6 +93,9 @@ export default function App() {
                 ? `ready · ${roster.map((a) => `@${a}`).join(" ")}`
                 : "ready",
             );
+          }
+          if (msg.type === "session.gate") {
+            setGate(formatGate(msg));
           }
           if (msg.type === "approval.request") {
             const approvalId = String(msg.approval_id ?? "");
@@ -321,7 +325,13 @@ export default function App() {
         </Box>
       ) : null}
 
-      <Box marginTop={1}>
+      {gate ? (
+        <Box marginTop={1}>
+          <Text color="green">{gate}</Text>
+        </Box>
+      ) : null}
+
+      <Box marginTop={gate ? 0 : 1}>
         <Text dimColor>[{status}] </Text>
         <Text color="cyan">ink&gt; </Text>
         <TextInput value={value} onChange={setValue} onSubmit={onSubmit} />

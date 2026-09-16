@@ -30,6 +30,24 @@
       "required": ["dir", "type"],
       "properties": {
         "dir": { "const": "event" },
+        "type": { "const": "session.gate" },
+        "phase": { "type": "string" },
+        "thread_id": { "type": ["string", "null"] },
+        "thread_name": { "type": "string" },
+        "approvals": { "type": "array", "items": { "type": "string" } },
+        "pending": { "type": "array", "items": { "type": "string" } },
+        "open": { "type": "boolean" },
+        "has_proposal": { "type": "boolean" },
+        "require_proposal": { "type": "boolean" },
+        "human_pending": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["dir", "type"],
+      "properties": {
+        "dir": { "const": "event" },
         "type": { "const": "session.human_approval_pending" },
         "phase": { "type": "string" },
         "thread_id": { "type": "string" },

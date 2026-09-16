@@ -29,6 +29,7 @@ Conventions (DESIGN.md §2.4):
 from __future__ import annotations
 
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from typing import Any
 
 from ..server import MessageServer
@@ -76,8 +77,11 @@ class CollaborationProtocol:
         participants: list[str],
         *,
         assembler_id: str | None = None,
+        mode: str = "full",
     ) -> None:
         self._server = server
+        # "light" skips P2-P4: explore, then one final consensus gate.
+        self.mode = mode
         self.participants = list(participants)
         self.assembler_id = assembler_id or participants[0]
 
@@ -130,6 +134,7 @@ class CollaborationProtocol:
             "participants": list(self.participants),
             "current_gate_phase": self._current_gate_phase,
             "gate_open_fired": sorted(self._gate_open_fired),
+            "ready_states": sorted(self._ready_states),
             "gates": gates,
         }
 
@@ -138,6 +143,9 @@ class CollaborationProtocol:
         phase = data.get("phase") or P1_EXPLORE
         self.phase_manager.restore(str(phase))
         self._gate_open_fired = {str(x) for x in (data.get("gate_open_fired") or [])}
+        # In-place: agents hold a reference to this set (see Session inject).
+        self._ready_states.clear()
+        self._ready_states.update(str(a) for a in (data.get("ready_states") or []))
         gates_data = data.get("gates") or {}
         for phase_name, snap in gates_data.items():
             if not isinstance(snap, dict):
@@ -178,9 +186,27 @@ class CollaborationProtocol:
         """True if all participants have sent READY."""
         return set(self.participants) <= self._ready_states
 
+    @property
+    def ready_states(self) -> AbstractSet[str]:
+        """Live read-only view of participants that have sent READY."""
+        return self._ready_states
+
     def has_ready(self, agent_id: str) -> bool:
         """True if this participant has already sent a READY signal."""
         return agent_id in self._ready_states
+
+    def is_agent_done(self, agent_id: str) -> bool:
+        """True when this agent has nothing left to do in the current phase.
+
+        Reads the existing sources of truth only (READY set / gate approvals) —
+        no parallel bookkeeping to keep in sync across checkpoints.
+        """
+        if self.phase == P1_EXPLORE:
+            return agent_id in self._ready_states
+        gate = self._gates.get(self.phase)
+        if gate is None or gate.is_open:
+            return False
+        return agent_id in gate.approvals
 
     def finish_p1(self) -> None:
         """Explicitly finish P1 exploration and advance to P2.
@@ -203,7 +229,7 @@ class CollaborationProtocol:
                 f"All participants must send READY before P2 entry."
             )
         self._ready_states.clear()
-        self.advance(P2_SPLIT)
+        self.advance(self.next_phase_after_p1)
 
     def advance(self, to: Phase) -> None:
         """Advance to the next phase, setting up gates as needed."""
@@ -230,9 +256,33 @@ class CollaborationProtocol:
         if to in (COMPLETED, REJECTED) and self._on_gate_open:
             self._on_gate_open(to)
 
+    @property
+    def next_phase_after_p1(self) -> Phase:
+        """Where P1 hands off — light jumps straight to the final gate."""
+        return P5_SUBMIT if self.mode == "light" else P2_SPLIT
+
+    def next_phase_after_gate(self, phase: Phase) -> Phase | None:
+        """The phase a freshly opened gate advances to (None = stay put)."""
+        if self.mode == "light":
+            return COMPLETED if phase == P5_SUBMIT else None
+        return {
+            P2_SPLIT: P3_EXECUTE,
+            P3_EXECUTE: P4_REVIEW,
+            P4_REVIEW: P5_SUBMIT,
+            P5_SUBMIT: COMPLETED,
+        }.get(phase)
+
     def _valid_transitions(self, frm: Phase, to: Phase) -> set[Phase]:
         """Return the set of valid target phases from ``frm``."""
-        transitions: dict[Phase, set[Phase]] = {
+        if self.mode == "light":
+            transitions: dict[Phase, set[Phase]] = {
+                P1_EXPLORE: {P5_SUBMIT, REJECTED},
+                P5_SUBMIT: {COMPLETED, REJECTED},
+                REJECTED: set(),
+                COMPLETED: set(),
+            }
+            return transitions.get(frm, set())
+        transitions = {
             P1_EXPLORE: {P2_SPLIT, REJECTED},
             P2_SPLIT: {P3_EXECUTE, REJECTED},
             P3_EXECUTE: {P4_REVIEW, REJECTED},

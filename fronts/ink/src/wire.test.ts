@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
-import {formatEvent} from "./wire.js";
+import {formatEvent, formatGate} from "./wire.js";
 
 describe("formatEvent approval", () => {
   it("skips approval.request (panel owns UI)", () => {
@@ -73,5 +73,83 @@ describe("formatEvent approval", () => {
       }),
       null,
     );
+  });
+});
+
+describe("formatGate", () => {
+  it("skips session.gate from the log (status bar owns it)", () => {
+    assert.equal(
+      formatEvent({dir: "event", type: "session.gate", phase: "P2_SPLIT"}),
+      null,
+    );
+  });
+
+  it("summarises votes and who is pending", () => {
+    assert.equal(
+      formatGate({
+        dir: "event",
+        type: "session.gate",
+        phase: "P2_SPLIT",
+        thread_name: "plan",
+        approvals: ["a1", "a2"],
+        pending: ["a3"],
+        open: false,
+        has_proposal: true,
+        require_proposal: true,
+      }),
+      "P2_SPLIT · plan 2/3 · pending @a3",
+    );
+  });
+
+  it("reports an open gate", () => {
+    assert.equal(
+      formatGate({
+        dir: "event",
+        type: "session.gate",
+        phase: "P3_EXECUTE",
+        thread_name: "execution",
+        approvals: ["a1", "a2"],
+        pending: [],
+        open: true,
+      }),
+      "P3_EXECUTE · execution 2/2 · gate open",
+    );
+  });
+
+  it("explains a missing proposal instead of blaming voters", () => {
+    assert.equal(
+      formatGate({
+        dir: "event",
+        type: "session.gate",
+        phase: "P2_SPLIT",
+        thread_name: "plan",
+        approvals: ["a1", "a2"],
+        pending: [],
+        open: false,
+        require_proposal: true,
+        has_proposal: false,
+      }),
+      "P2_SPLIT · plan 2/2 · awaiting PROPOSE:",
+    );
+  });
+
+  it("flags the human approval stage", () => {
+    assert.equal(
+      formatGate({
+        dir: "event",
+        type: "session.gate",
+        phase: "P5_SUBMIT",
+        thread_name: "submission",
+        approvals: ["a1"],
+        pending: [],
+        open: false,
+        human_pending: true,
+      }),
+      "P5_SUBMIT · submission 1/1 · awaiting human APPROVE:",
+    );
+  });
+
+  it("ignores non-gate events", () => {
+    assert.equal(formatGate({dir: "event", type: "session.phase"}), null);
   });
 });

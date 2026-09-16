@@ -51,6 +51,8 @@ Communication rules:
   reply (e.g. waiting for `APPROVE:` / `READY:`), output NO text and NO tool
   calls. Stay silent — the runtime resumes you when new messages arrive.
   Never say "대기", "waiting", "I'll wait", or similar filler.
+- Never run `sleep`/`true` to pass time, and never repeat a `READY:`/`APPROVE:`
+  you already sent — both are rejected by the runtime.
 {session_threads_block}
 {tool_instructions}{role_instructions}{human_instructions}{phase_instructions}{language_instruction}
 """

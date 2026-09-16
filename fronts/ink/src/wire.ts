@@ -102,6 +102,31 @@ function short(text: string, max = 60): string {
 }
 
 /**
+ * One-line gate summary for the status bar: `P2_SPLIT · plan 2/3 · pending @a3`.
+ * Returns null when the event carries no gate to show.
+ */
+export function formatGate(event: WireMessage): string | null {
+  if (event.type !== "session.gate") return null;
+  const phase = String(event.phase ?? "?");
+  const name = String(event.thread_name ?? "");
+  const approvals = Array.isArray(event.approvals) ? event.approvals.map(String) : [];
+  const pending = Array.isArray(event.pending) ? event.pending.map(String) : [];
+  const total = approvals.length + pending.length;
+  const parts = [phase];
+  if (name) parts.push(`${name} ${approvals.length}/${total}`);
+  if (event.open) {
+    parts.push("gate open");
+  } else if (event.human_pending) {
+    parts.push("awaiting human APPROVE:");
+  } else if (event.require_proposal && !event.has_proposal) {
+    parts.push("awaiting PROPOSE:");
+  } else if (pending.length > 0) {
+    parts.push(`pending ${pending.map((a) => `@${a}`).join(" ")}`);
+  }
+  return parts.join(" · ");
+}
+
+/**
  * Format a Wire event for the Ink log — mirrors ``tui/renderer.py`` layout.
  * Returns null when the event should be skipped (duplicate tool noise, etc.).
  */
@@ -126,6 +151,10 @@ export function formatEvent(event: WireMessage): string | null {
     return `[error] ${String(event.message ?? event.text ?? "")}`;
   }
 
+  // Gate votes live in the status bar (single source of truth), not the log.
+  if (t === "session.gate") {
+    return null;
+  }
   // human.question / approval.request shown in panels; skip duplicate log lines.
   if (t === "human.question") {
     return null;

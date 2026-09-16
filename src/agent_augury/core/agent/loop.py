@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -95,6 +97,22 @@ def format_radio_block_skim(
     return "\n".join(lines)
 
 
+def _needs_model_reply(agent_id: str, drained: list[Message]) -> bool:
+    """True when a gate-parked agent was addressed and must answer once.
+
+    Peer votes and general chatter are read but not answered — that is the
+    whole point of the done-set. A human broadcast does NOT wake everyone:
+    with N agents that would cost N completions per remark.
+    """
+    for message in drained:
+        content = str(message.get("content") or "")
+        if "URGENT:" in content or "(URGENT)" in content:
+            return True
+        if agent_id in (message.get("mentions") or []):
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class LocalTool:
     """A non-server tool bound directly to the agent (e.g. search)."""
@@ -156,6 +174,13 @@ class AgentLoop:
         self.gate_open: bool = True
         self.gate_thread_id: str | None = None
         self.gate_thread_name: str | None = None
+        # Chatter reduction: live views injected by Session each iteration.
+        # Sets (never None) so ``in`` is always safe.
+        self.gate_approvals: AbstractSet[str] = frozenset()
+        self.ready_states: AbstractSet[str] = frozenset()
+        # waiting-at-a-gate AND this agent already signalled — Session computes
+        # it; the loop never re-derives it.
+        self.protocol_done: bool = False
         # v0.2: current protocol phase (injected by Session each step)
         self.current_phase: str = ""
         # v0.3: user language (injected by Session at start, propagated to all agents)
@@ -226,8 +251,25 @@ class AgentLoop:
         self._update_phase_in_prompt()
         drained = await self.server.drain_inbox(self.agent_id)
 
+        # ── D5: done at a gate — read the radio, skip the model ───────
+        # Runs INSTEAD of the attention branch: T0 may discard messages, but a
+        # parked agent still needs the history for when it does wake up.
+        if self.protocol_done:
+            if drained:
+                self.conversation.append(
+                    {"role": "user", "content": format_radio_block(drained)}
+                )
+            if not _needs_model_reply(self.agent_id, drained):
+                return StepResult(
+                    text=None,
+                    drained_count=len(drained),
+                    skipped=True,
+                )
+            # Addressed directly (URGENT / @me) → answer once. Falls through to
+            # the normal completion below with the full radio already appended.
+
         # ── V1 relevance budget branch ────────────────────────────────
-        if drained and self._attention_policy is not None:
+        elif drained and self._attention_policy is not None:
             scores = self._attention_policy.score_batch(
                 self.agent_id, drained, phase=self.current_phase
             )
@@ -344,6 +386,27 @@ class AgentLoop:
         # Protocol sessions: soft-block inventing new threads (reuse by name OK).
         if name == "create_thread" and self._protocol_create_thread_blocked(args):
             return self._protocol_create_thread_denied(args)
+        # A pure wait command is the ONE thing that defeats gate-wait park:
+        # session.run_agent continues on any tool call, so `sleep` loops forever.
+        if name == "run_command" and self._idle_command_blocked(args):
+            return json.dumps(
+                {
+                    "error": "idle_not_allowed",
+                    "phase": self.current_phase or "?",
+                    "message": (
+                        "Gate wait: do not sleep/true to pass time. Reply with "
+                        "no tool calls and the runtime will wake you when the "
+                        "gate moves."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        # Duplicate signal: the vote would not change, but the message would
+        # still land on the thread and wake every peer (N^2 chatter).
+        if name == "send_message":
+            dup = self._duplicate_signal_denied(args)
+            if dup is not None:
+                return dup
         # gate-aware execution: block work-share on non-gate threads while gate is closed
         if name == "send_message" and not self.gate_open:
             thread_id = args.get("thread")
@@ -381,6 +444,59 @@ class AgentLoop:
                             ensure_ascii=False,
                         )
         return await self.tools.execute(self.agent_id, name, args)
+
+    # Commands whose only effect is to burn wall-clock.
+    _IDLE_COMMANDS = frozenset({"sleep", "true", ":", "timeout"})
+
+    def _idle_command_blocked(self, args: dict[str, Any]) -> bool:
+        """True for a pure wait command issued while a gate is closed."""
+        if not self._protocol_active() or self.gate_open:
+            return False
+        command = args.get("command")
+        if isinstance(command, list):
+            argv = [str(c) for c in command]
+        else:
+            try:
+                argv = shlex.split(str(command or ""))
+            except ValueError:
+                return False
+        if not argv:
+            return False
+        return argv[0].rsplit("/", 1)[-1] in self._IDLE_COMMANDS
+
+    def _duplicate_signal_denied(self, args: dict[str, Any]) -> str | None:
+        """Soft-block a re-``APPROVE:``/``READY:`` from an agent already counted."""
+        content = str(args.get("content") or "")
+        if content.startswith("APPROVE:"):
+            if self.gate_open or self.agent_id not in self.gate_approvals:
+                return None
+            if args.get("thread") != self.gate_thread_id:
+                return None
+            return json.dumps(
+                {
+                    "error": "already_approved",
+                    "phase": self.current_phase or "?",
+                    "approvals": sorted(self.gate_approvals),
+                    "message": (
+                        "You already APPROVE:d. Stay silent until the gate opens, "
+                        "or send REJECT: to reset the votes."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        if is_ready_message(content) and self.agent_id in self.ready_states:
+            return json.dumps(
+                {
+                    "error": "already_ready",
+                    "phase": self.current_phase or "?",
+                    "message": (
+                        "You already sent READY:. Stay silent until the other "
+                        "agents finish exploring."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        return None
 
     def _protocol_active(self) -> bool:
         """True while a P1–P5 collaboration phase is in progress."""

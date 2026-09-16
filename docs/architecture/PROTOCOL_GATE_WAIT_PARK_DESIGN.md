@@ -228,3 +228,21 @@ No Ink/Wire changes required for v1.
 - Turn **does not** end solely because everyone went quiet before unanimous `APPROVE:`.  
 - After all `APPROVE:`, phase advances and agents work on the next gate thread without a human kick.  
 - Non-protocol sessions behave as before.
+
+---
+
+## 12. Follow-up (chatter reduction)
+
+Park alone still allows **one model call per idle cycle** when an agent
+already READY/APPROVE:d keeps stepping (wait-narration alone does **not**
+fuel the loop — already parks at §3 control flow).
+
+See [`PROTOCOL_CHATTER_REDUCTION_DESIGN.md`](./PROTOCOL_CHATTER_REDUCTION_DESIGN.md) **rev.6**:
+duplicate vote no-op, `sleep`/`true` idle block, `_ready_states` checkpoint,
+done-set + D5 drain-only skip (main token win), C0a `session.gate` → C0b Ink bar,
+light/off.
+
+**Caveat:** done-set park + duplicate-vote no-op together **deadlock P2** unless
+`ConsensusGate` re-checks unanimity on a late `PROPOSE:` (D10 `_maybe_open`).
+Park makes done agents silent in the step log — intentional; observability
+moves to `session.gate` (C0a).

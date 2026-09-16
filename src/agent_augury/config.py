@@ -365,6 +365,61 @@ def _merge_agent_attention(
     return merged
 
 
+# YAML 1.1 parses a bare ``off``/``no`` as the boolean False, so a config
+# written as ``mode: off`` never reaches us as the string "off".
+_PROTOCOL_OFF = frozenset({"off", "false", "no", "none"})
+_PROTOCOL_MODES = frozenset({"full", "light"})
+
+
+def normalize_protocol_mode(data: dict[str, Any], *, config_error: type) -> Any:
+    """Resolve ``protocol:`` / ``protocol.mode`` into a spec dict or None.
+
+    ``protocol: false``, ``protocol: null`` and ``mode: off`` all mean "no
+    collaboration protocol" and normalize to ``None`` (key removed), which is
+    what Session already treats as protocol-less.
+    """
+    protocol = data.get("protocol")
+    if protocol is None or protocol is False:
+        data.pop("protocol", None)
+        return None
+    if not isinstance(protocol, dict):
+        raise config_error(
+            "'protocol' must be a mapping, or false to disable the protocol"
+        )
+
+    raw_mode = protocol.get("mode", "full")
+    if raw_mode is False or (
+        isinstance(raw_mode, str) and raw_mode.strip().lower() in _PROTOCOL_OFF
+    ):
+        data.pop("protocol", None)
+        return None
+    if raw_mode is True:
+        raise config_error(
+            "protocol.mode: 'on' is not a mode — use full, light or off"
+        )
+    mode = str(raw_mode).strip().lower()
+    if mode not in _PROTOCOL_MODES:
+        raise config_error(
+            f"unknown protocol.mode: {raw_mode!r} (expected full, light or off)"
+        )
+    protocol["mode"] = mode
+
+    if mode == "light":
+        # Light visits P1 then the final gate only; P2-P4 gate names are noise.
+        gates = protocol.get("gates") or {}
+        if not isinstance(gates, dict):
+            raise config_error("protocol.gates must be a mapping")
+        dropped = sorted(k for k in gates if k != "P5_SUBMIT")
+        if dropped:
+            print(
+                f"  [config] protocol.mode: light ignores gates {dropped} "
+                "(P2-P4 are not visited)",
+                flush=True,
+            )
+        protocol["gates"] = {"P5_SUBMIT": gates.get("P5_SUBMIT", "submission")}
+    return protocol
+
+
 def _validate_tools_section(tools: Any, *, where: str) -> None:
     """Validate a ``tools:`` mapping (global or per-agent).
 
@@ -765,10 +820,8 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
     if tools is not None:
         _validate_tools_section(tools, where="tools")
 
-    # protocol.human_approval (HUMAN_APPROVAL_GATE_DESIGN)
-    protocol = data.get("protocol")
-    if protocol is not None and not isinstance(protocol, dict):
-        raise ConfigError("'protocol' must be a mapping")
+    # protocol.mode + human_approval (HUMAN_APPROVAL_GATE_DESIGN)
+    protocol = normalize_protocol_mode(data, config_error=ConfigError)
     if isinstance(protocol, dict):
         from .core.protocol.human_approval import normalize_human_approval
 

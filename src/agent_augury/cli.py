@@ -160,6 +160,38 @@ def _save_config(cfg: dict[str, Any], output_path: Path) -> None:
     output_path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
 
 
+def _load_session_yaml(path: Path) -> dict[str, Any] | None:
+    """Load an existing session YAML, or None if missing/invalid."""
+    if not path.is_file():
+        return None
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _preserve_session_extras(
+    existing: dict[str, Any] | None, fresh: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep hand-edited top-level keys the wizard does not emit.
+
+    Silent reuse / ``--new-session`` rewrites the session YAML from
+    ``model_config`` + wizard defaults. Without this, keys like
+    ``attention:``, ``task:``, ``compact:`` vanish on every launch.
+    Keys the wizard always writes (``max_steps``, ``agents``, …) stay fresh.
+    """
+    if not existing:
+        return fresh
+    out = dict(fresh)
+    for key, value in existing.items():
+        if key.startswith("_"):
+            continue
+        if key not in fresh:
+            out[key] = value
+    return out
+
+
 def _missing_api_key_envs(cfg: dict[str, Any]) -> list[str]:
     """Return api_key_env names required by the config but unset in this process."""
     missing: list[str] = []
@@ -247,6 +279,9 @@ def _run_wizard_flow(
             output_path = _DEFAULT_OUTPUT_PATH
         else:
             output_path = _resolve_output_path(str(output_path))
+        # --reconfigure: full rewrite. Otherwise keep extras (attention, task, …).
+        if not force_reconfigure:
+            cfg = _preserve_session_extras(_load_session_yaml(output_path), cfg)
         _save_config(cfg, output_path)
         # First-time / --reconfigure wizard: confirm where YAML landed.
         # Silent reuse: Ink clears the TTY next — no pre-UI chatter.

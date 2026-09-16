@@ -26,6 +26,7 @@ EVENT_TYPES = frozenset({
     "message",
     "log",
     "session.ended",
+    "session.turn_done",
     "error",
     "read_resource",
     "approval.request",

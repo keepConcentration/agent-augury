@@ -22,6 +22,7 @@ from agent_augury.ink_front import resolve_project_root
 
 from .bridge import SessionBridge
 from .bus import SessionGateway, SurfaceSubscription
+from .turn_done import publish_turn_done
 from .types import WireCommand, WireEvent, make_event
 
 PROJECT_ROOT = resolve_project_root() or Path.cwd()
@@ -194,11 +195,18 @@ class HeadlessRunner:
 
     async def _do_run(self, prompt: str | None) -> int:
         self.bridge.set_running(True)
+        steps = 0
+        run_exc: BaseException | None = None
         try:
             initial = prompt if prompt else None
-            return await self.session.run(initial_prompt=initial)
+            steps = await self.session.run(initial_prompt=initial)
+            return steps
+        except BaseException as exc:
+            run_exc = exc
+            raise
         finally:
             self.bridge.set_running(False)
+            publish_turn_done(self.gateway, self.session, steps, run_exc=run_exc)
 
     async def _after_run(self, steps: int) -> None:
         await self.session.flush_observers()

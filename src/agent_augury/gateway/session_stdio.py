@@ -27,6 +27,7 @@ from agent_augury.ink_front import resolve_project_root
 
 from .bridge import SessionBridge
 from .stdio import JsonlStdioBridge
+from .turn_done import publish_turn_done
 from .types import WireCommand, WireResult, make_event
 
 # Checkout root when known; otherwise CWD (pip install has no repo tree).
@@ -156,12 +157,19 @@ class SessionStdioRunner:
 
     async def _do_run(self, prompt: str | None) -> int:
         self.bridge.set_running(True)
+        steps = 0
+        run_exc: BaseException | None = None
         try:
             # Empty string → let Session use config ``task``.
             initial = prompt if prompt else None
-            return await self.session.run(initial_prompt=initial)
+            steps = await self.session.run(initial_prompt=initial)
+            return steps
+        except BaseException as exc:
+            run_exc = exc
+            raise
         finally:
             self.bridge.set_running(False)
+            publish_turn_done(self.gateway, self.session, steps, run_exc=run_exc)
 
     async def _session_loop(self) -> int:
         agent_ids = [a.agent_id for a in self.session.agents]

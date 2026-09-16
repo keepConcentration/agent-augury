@@ -11,6 +11,7 @@ type LogItem = {
   text: string;
   /** Agent prose / messages — render as Markdown (pt TUI parity). */
   markdown?: boolean;
+  dim?: boolean;
 };
 
 type PendingQuestion = {
@@ -73,8 +74,20 @@ export default function App() {
   const gwRef = useRef<GatewayChild | null>(null);
   const lastCtrlC = useRef(0);
 
-  const pushLog = (text: string, markdown = false) => {
-    setLogs((prev) => [...prev, {id: prev.length + 1, text, markdown}]);
+  const RESUME_HINT =
+    "Agents stopped. Send a message to resume, or press Ctrl+C again to exit.";
+
+  const pushLog = (text: string, markdown = false, dim = false) => {
+    setLogs((prev) => [...prev, {id: prev.length + 1, text, markdown, dim}]);
+  };
+
+  /** Skip only when the immediately previous log line is the same hint. */
+  const pushResumeHint = () => {
+    setLogs((prev) =>
+      prev[prev.length - 1]?.text === RESUME_HINT
+        ? prev
+        : [...prev, {id: prev.length + 1, text: RESUME_HINT, dim: true}],
+    );
   };
 
   useEffect(() => {
@@ -96,6 +109,21 @@ export default function App() {
           }
           if (msg.type === "session.gate") {
             setGate(formatGate(msg));
+          }
+          if (msg.type === "session.phase") {
+            const ph = String(msg.phase ?? "");
+            if (ph === "COMPLETED" || ph === "REJECTED") {
+              setGate(null);
+            }
+          }
+          if (msg.type === "session.turn_done") {
+            setRunning(false);
+            setGate(null);
+            const reason = String(msg.reason ?? "done");
+            setStatus(reason === "interrupted" ? "interrupted" : "idle");
+            if (reason !== "interrupted") {
+              pushResumeHint();
+            }
           }
           if (msg.type === "approval.request") {
             const approvalId = String(msg.approval_id ?? "");
@@ -185,9 +213,7 @@ export default function App() {
 
     if (running && !double) {
       gw.send(makeCommand("session.interrupt"));
-      pushLog(
-        "Agents stopped. Send a message to resume, or press Ctrl+C again to exit.",
-      );
+      pushResumeHint();
       setRunning(false);
       setStatus("interrupted");
       return;
@@ -287,7 +313,11 @@ export default function App() {
       <Static items={logs}>
         {(item) => (
           <Box key={item.id} flexDirection="column" marginBottom={1}>
-            {item.markdown ? <Markdown>{item.text}</Markdown> : <Text>{item.text}</Text>}
+            {item.markdown ? (
+              <Markdown>{item.text}</Markdown>
+            ) : (
+              <Text dimColor={item.dim}>{item.text}</Text>
+            )}
           </Box>
         )}
       </Static>

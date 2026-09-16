@@ -484,7 +484,9 @@ C0a를 C2 앞에 두는 이유: park/skip이 step 로그를 죽이므로 **투�
 - **후속(범위 밖, 각주):** 파킹 중 **살아있는 not-done 에이전트 0명**이면  
   `_wait_for_gate_wakeup`이 interrupt/`_closed`/max_steps/inbox/phase 외로  
   안 깨어나 `gather`가 안 끝남 (기존 PARK 성질; C2가 park 지점을 늘려 노출↑).  
-  → “not-done 잔여 0 → 파킹 해제/세션 종료”는 **별 이슈**. 본 chatter V1 비목표.
+  → “not-done 잔여 0 → 파킹 해제/세션 종료”는 **별 이슈**. 본 chatter V1 비목표.  
+- **성공 후 턴 미종료** (COMPLETED인데 나레이션으로 `run()` 유지 · 상태줄 3/4 고착)는  
+  chatter 밖 — [`SESSION_TURN_TERMINATION_DESIGN.md`](./SESSION_TURN_TERMINATION_DESIGN.md).
 
 ---
 

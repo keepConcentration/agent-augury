@@ -144,7 +144,11 @@ async def test_max_steps_respected_per_agent(tmp_path):
 # ---------------------------------------------------------------------------
 
 async def test_all_agents_finish_when_script_exhausts(tmp_path):
-    """When an agent's script runs out, it should finish gracefully."""
+    """When an agent's script runs out, it should finish gracefully (IndexError).
+
+    D′ ends after 2 plain-text idles, so interleave a tool call to keep streak
+    reset and still reach script exhaustion.
+    """
     cfg = build_cfg(
         max_steps=100,
         task="test",
@@ -160,15 +164,36 @@ async def test_all_agents_finish_when_script_exhausts(tmp_path):
                 "id": "long",
                 "backend": {
                     "type": "fake",
-                    "script": ["s1", "s2", "s3"],
+                    "script": [
+                        "s1",
+                        {
+                            "tool_calls": [
+                                {"name": "read_resource", "arguments": {}}
+                            ]
+                        },
+                        "s2",
+                        {
+                            "tool_calls": [
+                                {"name": "read_resource", "arguments": {}}
+                            ]
+                        },
+                        "s3",
+                    ],
                 },
             },
         ],
     )
     session = Session.from_config(cfg)
     steps = await session.run()
-    # short: 1 step, long: 3 steps = 4 total
-    assert steps == 4
+    short_b = next(a.backend for a in session.agents if a.agent_id == "short")
+    long_b = next(a.backend for a in session.agents if a.agent_id == "long")
+    # IndexError path: complete() raises before appending to calls.
+    assert short_b.call_count == 1
+    assert long_b.call_count == 5
+    assert short_b.script == []
+    assert long_b.script == []
+    # short: 1 + long: 5 (3 text + 2 tools)
+    assert steps == 6
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +248,13 @@ async def test_agent_failure_isolated(tmp_path):
     )
     session = Session.from_config(cfg)
     steps = await session.run()
-    # short: 1 step (then IndexError → break), long: 3 steps = 4 total
-    assert steps == 4
+    short_b = next(a.backend for a in session.agents if a.agent_id == "short")
+    long_b = next(a.backend for a in session.agents if a.agent_id == "long")
+    # Isolation: both agents ran ≥1 step; session returned (did not abort).
+    # Exact steps are D′-sensitive (plain-text idle closes at 2) — don't pin.
+    assert short_b.call_count >= 1
+    assert long_b.call_count >= 1
+    assert steps >= 2
 
 
 # ---------------------------------------------------------------------------

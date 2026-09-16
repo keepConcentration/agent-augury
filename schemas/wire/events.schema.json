@@ -173,6 +173,18 @@
     },
     {
       "type": "object",
+      "required": ["dir", "type", "reason", "steps"],
+      "properties": {
+        "dir": { "const": "event" },
+        "type": { "const": "session.turn_done" },
+        "reason": { "type": "string" },
+        "steps": { "type": "integer" },
+        "phase": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
       "required": ["dir", "type", "message"],
       "properties": {
         "dir": { "const": "event" },

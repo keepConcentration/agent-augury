@@ -232,9 +232,12 @@ bot/mirror/slack enqueue가 분할 (절단만 하던 경로 제거).
 
 테스트: `tests/test_protocol_thread_reuse.py`, ink `wire.test.ts`.
 
-**열린 후속:** [`PROTOCOL_CHATTER_REDUCTION_DESIGN.md`](./PROTOCOL_CHATTER_REDUCTION_DESIGN.md) **rev.6**  
-착수: **C1-prereq → ready 스냅샷 → C1 → C3-sleep → C0a(`session.gate`) → C2+D5 → C0b(Ink) → C4/C5**  
-C2는 step 로그 무음(의도). 관측은 C0a가 먼저. not-done 0명 park 행은 별 이슈.
+**열린 후속:**  
+- [`SESSION_TURN_TERMINATION_DESIGN.md`](./SESSION_TURN_TERMINATION_DESIGN.md) **P0** —  
+  프로토콜 `COMPLETED` 후에도 `run()` 미종료 / 상태줄 3/4 고착  
+  (**B** 단말 종료 + **D′** idle 2회 + UI 스냅샷 순서). chatter와 **축 분리**.  
+- [`PROTOCOL_CHATTER_REDUCTION_DESIGN.md`](./PROTOCOL_CHATTER_REDUCTION_DESIGN.md) **rev.6** —  
+  게이트 **대기 중** 토큰: C1-prereq → … → C0a → C2+D5 → C0b → …
 
 ---
 
@@ -248,6 +251,8 @@ C2는 step 로그 무음(의도). 관측은 C0a가 먼저. not-done 0명 park �
 4. ~~Ink spawn env 스크러빙 (D1)~~ ✅
 5. ~~`session.phase` / `error` (B1/B2)~~ ✅
 6. ~~ask_user 이중 표현 필터 (D7) + mirror 길이 (D6)~~ ✅
+7. **프로토콜 단말 후 `run()` 미종료** —  
+   [`SESSION_TURN_TERMINATION_DESIGN.md`](./SESSION_TURN_TERMINATION_DESIGN.md) (B+D′+UI).
 
 ### P1 — 설계에 명시된 기능 완성
 

@@ -246,3 +246,8 @@ light/off.
 `ConsensusGate` re-checks unanimity on a late `PROPOSE:` (D10 `_maybe_open`).
 Park makes done agents silent in the step log — intentional; observability
 moves to `session.gate` (C0a).
+
+**Success ≠ turn end:** after `COMPLETED`/`REJECTED`, agents may still narrate
+and keep `run()` alive (`text is None` rule). That is **not** fixed by park or
+chatter — see [`SESSION_TURN_TERMINATION_DESIGN.md`](./SESSION_TURN_TERMINATION_DESIGN.md)
+(**B** terminal stops `run()`, **D′** idle streak, gate snapshot before advance).

@@ -584,3 +584,58 @@ def test_full_mode_transitions_are_unchanged():
     assert protocol.mode == "full"
     assert protocol.next_phase_after_p1 == P2_SPLIT
     assert protocol.next_phase_after_gate(P2_SPLIT) == P3_EXECUTE
+
+
+# ---------------------------------------------------------------------------
+# Regression: proposal-less P2 must not park everyone (observed deadlock)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_all_approved_without_proposal_nobody_is_done():
+    """P2 gate at 4/4 but no PROPOSE: yet — parking everyone deadlocks.
+
+    Observed live: agents skipped PROPOSE: and went straight to APPROVE:.
+    The gate correctly stays shut (require_proposal), but if every agent counts
+    as "done" they all park, so the PROPOSE: that would open it never arrives.
+    """
+    server = MessageServer()
+    agents = ["a1", "a2", "a3", "a4"]
+    for a in agents:
+        server.register_agent(a)
+    protocol, gate, tid = await _bound_gate(server, agents, require_proposal=True)
+    server.subscribe(gate.on_message)
+
+    for a in agents:
+        await server.send_message(tid, author=a, content="APPROVE: done")
+
+    assert gate.approvals == set(agents)
+    assert not gate.has_proposal
+    assert not gate.is_open
+    # nobody may park — someone still has to PROPOSE
+    assert [protocol.is_agent_done(a) for a in agents] == [False] * 4
+
+    # and once a proposal lands the gate opens on the votes already cast
+    await server.send_message(tid, author="a1", content="PROPOSE: the plan")
+    assert gate.is_open
+    assert [protocol.is_agent_done(a) for a in agents] == [False] * 4  # gate open
+
+
+@pytest.mark.asyncio
+async def test_done_still_true_once_proposal_exists():
+    """The guard must not disable done-set for a normal PROPOSE→APPROVE gate."""
+    server = MessageServer()
+    protocol, gate, tid = await _bound_gate(
+        server, ["a1", "a2"], require_proposal=True
+    )
+    for a in ("a1", "a2"):
+        server.register_agent(a)
+    server.subscribe(gate.on_message)
+
+    await server.send_message(tid, author="a1", content="PROPOSE: plan")
+    await server.send_message(tid, author="a1", content="APPROVE: yes")
+
+    assert gate.has_proposal
+    assert not gate.is_open          # a2 still pending
+    assert protocol.is_agent_done("a1") is True
+    assert protocol.is_agent_done("a2") is False

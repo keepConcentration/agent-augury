@@ -143,6 +143,12 @@ export function formatEvent(event: WireMessage): string | null {
   if (t === "session.ended") {
     return `[session] ended (${String(event.reason ?? "done")})`;
   }
+  if (t === "session.turn_done") {
+    return null;
+  }
+  if (t === "session.phase") {
+    return `[phase] ${String(event.phase ?? "?")}`;
+  }
   // Debounced checkpoint noise — too noisy for the live log.
   if (t === "session.checkpoint") {
     return null;

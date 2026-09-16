@@ -206,6 +206,11 @@ class CollaborationProtocol:
         gate = self._gates.get(self.phase)
         if gate is None or gate.is_open:
             return False
+        if gate.require_proposal and not gate.has_proposal:
+            # Voting is not enough: the gate cannot open until someone PROPOSEs,
+            # so nobody may park yet (a fully-approved, proposal-less gate would
+            # otherwise park every agent and wait forever).
+            return False
         return agent_id in gate.approvals
 
     def finish_p1(self) -> None:

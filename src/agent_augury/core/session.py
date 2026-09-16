@@ -1194,12 +1194,17 @@ class Session:
         async def run_agent(agent: AgentLoop) -> None:
             """Run one agent's step loop as long as it makes progress and the
             global budget allows."""
+            idle_streak = 0
             while True:
                 if self._interrupt.is_set():
                     break
 
                 # Global budget gate — checked before every step.
                 if self.max_steps and total_steps[0] >= self.max_steps:
+                    break
+
+                # B: protocol terminal — end run() without waiting on idle text.
+                if self.protocol and self.protocol.phase in (COMPLETED, REJECTED):
                     break
 
                 # Inject current gate state before each step.
@@ -1276,12 +1281,17 @@ class Session:
                 has_pending = self.server.inbox_size(agent.agent_id) > 0
 
                 if result.tool_calls:
+                    idle_streak = 0
                     await asyncio.sleep(0)
                     continue
 
                 if has_pending:
+                    idle_streak = 0
                     await asyncio.sleep(0)
                     continue
+
+                if result.drained_count:
+                    idle_streak = 0
 
                 # Gate-wait park: stay silent until inbox / phase / gate opens.
                 if self._is_gate_waiting():
@@ -1300,8 +1310,11 @@ class Session:
                         continue
                     break
 
-                # Legacy finish (no protocol gate wait).
+                # Legacy finish + D′ (text idle streak, non-gate-wait only).
                 if result.text is None:
+                    break
+                idle_streak += 1
+                if idle_streak >= 2:
                     break
                 await asyncio.sleep(0)
 
@@ -1631,9 +1644,40 @@ def _on_protocol_gate_open(session: Session, phase: Phase) -> None:
     # Auto-advance to the next phase when a gate opens (mode-aware).
     if session.protocol is None:
         return
+    # T0: open snapshot before advance (COMPLETED has no gate_for → UI stuck at N-1/N).
+    _publish_session_gate_for_phase(session, phase)
     next_phase = session.protocol.next_phase_after_gate(phase)
     if next_phase:
         session.protocol.advance(next_phase)
+
+
+def _gate_wire_payload(phase: Phase, gate: ConsensusGate) -> dict[str, Any]:
+    return {
+        "type": "session.gate",
+        "phase": phase,
+        "thread_id": gate.thread_id,
+        "thread_name": gate.thread_name,
+        "approvals": sorted(gate.approvals),
+        "pending": sorted(set(gate.participants) - gate.approvals),
+        "open": gate.is_open,
+        "has_proposal": gate.has_proposal,
+        "require_proposal": gate.require_proposal,
+        "human_pending": gate.human_pending,
+    }
+
+
+def _publish_session_gate_for_phase(session: Session, phase: Phase) -> None:
+    """Emit ``session.gate`` for a specific phase (e.g. open snapshot before advance)."""
+    protocol = session.protocol
+    if protocol is None:
+        return
+    gate = protocol.gate_for(phase)
+    if gate is None:
+        return
+    try:
+        session.bridge.publish_core_event(_gate_wire_payload(phase, gate))
+    except Exception:  # noqa: BLE001, S110 — never break Core for Wire
+        pass
 
 
 def _publish_session_gate(session: Session) -> None:
@@ -1646,18 +1690,7 @@ def _publish_session_gate(session: Session) -> None:
         return
     try:
         session.bridge.publish_core_event(
-            {
-                "type": "session.gate",
-                "phase": protocol.phase,
-                "thread_id": gate.thread_id,
-                "thread_name": gate.thread_name,
-                "approvals": sorted(gate.approvals),
-                "pending": sorted(set(gate.participants) - gate.approvals),
-                "open": gate.is_open,
-                "has_proposal": gate.has_proposal,
-                "require_proposal": gate.require_proposal,
-                "human_pending": gate.human_pending,
-            }
+            _gate_wire_payload(protocol.phase, gate)
         )
     except Exception:  # noqa: BLE001, S110 — never break Core for Wire
         pass

@@ -379,3 +379,4 @@ agent-augury/
 - 도구 승인: `docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`
 - 인지 budget: `docs/architecture/AGENT_RELEVANCE_BUDGET_DESIGN.md`
 - 프로토콜 잡담 억제: `docs/architecture/PROTOCOL_CHATTER_REDUCTION_DESIGN.md`
+- 턴 종료 (COMPLETED / idle streak): `docs/architecture/SESSION_TURN_TERMINATION_DESIGN.md`

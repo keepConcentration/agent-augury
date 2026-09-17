@@ -594,23 +594,33 @@ class AgentLoop:
         """Catch a signal written as prose instead of sent as a message.
 
         A model that writes ``APPROVE: ...`` in its reply has decided, but the
-        gate only sees ``send_message``. In the 2026-09-17 live run this hung
-        P2 until a human said "you are the only one left".
+        protocol only sees ``send_message``. Live: this hung P2 in session
+        `d6bcbc56` and P1 in `43addf1b`, both until a human stepped in.
+
+        P1 has no gate object, so its signal (``READY:``) and its done-set
+        (``ready_states``) live in different fields than P2-P5's.
         """
         if not text or self.gate_open or not self._protocol_active():
             return None
-        if self.agent_id in self.gate_approvals:
-            return None  # already counted -- nothing to nudge about
         if any(call.name == "send_message" for call in tool_calls):
             return None
-        prefixes = [p for p in (self.gate_entry_prefix, "APPROVE:") if p]
+        if self.gate_thread_id is None:
+            done: AbstractSet[str] = self.ready_states
+            prefixes = ["READY:"]
+            target = self.server.resolve_thread_id("human")
+        else:
+            done = self.gate_approvals
+            prefixes = [p for p in (self.gate_entry_prefix, "APPROVE:") if p]
+            target = self.gate_thread_id
+        if self.agent_id in done:
+            return None  # already counted -- nothing to nudge about
         found = next((p for p in prefixes if has_signal(text, p)), None)
         if found is None:
             return None
+        where = f" Send it to thread `{target}`." if target else ""
         return (
             f"[runtime] You wrote {found} in your reply, but nobody received "
-            f"it -- only `send_message` reaches the gate. Send it to thread "
-            f"`{self.gate_thread_id}`."
+            f"it -- only `send_message` actually sends it.{where}"
         )
 
     def _protocol_active(self) -> bool:

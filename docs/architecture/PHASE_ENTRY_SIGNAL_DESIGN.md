@@ -728,6 +728,54 @@ M2 는 P3/P4 에 `require_proposal=True` 를 주는 **장치** 변경이다. 측
   셌다. **M4c 가 없었으면 3/4 에서 멈췄다** — §6b.6 과 똑같은 모양의 재발이다.
 
 
+### 6b.9 넛지가 P1 을 못 봤다 (세션 `43addf1b`)
+
+§6b.7 의 `_unsent_signal_nudge` 가 겨냥한 바로 그 사고가 **P1 에서 재발**했다.
+
+```text
+server messages
+  0 agent-2 thread-5  READY: done
+  1 agent-3 thread-5  READY: done
+  2 agent-1 thread-5  READY: done
+                      <- agent-4 없음
+```
+
+agent-4 는 `READY: 392를 찾는 풀이를 제공했습니다.` 를 **자기 답변 텍스트에만**
+썼다. 그 뒤 `NO_REPLY` 를 세 번 내고 조용해졌고, P1 이 3/4 인 채로 턴이 끝났다.
+(D′ 가 턴을 닫아 폭주는 없었다 — 멈춘 것이지 새는 것이 아니다.)
+
+**넛지는 왜 안 떴나.** P1 에는 게이트 객체가 없다.
+
+| | P2~P5 | **P1** |
+|--|-------|--------|
+| 진입 신호 | `gate_entry_prefix` | **`READY:`** (필드에 없음) |
+| 완료 집합 | `gate_approvals` | **`ready_states`** |
+| 대상 스레드 | `gate_thread_id` | **`human` 스레드** |
+
+`_inject_protocol_gate_state` 의 P1 분기는 `gate_entry_prefix = None` 을 넣는다.
+그래서 넛지가 보는 후보는 `["APPROVE:"]` 뿐이었고 `READY:` 는 애초에 검사 대상이
+아니었다. **P2~P5 만 막고 P1 을 열어둔 셈**이다.
+
+**조치.** 게이트가 바인드됐는지로 두 갈래를 고른다.
+
+```python
+if self.gate_thread_id is None:                 # P1
+    done, prefixes = self.ready_states, ["READY:"]
+    target = self.server.resolve_thread_id("human")
+else:                                            # P2~P5
+    done = self.gate_approvals
+    prefixes = [p for p in (self.gate_entry_prefix, "APPROVE:") if p]
+    target = self.gate_thread_id
+```
+
+문구도 "gate" 대신 **"only `send_message` actually sends it"** 로 고쳤다 —
+P1 에는 게이트가 없어서 원래 문구가 틀린 말이었다.
+
+**교훈.** "신호를 말로만 하고 안 보낸다"는 **페이즈와 무관한 모델 습성**이다.
+페이즈마다 다른 필드에 상태를 두면 방어도 페이즈마다 빠뜨리게 된다. 다음에
+같은 종류의 방어를 넣을 때는 **P1 의 세 필드부터 확인**할 것.
+
+
 ---
 
 ## 7. 마일스톤

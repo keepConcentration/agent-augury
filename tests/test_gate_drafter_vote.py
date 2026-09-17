@@ -13,7 +13,7 @@ import pytest
 from agent_augury.backend.base import Completion, ModelBackend, ToolCall
 from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.core.protocol.collaboration import CollaborationProtocol
-from agent_augury.core.protocol.phases import P2_SPLIT, P5_SUBMIT
+from agent_augury.core.protocol.phases import P1_EXPLORE, P2_SPLIT, P5_SUBMIT
 from agent_augury.core.server import MessageServer
 
 
@@ -86,6 +86,29 @@ async def test_empty_send_message_is_refused():
     ))
     assert out["error"] == "empty_message"
     assert server.snapshot()["messages"] == []
+
+
+@pytest.mark.asyncio
+async def test_ready_in_reply_text_gets_a_nudge():
+    """Live run `43addf1b`: agent-4 wrote READY: in its reply and never sent
+    it, so P1 sat at 3/4 and the turn ended with the phase never advancing.
+
+    P1 has no gate, so the P2-P5 branch of the nudge could not see this.
+    """
+    server = MessageServer()
+    server.register_agent("a4")
+    human = await server.create_thread("human", participants=["a4"])
+    loop = AgentLoop("a4", server, Quiet())
+    loop.current_phase = P1_EXPLORE
+    loop.gate_open = False
+    loop.gate_thread_id = None      # P1 binds no gate
+    loop.gate_entry_prefix = None
+
+    nudge = loop._unsent_signal_nudge("READY: I solved it, the answer is 392", [])
+    assert nudge is not None and human in nudge
+
+    loop.ready_states = {"a4"}      # already counted -> silence
+    assert loop._unsent_signal_nudge("READY: again", []) is None
 
 
 @pytest.mark.asyncio

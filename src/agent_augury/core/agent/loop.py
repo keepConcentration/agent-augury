@@ -192,6 +192,10 @@ class AgentLoop:
         # injects before step(), and the model call in between takes
         # seconds, so parallel agents would all see None and all draft.
         self.gate_draft_author_fn: Callable[[], str | None] | None = None
+        # Live too: gate_open above is a per-step snapshot, so an agent whose
+        # step started before the last vote landed still believes the gate is
+        # collecting. The draft branch needs the current answer.
+        self.gate_is_open_fn: Callable[[], bool] | None = None
         # What P2 agreed this agent would do, and who posts the P5 draft.
         self.assignment: str | None = None
         self.submitter_id: str | None = None
@@ -516,28 +520,42 @@ class AgentLoop:
         draft_author = (
             self.gate_draft_author_fn() if self.gate_draft_author_fn else None
         )
-        if (
-            prefix
-            and has_signal(content, prefix)
-            and draft_author
-            and draft_author != self.agent_id
-        ):
-            # One draft per gate: a second one splits the vote and means
-            # everyone ends up approving their own text.
-            return json.dumps(
-                {
-                    "error": "draft_already_posted",
-                    "phase": self.current_phase or "?",
-                    "author": draft_author,
-                    "needs": prefix,
-                    "message": (
-                        f"{draft_author} already posted the {prefix} "
-                        f"draft. Read it and APPROVE: it, or REJECT: to ask "
-                        f"for a redo."
-                    ),
-                },
-                ensure_ascii=False,
-            )
+        if prefix and has_signal(content, prefix):
+            if self.gate_is_open_fn is not None and self.gate_is_open_fn():
+                # The team already voted this phase through. A later draft
+                # would sit at the bottom of the thread as "the latest answer"
+                # with nobody's approval behind it -- live (`ffb70b4b`), a
+                # third FINAL: landed after COMPLETED.
+                return json.dumps(
+                    {
+                        "error": "gate_already_open",
+                        "phase": self.current_phase or "?",
+                        "needs": prefix,
+                        "message": (
+                            f"The team already approved a {prefix} draft and "
+                            f"this phase is closed. A new one would replace a "
+                            f"settled answer with an unapproved one. Stop here."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            if draft_author and draft_author != self.agent_id:
+                # One draft per gate: a second one splits the vote and means
+                # everyone ends up approving their own text.
+                return json.dumps(
+                    {
+                        "error": "draft_already_posted",
+                        "phase": self.current_phase or "?",
+                        "author": draft_author,
+                        "needs": prefix,
+                        "message": (
+                            f"{draft_author} already posted the {prefix} "
+                            f"draft. Read it and APPROVE: it, or REJECT: to ask "
+                            f"for a redo."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
         if has_signal(content, "APPROVE:") and self.gate_needs_signal:
             # Voting before the gate's entry signal exists cannot open it, and
             # a pile of votes on a gate that will not move reads like a stall.

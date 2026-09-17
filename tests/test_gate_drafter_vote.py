@@ -15,6 +15,7 @@ from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.core.protocol.collaboration import CollaborationProtocol
 from agent_augury.core.protocol.phases import P1_EXPLORE, P2_SPLIT, P5_SUBMIT
 from agent_augury.core.server import MessageServer
+from agent_augury.core.session import _inject_protocol_gate_state
 
 
 class Quiet(ModelBackend):
@@ -201,3 +202,43 @@ async def test_spent_protocol_drops_the_previous_turns_assignment():
         assignment=agent.assignment, submitter_id=agent.submitter_id,
     )
     assert "assigned share" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_no_new_draft_after_the_gate_opened():
+    """Live `ffb70b4b`: a third FINAL: landed after [phase] COMPLETED.
+
+    The drafter's step began while the gate was still collecting, so its
+    per-step `gate_open` snapshot was stale. The result sat at the bottom of
+    the submission thread as the latest answer with nobody's approval on it.
+    """
+    server = MessageServer()
+    agents = ["a1", "a2"]
+    for a in agents:
+        server.register_agent(a)
+    protocol, gate, tid = await _gate(
+        server, agents, P5_SUBMIT, "submission",
+        require_proposal=True, entry_prefix="FINAL:",
+    )
+    author = AgentLoop("a1", server, Quiet())
+    author.current_phase = P5_SUBMIT
+    _inject_protocol_gate_state(author, protocol)
+
+    await author._execute_tool("send_message", {"thread": tid, "content": "FINAL: v1"})
+    assert not gate.is_open                       # a2 has not voted yet
+
+    # a2's vote opens the gate WITHOUT re-injecting state into a1 -- exactly
+    # the race: a1 still holds the snapshot from before the vote.
+    await server.send_message(tid, author="a2", content="APPROVE: ok")
+    assert gate.is_open
+    assert author.gate_open is False              # stale snapshot, on purpose
+
+    out = json.loads(await author._execute_tool(
+        "send_message", {"thread": tid, "content": "FINAL: v2 (revised)"}
+    ))
+    assert out["error"] == "gate_already_open"
+    finals = [
+        m for m in server.snapshot()["messages"]
+        if m["content"].startswith("FINAL:")
+    ]
+    assert len(finals) == 1, "the approved draft must stay the last word"

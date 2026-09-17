@@ -169,17 +169,23 @@ Current phase: **P2 SPLIT**
 - The phase advances only when ALL agents approve.
 - After you have posted your PROPOSE/APPROVE (or you are waiting on others),
   stay silent — do not keep saying that you are waiting.""",
-    "P3_EXECUTE": """\
-Current phase: **P3 EXECUTE**
+    "P3_EXECUTE": """\nCurrent phase: **P3 EXECUTE**
 - Execute your assigned share of the work (as negotiated in P2).
 - Post work logs and intermediate findings to the work thread immediately.
 - Share contradictions, obstacles, or abandoned approaches.
+- Post ONLY your own work. Do not restate, summarise or acknowledge a
+  teammate's result - the radio already delivered it to everyone.
+- When your share is done, say so with `APPROVE:` on the gate thread. The
+  phase advances only when ALL agents have. Then stay silent.
 - If blocked on a teammate, stay silent until new [radio] messages arrive.""",
-    "P4_REVIEW": """\
-Current phase: **P4 REVIEW**
+    "P4_REVIEW": """\nCurrent phase: **P4 REVIEW**
 - Broadcast your results with supporting evidence on the results thread.
 - Review teammates' submissions for factual conflicts, insufficient evidence,
-  or omissions. Flag issues explicitly.""",
+  or omissions. Flag issues explicitly.
+- Agreeing needs no message of its own: say `APPROVE:`, do not re-post the
+  result you agree with.
+- When your review is done, send `APPROVE:` on the gate thread. The phase
+  advances only when ALL agents have. Then stay silent.""",
     "P5_SUBMIT": """\
 Current phase: **P5 SUBMIT**
 - {submitter_line}

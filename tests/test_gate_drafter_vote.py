@@ -111,3 +111,17 @@ async def test_signal_in_reply_text_gets_a_nudge():
     loop.gate_approvals = frozenset()
     sent = [ToolCall(id="1", name="send_message", arguments={})]
     assert loop._unsent_signal_nudge("APPROVE: ok", sent) is None
+
+
+def test_every_gated_phase_says_how_to_end_it():
+    """Live run `63fec483`: P3 took 13 messages where P4/P5 took 4 each.
+
+    Its prompt block never named the signal that closes the phase, so agents
+    filled the gap with status pings and acknowledgements until someone
+    happened to APPROVE: on the 10th message.
+    """
+    from agent_augury.core.agent.system_prompt import render_system_prompt
+
+    for phase in ("P2_SPLIT", "P3_EXECUTE", "P4_REVIEW", "P5_SUBMIT"):
+        block = render_system_prompt("a1", phase=phase)
+        assert "APPROVE:" in block, f"{phase} never says how to close its gate"

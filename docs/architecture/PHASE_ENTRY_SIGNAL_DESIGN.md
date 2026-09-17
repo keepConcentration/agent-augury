@@ -638,6 +638,96 @@ agent-4 는 **`APPROVE:` 를 자기 답변 텍스트에 썼다.** 게이트는 `
 다만 그 경우에도 D′ idle streak 가 턴을 닫으므로 137턴 폭주로는 가지 않는다.
 
 
+### 6b.8 P3 는 끝내는 법을 아무도 안 알려줬다 (세션 `63fec483`)
+
+M4c 이후 첫 실행. **사람이 한 번도 개입하지 않고** 게이트 4개가 스스로 열렸다.
+그런데 게이트별 비용이 갈렸다.
+
+| 스레드 | 페이즈 | 메시지 | 글자 |
+|--------|--------|-----:|-----:|
+| thread-1 | P2 | 5 | 633 |
+| **thread-2** | **P3** | **13** | **2,632** |
+| thread-3 | P4 | 4 | 1,476 |
+| thread-4 | P5 | 4 | 1,026 |
+
+P4·P5 의 **4** 는 이론상 최소다 (초안 1 + 찬성 3). P3 만 3배였다.
+
+**원인은 프롬프트다.** `_PHASE_INSTRUCTIONS` 를 나란히 놓으면 드러난다.
+
+| 페이즈 | 끝내는 법을 말하는가 |
+|--------|---------------------|
+| P2 | ✅ `PROPOSE:`/`APPROVE:` + *"stay silent — do not keep saying that you are waiting"* |
+| P5 | ✅ `FINAL:` 하나 + `APPROVE:`/`REJECT:` |
+| **P3** | ❌ **`APPROVE:` 라는 단어가 없다.** 멈추는 조건은 *"blocked"* 뿐 |
+| **P4** | ❌ 없음 (이번엔 운 좋게 최소였다) |
+
+P3 은 게이트가 있는데 **게이트가 있다는 사실을 에이전트에게 말하지 않았다.**
+그래서 "다 했는데 이제 뭐하지"에 대한 답이 없었고, 빈자리를 **확인 요청과
+확인 응답**으로 채웠다.
+
+```text
+ 9 agent-2 (URGENT) agent-3의 제출 준비 상태를 확인해주세요
+11 agent-3          최종 계산 결과 정리 및 제출 완료
+13 agent-2          agent-4의 검증 확인. agent-3에게 재확인 요청
+15 agent-3 (URGENT) 형식 제안 확인 및 최종 제출 완료
+16 agent-2          P3 실행 완료 보고
+17 agent-3          최종 제출 완료 확인
+...
+18 agent-1          APPROVE:          <- 첫 표. 열 번째 메시지
+20 agent-3          APPROVE:
+21 agent-2          APPROVE:          <- 4/4, 3메시지 만에 종료
+```
+
+**표를 던지기 시작하자 3메시지 만에 끝났다.** 앞의 9개는 전부 공백 메우기였고,
+8단계 풀이를 **여덟 번** 다시 붙여넣었다.
+
+#### 조치 — 새 장치 없이 프롬프트만
+
+P2 가 이미 정답 문장을 갖고 있다. 형제 페이즈에 같은 것을 준다.
+
+```text
+P3: - Post ONLY your own work. Do not restate, summarise or acknowledge a
+      teammate's result - the radio already delivered it to everyone.
+    - When your share is done, say so with `APPROVE:` on the gate thread.
+      The phase advances only when ALL agents have. Then stay silent.
+
+P4: - Agreeing needs no message of its own: say `APPROVE:`, do not re-post
+      the result you agree with.
+    - When your review is done, send `APPROVE:` ...
+```
+
+P4 는 이번 실행에서 최소값이었지만 **같은 구멍이 그대로 있다** — 운으로 비껴간
+것이므로 형제 자리도 같이 막는다.
+
+#### 왜 M2(`RESULT:` 진입 신호 강제)가 아닌가
+
+M2 는 P3/P4 에 `require_proposal=True` 를 주는 **장치** 변경이다. 측정이 가리키는
+것은 다르다: 비용은 *진입 신호가 없어서*가 아니라 **나가는 법을 몰라서** 생겼다.
+첫 표 이전에 9개, 이후에 3개다.
+
+장치를 바꾸면 새 교착 종류(아무도 `RESULT:` 를 안 올리면?)와 테스트가 붙는다.
+프롬프트는 공짜고 되돌리기 쉽다. **먼저 문장, 다시 측정, 그래도 남으면 M2.**
+
+**D12 갱신:** M2 는 여전히 보류. 다음 실행에서 thread-2 가 **6메시지 이하**로
+내려오면 M2 는 폐기 후보다.
+
+#### 부수 관찰 (조치 안 함)
+
+- **seq 4 — 아슬아슬하게 비껴간 초안 경쟁.** agent-2 가 `PROBLEM:` 으로 시작하고
+  셋째 줄에 `PROPOSE:` / `SUBMITTER: agent-1` 을 넣었다. `has_signal` 은 **첫 줄만**
+  보므로 진입 신호로 치지 않았고, 한 박자 뒤 agent-3 의 `PROPOSE:` 가 초안 주인이
+  됐다. 결과는 정상이었으나 **순서가 반대였다면 SUBMITTER 가 갈렸다.**
+  현재의 엄격함(첫 줄 = 신호)이 옳다고 보아 그대로 둔다.
+- **`(URGENT)` 남용 2건.** 단순 진행 보고에 붙었다. URGENT 는 `_needs_model_reply`
+  에서 **재워둔 에이전트를 전부 깨우는** 열쇠다. 이번엔 아무도 park 상태가 아니어서
+  손해가 없었다. 위 프롬프트 변경으로 확인 메시지 자체가 줄면 같이 사라질 것이므로
+  별도 장치는 만들지 않는다. 남으면 그때 본다.
+- **M4c 가 P3 도 살렸다.** agent-4 는 thread-2 에 `APPROVE:` 를 한 번도 보내지 않고
+  `PROPOSE:` 만 두 번(seq 10, 12) 보냈다. P3 는 `require_proposal=False` 지만
+  `entry_prefix` 기본값은 `PROPOSE:` 로 살아 있어 M4c 가 그것을 agent-4 의 표로
+  셌다. **M4c 가 없었으면 3/4 에서 멈췄다** — §6b.6 과 똑같은 모양의 재발이다.
+
+
 ---
 
 ## 7. 마일스톤

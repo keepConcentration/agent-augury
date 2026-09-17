@@ -37,24 +37,76 @@ class CaptureGateway:
 
 
 @pytest.mark.asyncio
-async def test_protocol_completed_breaks_run_without_extra_steps():
+async def test_protocol_reaching_completed_ends_the_turn():
+    """B: a terminal reached DURING the run stops the agents right away.
+
+    The old version of this test pre-set COMPLETED before ``_run_impl``, which
+    is the *resume* case (see below) — it locked in a bug where a finished
+    session could never be resumed.
+    """
     server = MessageServer()
     server.register_agent("a1")
-    backend = ScriptBackend(
-        [Completion(text="still talking")] * 5
-    )
+    protocol = CollaborationProtocol(server, participants=["a1"])
+    protocol.bind_gate(P5_SUBMIT, "submission", require_proposal=True,
+                       entry_prefix="FINAL:")
+    tid = await server.create_thread("submission", participants=["a1"])
+    gate = protocol.gate_for(P5_SUBMIT)
+    gate.bind_to_thread(tid)
+    protocol.phase_manager._phase = P5_SUBMIT
+    protocol.on_gate_open(lambda ph: _on_protocol_gate_open(session, ph))
+    # phase was set directly, so wire the gate's on_open callback by hand
+    protocol._setup_gate_for_phase(P5_SUBMIT)
+
+    backend = ScriptBackend([
+        Completion(tool_calls=[ToolCall(id="t1", name="send_message",
+                                        arguments={"thread": tid,
+                                                   "content": "FINAL: 98"})]),
+        Completion(tool_calls=[ToolCall(id="t2", name="send_message",
+                                        arguments={"thread": tid,
+                                                   "content": "APPROVE: ok"})]),
+    ] + [Completion(text="still talking")] * 5)
     agent = AgentLoop(agent_id="a1", backend=backend, server=server)
     session = Session(server=server, agents=[agent], max_steps=50)
-    session.protocol = CollaborationProtocol(server, participants=["a1"])
-    session.protocol.phase_manager._phase = COMPLETED
-    # Avoid protocol.start() resetting phase during Session.run() setup.
+    session.protocol = protocol
     session._setup_done = True
     session._output_task = asyncio.create_task(session._output_consumer())
 
     steps = await session._run_impl(initial_prompt="go")
     await session.close()
-    assert steps == 0
-    assert backend.calls == 0
+
+    assert protocol.phase == COMPLETED
+    assert backend.calls == 2          # FINAL: + APPROVE, then the loop breaks
+    assert steps == 2
+
+
+@pytest.mark.asyncio
+async def test_spent_protocol_resumes_free_form():
+    """A COMPLETED protocol from an earlier turn must not kill the next run.
+
+    Live repro: after the answer was submitted, every follow-up question came
+    back as ``session: 0 steps`` because the terminal check fired at the top of
+    the very first iteration.
+    """
+    server = MessageServer()
+    server.register_agent("a1")
+    protocol = CollaborationProtocol(server, participants=["a1"])
+    protocol.phase_manager._phase = COMPLETED
+
+    backend = ScriptBackend([Completion(text="sure, about that...")])
+    agent = AgentLoop(agent_id="a1", backend=backend, server=server)
+    session = Session(server=server, agents=[agent], max_steps=50)
+    session.protocol = protocol
+    session._setup_done = True
+    session._output_task = asyncio.create_task(session._output_consumer())
+
+    steps = await session._run_impl(initial_prompt="why did you skip that?")
+    await session.close()
+
+    assert protocol.phase == COMPLETED      # not restarted
+    assert backend.calls >= 1, "follow-up never reached the agents"
+    assert steps >= 1
+    # D' still closes the free-form turn instead of looping forever
+    assert steps <= 2
 
 
 @pytest.mark.asyncio

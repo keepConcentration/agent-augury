@@ -1,6 +1,6 @@
 # Session turn termination — protocol COMPLETED + idle streak
 
-> **Status:** draft **rev.6** (finally publish swallow, 미구현)  
+> **Status:** **구현 완료 rev.7** (resume 회귀 수정 포함)  
 > **Date:** 2026-09-16  
 > **Priority:** P0 (실사용: 합의·정답 후에도 `run()`이 안 끝남)  
 > **Parent:** `PROTOCOL_GATE_WAIT_PARK_DESIGN.md`, `DESIGN.md` §2.3 / §6  
@@ -232,6 +232,32 @@ Ink: `turn_done` → `running=false` + resume 로그.
 - task cancel로 막지 않음 (과함).  
 - 테스트: `complete` **추가 0**이 아니라 **`≤ N−1` (또는 ≤ N)** 로 느슨히.  
   확정적 어서션: `turn_done` 1회, `run()` 반환.
+
+### 4.4b 이미 끝난 프로토콜로 시작하는 턴 (rev.7 - 실사용 버그)
+
+**B는 "이번 run에서 단말에 도달했을 때"만 적용된다.**
+
+`run_agent` 최상단의 단말 체크를 무조건 걸면, `COMPLETED` 이후의 **모든 후속 턴이
+첫 iteration에서 즉시 break** 한다. 실사용 재현: 답 제출 후 질문을 보낼 때마다
+`session: 0 steps` 가 나오고 메시지가 에이전트에 **도달조차 하지 않았다**.
+
+§4.4(resume = 자유 대화)와 §4.1(단말 → break)이 충돌한 것. 계약을 좁힌다:
+
+```text
+_run_impl 시작 시 1회:
+    protocol_spent = protocol and phase in {COMPLETED, REJECTED}
+
+run_agent while 최상단:
+    if not protocol_spent and protocol and phase in {COMPLETED, REJECTED}:
+        break
+```
+
+- 이번 턴에 P5가 열려 COMPLETED가 되면 → 전원 break (B의 목적)
+- 이미 COMPLETED인 채 시작한 턴은 → 자유 대화, D'가 닫는다 (§5)
+
+**테스트 주의:** `_run_impl` **호출 전에** phase를 COMPLETED로 세팅하면 그것은
+B가 아니라 **resume 케이스**다. rev.6의 테스트가 그렇게 작성돼 이 버그를 고정하고
+있었다. B는 run 도중 게이트가 열려 단말로 가는 경로로 검증해야 한다.
 
 ### 4.5 resume
 

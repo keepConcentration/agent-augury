@@ -1174,6 +1174,14 @@ class Session:
         """Core run logic (separated so start/stop wraps it cleanly)."""
         self._interrupt.clear()
 
+        # A protocol that finished in an EARLIER turn must not end this one:
+        # resuming a COMPLETED session is free-form collaboration under a spent
+        # protocol (SESSION_TURN_TERMINATION §4.4), so only a terminal reached
+        # *during this run* stops the agents.
+        protocol_spent = bool(
+            self.protocol and self.protocol.phase in (COMPLETED, REJECTED)
+        )
+
         # Broadcast the initial task to ALL agents (not just agents[0]), so
         # every worker gets the same user prompt and acts on it per its role.
         user_text = initial_prompt or self.task or ""
@@ -1206,7 +1214,11 @@ class Session:
                     break
 
                 # B: protocol terminal — end run() without waiting on idle text.
-                if self.protocol and self.protocol.phase in (COMPLETED, REJECTED):
+                if (
+                    not protocol_spent
+                    and self.protocol
+                    and self.protocol.phase in (COMPLETED, REJECTED)
+                ):
                     break
 
                 # Inject current gate state before each step.

@@ -58,12 +58,11 @@ async def test_protocol_reaching_completed_ends_the_turn():
     protocol._setup_gate_for_phase(P5_SUBMIT)
 
     backend = ScriptBackend([
+        # One participant, so posting the draft is already unanimous: the gate
+        # opens on FINAL: alone and the extra APPROVE: is never reached.
         Completion(tool_calls=[ToolCall(id="t1", name="send_message",
                                         arguments={"thread": tid,
                                                    "content": "FINAL: 98"})]),
-        Completion(tool_calls=[ToolCall(id="t2", name="send_message",
-                                        arguments={"thread": tid,
-                                                   "content": "APPROVE: ok"})]),
     ] + [Completion(text="still talking")] * 5)
     agent = AgentLoop(agent_id="a1", backend=backend, server=server)
     session = Session(server=server, agents=[agent], max_steps=50)
@@ -75,8 +74,8 @@ async def test_protocol_reaching_completed_ends_the_turn():
     await session.close()
 
     assert protocol.phase == COMPLETED
-    assert backend.calls == 2          # FINAL: + APPROVE, then the loop breaks
-    assert steps == 2
+    assert backend.calls == 1          # FINAL: opens the gate, then it breaks
+    assert steps == 1                  # one turn, no follow-up chatter
 
 
 @pytest.mark.asyncio

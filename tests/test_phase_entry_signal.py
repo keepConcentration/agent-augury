@@ -126,12 +126,14 @@ async def test_approve_before_entry_signal_is_soft_blocked():
     )
     _inject_protocol_gate_state(agent, protocol)
     assert agent.gate_needs_signal is None
+    # a1 wrote the draft, so a1's vote is already in: asking again is the
+    # ordinary duplicate case, not the entry-signal block.
     ok = json.loads(
         await agent._execute_tool(
             "send_message", {"thread": tid, "content": "APPROVE: ship"}
         )
     )
-    assert "error" not in ok
+    assert ok["error"] == "already_approved"
     assert "a1" in gate.approvals
 
 
@@ -231,7 +233,7 @@ async def test_second_agent_cannot_post_a_rival_draft():
 async def test_draft_author_may_revise_but_votes_reset():
     """Revising is legitimate; the votes cast on the old text are not."""
     server = MessageServer()
-    agents = ["a1", "a2"]
+    agents = ["a1", "a2", "a3"]   # a3 keeps the gate closed while a1 revises
     for a in agents:
         server.register_agent(a)
     protocol, gate, tid = await _gate(
@@ -240,7 +242,7 @@ async def test_draft_author_may_revise_but_votes_reset():
     )
     await server.send_message(tid, author="a1", content="FINAL: 98")
     await server.send_message(tid, author="a2", content="APPROVE: ok")
-    assert gate.approvals == {"a2"}
+    assert gate.approvals == {"a1", "a2"}
 
     author = AgentLoop(agent_id="a1", backend=Quiet(), server=server)
     author.current_phase = P5_SUBMIT
@@ -251,7 +253,7 @@ async def test_draft_author_may_revise_but_votes_reset():
         )
     )
     assert "error" not in out                    # the author may revise
-    assert gate.approvals == set(), "a2 never saw 97"
+    assert gate.approvals == {"a1"}, "a2 never saw 97; a1 stands behind it"
     assert not gate.is_open
 
 
@@ -334,7 +336,7 @@ async def test_draft_block_sees_a_claim_made_after_injection():
 async def test_rival_draft_does_not_wipe_votes():
     """A losing draft is ignored; it must not clear the winner's approvals."""
     server = MessageServer()
-    agents = ["a1", "a2", "a3"]
+    agents = ["a1", "a2", "a3", "a4"]   # a4 keeps the gate closed for the rival
     for a in agents:
         server.register_agent(a)
     _, gate, tid = await _gate(
@@ -344,12 +346,12 @@ async def test_rival_draft_does_not_wipe_votes():
     await server.send_message(tid, author="a1", content="FINAL: 98")
     await server.send_message(tid, author="a2", content="APPROVE: ok")
     await server.send_message(tid, author="a3", content="APPROVE: ok")
-    assert gate.approvals == {"a2", "a3"}
+    assert gate.approvals == {"a1", "a2", "a3"}
 
     # a rival draft slips through (race / non-protocol sender)
     await server.send_message(tid, author="a2", content="FINAL: my version")
     assert gate.draft_author == "a1", "ownership must not transfer"
-    assert gate.approvals == {"a2", "a3"}, "votes on a1's draft must survive"
+    assert gate.approvals == {"a1", "a2", "a3"}, "votes on a1's draft must survive"
 
-    await server.send_message(tid, author="a1", content="APPROVE: ok")
+    await server.send_message(tid, author="a4", content="APPROVE: ok")
     assert gate.is_open

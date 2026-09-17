@@ -391,6 +391,10 @@ class AgentLoop:
         if tool_results:
             self.conversation.extend(tool_results)
 
+        nudge = self._unsent_signal_nudge(completion.text, completion.tool_calls)
+        if nudge is not None:
+            self.conversation.append({"role": "user", "content": nudge})
+
         return StepResult(
             text=completion.text,
             tool_calls=completion.tool_calls,
@@ -432,6 +436,18 @@ class AgentLoop:
             )
         # Duplicate signal: the vote would not change, but the message would
         # still land on the thread and wake every peer (N^2 chatter).
+        if name == "send_message" and not str(args.get("content") or "").strip():
+            # An empty broadcast costs every peer a wake-up and says nothing.
+            return json.dumps(
+                {
+                    "error": "empty_message",
+                    "message": (
+                        "content was empty. Put the actual text in `content` "
+                        "-- writing it in your reply instead does not send it."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         if name == "send_message":
             dup = self._duplicate_signal_denied(args)
             if dup is not None:
@@ -569,6 +585,33 @@ class AgentLoop:
                 ensure_ascii=False,
             )
         return None
+
+    def _unsent_signal_nudge(
+        self,
+        text: str | None,
+        tool_calls: list[Any],
+    ) -> str | None:
+        """Catch a signal written as prose instead of sent as a message.
+
+        A model that writes ``APPROVE: ...`` in its reply has decided, but the
+        gate only sees ``send_message``. In the 2026-09-17 live run this hung
+        P2 until a human said "you are the only one left".
+        """
+        if not text or self.gate_open or not self._protocol_active():
+            return None
+        if self.agent_id in self.gate_approvals:
+            return None  # already counted -- nothing to nudge about
+        if any(call.name == "send_message" for call in tool_calls):
+            return None
+        prefixes = [p for p in (self.gate_entry_prefix, "APPROVE:") if p]
+        found = next((p for p in prefixes if has_signal(text, p)), None)
+        if found is None:
+            return None
+        return (
+            f"[runtime] You wrote {found} in your reply, but nobody received "
+            f"it -- only `send_message` reaches the gate. Send it to thread "
+            f"`{self.gate_thread_id}`."
+        )
 
     def _protocol_active(self) -> bool:
         """True while a P1–P5 collaboration phase is in progress."""

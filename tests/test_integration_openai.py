@@ -97,7 +97,9 @@ async def test_p1_to_p5_protocol_yaml_e2e_fake():
         for m in by_seq
         if m["content"].startswith("APPROVE:") and m["seq"] > finals[0]["seq"]
     ]
-    assert len(final_approvals) == 3
+    # agent-1 posted FINAL:, which counts as its own vote — only the other
+    # two have to answer.
+    assert len(final_approvals) == 2
 
 
 def test_cli_p1_to_p5_protocol_yaml():

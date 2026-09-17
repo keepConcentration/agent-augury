@@ -135,6 +135,13 @@ class ConsensusGate:
                 # approved is not what would be submitted. Re-collect.
                 self.approvals.clear()
             self._proposal_received = True
+            if author in self.participants:
+                # Writing the draft IS a vote for it. Requiring a separate
+                # APPROVE: from the author made the drafter the LAST voter in
+                # 3 of 4 gates in the 2026-09-17 live run, and in P5 it never
+                # came -- the drafter sat waiting for votes it had already
+                # received, and a human had to poke it.
+                self.approvals.add(author)
             # A PROPOSE may arrive AFTER everyone already voted (agents on a
             # pre-bound thread can APPROVE before any proposal exists). Without
             # this re-check the gate would never open, and duplicate-vote

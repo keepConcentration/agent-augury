@@ -269,19 +269,19 @@ GATE_BLOCK_CFG = build_cfg(
     agents=[
         {
             "id": "a1",
+            # a1 is deliberately NOT the proposer: the entry signal counts as
+            # its author's vote, so a proposing a1 would open the gate before
+            # this test ever gets to observe a closed-gate block.
             "backend": {"type": "fake", "script": [
                 {"tool_calls": [
                     {"name": "create_thread", "arguments": {"name": "plan", "participants": ["a1", "a2"]}},
-                    {"name": "send_message", "arguments": {"thread": "$thread:0", "content": "PROPOSE: v1", "mentions": []}},
-                ]},
-                # gate still CLOSED → work-share on hunt thread blocked
-                {"tool_calls": [
                     {"name": "create_thread", "arguments": {"name": "hunt", "participants": ["a1", "a2"]}},
                 ]},
+                # gate still CLOSED (only a2 voted, via its PROPOSE) -> blocked
                 {"tool_calls": [
                     {"name": "send_message", "arguments": {"thread": "$thread:1", "content": "(FYI) 내 몫 완료", "mentions": []}},
                 ]},
-                # now approve → gate opens → work-share allowed
+                # now approve -> gate opens -> work-share allowed
                 {"tool_calls": [
                     {"name": "send_message", "arguments": {"thread": "$thread:0", "content": "APPROVE: ok", "mentions": []}},
                 ]},
@@ -294,7 +294,7 @@ GATE_BLOCK_CFG = build_cfg(
             "id": "a2",
             "backend": {"type": "fake", "script": [
                 {"tool_calls": [
-                    {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "APPROVE: ok", "mentions": []}},
+                    {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "PROPOSE: v1", "mentions": []}},
                 ]},
             ]},
         },

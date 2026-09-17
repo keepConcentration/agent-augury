@@ -57,41 +57,47 @@ async def test_gate_opens_only_after_unanimous_approve():
 
 
 async def test_approvals_before_any_proposal_do_not_count():
-    server = make_server("a", "b")
+    # Three participants: the proposer's own vote (ConsensusGate counts the
+    # entry signal) must not be able to mask a premature vote that was void.
+    server = make_server("a", "b", "c")
     gate = make_gate(server)
-    plan = await server.create_thread("plan", participants=["a", "b"])
+    plan = await server.create_thread("plan", participants=["a", "b", "c"])
 
-    await server.send_message(plan, author="a", content="APPROVE: premature", mentions=[])
     await server.send_message(plan, author="b", content="APPROVE: premature", mentions=[])
+    await server.send_message(plan, author="c", content="APPROVE: premature", mentions=[])
     assert not gate.is_open
 
     await server.send_message(plan, author="a", content="PROPOSE: v1", mentions=[])
+    assert gate.approvals == {"a"}, "premature votes were void; the author's is not"
     await server.send_message(plan, author="b", content="APPROVE: ok", mentions=[])
-    assert not gate.is_open  # premature approvals were void
-    await server.send_message(plan, author="a", content="APPROVE: ok", mentions=[])
+    assert not gate.is_open  # c still has to look at v1
+    await server.send_message(plan, author="c", content="APPROVE: ok", mentions=[])
     assert gate.is_open
 
 
 async def test_reject_clears_collected_approvals():
-    server = make_server("a", "b")
+    server = make_server("a", "b", "c")
     gate = make_gate(server)
-    plan = await server.create_thread("plan", participants=["a", "b"])
+    plan = await server.create_thread("plan", participants=["a", "b", "c"])
 
     await server.send_message(plan, author="a", content="PROPOSE: v1", mentions=[])
-    await server.send_message(plan, author="a", content="APPROVE: ok", mentions=[])
-    await server.send_message(plan, author="b", content="REJECT: 분할이 이상함", mentions=[])
+    await server.send_message(plan, author="b", content="APPROVE: ok", mentions=[])
+    await server.send_message(plan, author="c", content="REJECT: 분할이 이상함", mentions=[])
     assert not gate.is_open
+
+    assert gate.approvals == set(), "the author's own vote goes with the rest"
 
     # REJECT means redo: the proposal is gone too, so votes alone cannot reopen
     await server.send_message(plan, author="b", content="APPROVE: v2 ok", mentions=[])
-    await server.send_message(plan, author="a", content="APPROVE: v2 ok", mentions=[])
+    await server.send_message(plan, author="c", content="APPROVE: v2 ok", mentions=[])
     assert not gate.is_open, "unanimous votes must not open a gate with no proposal"
 
     # consensus must re-form from zero, on an actual v2
     await server.send_message(plan, author="a", content="PROPOSE: v2", mentions=[])
+    assert gate.approvals == {"a"}
     await server.send_message(plan, author="b", content="APPROVE: v2 ok", mentions=[])
     assert not gate.is_open
-    await server.send_message(plan, author="a", content="APPROVE: v2 ok", mentions=[])
+    await server.send_message(plan, author="c", content="APPROVE: v2 ok", mentions=[])
     assert gate.is_open
 
 

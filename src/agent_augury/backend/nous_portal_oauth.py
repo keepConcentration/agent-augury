@@ -19,6 +19,7 @@ from ..auth.oauth import (
 from ..auth.token_store import TokenStore, compute_expires_at, is_token_expiring
 from ..model_listing import extract_model_ids
 from .base import Completion, Message, OAuthModelBackend, ToolCall, ToolSpec
+from .errors import auth_error, classify_http, network_error
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,11 @@ class NousPortalOAuthBackend(OAuthModelBackend):
                             continue
                     except Exception as retry_exc:  # noqa: BLE001 — refresh failure surfaced to caller
                         return Completion(
-                            text=f"[backend error] Token refresh failed: {retry_exc}. Please re-authenticate."
+                            error=auth_error(
+                                f"Token refresh failed: {retry_exc}. "
+                                "Please re-authenticate.",
+                                model=self.model,
+                            )
                         )
                 status = exc.response.status_code if exc.response is not None else "?"
                 if (
@@ -214,13 +219,10 @@ class NousPortalOAuthBackend(OAuthModelBackend):
                 ):
                     await asyncio.sleep(2 ** attempt)
                     continue
-                detail = exc.response.text[:500] if exc.response is not None else ""
+                body = exc.response.text if exc.response is not None else ""
+                code = status if isinstance(status, int) else None
                 return Completion(
-                    text=(
-                        f"[backend error] HTTP {status}"
-                        f" from chat/completions. "
-                        f"Detail: {detail}"
-                    )
+                    error=classify_http(code, body, model=self.model)
                 )
             except httpx.RequestError as exc:
                 if attempt < 2:
@@ -228,18 +230,16 @@ class NousPortalOAuthBackend(OAuthModelBackend):
                     await asyncio.sleep(2 ** attempt)
                     continue
                 return Completion(
-                    text=(
-                        f"[backend error] Network error (retried 3 times): {last_error}. "
-                        f"Check your connection."
+                    error=network_error(
+                        f"{last_error} (retried 3 times)", model=self.model
                     )
                 )
             else:
                 break
         else:
             return Completion(
-                text=(
-                    f"[backend error] Network error (retried 3 times): {last_error}. "
-                    f"Check your connection."
+                error=network_error(
+                    f"{last_error} (retried 3 times)", model=self.model
                 )
             )
 

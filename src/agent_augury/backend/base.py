@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from .errors import BackendError
+
 Message = dict[str, Any]
 ToolSpec = dict[str, Any]
 
@@ -21,11 +23,18 @@ class ToolCall:
 
 @dataclass
 class Completion:
-    """One model response: final text and/or requested tool calls."""
+    """One model response: final text and/or requested tool calls.
+
+    ``error`` marks an infrastructure failure rather than something the model
+    said. When set, ``text`` stays ``None`` — an API error must never reach the
+    conversation as an assistant turn, or the runtime (and the model itself)
+    mistakes a failed call for a deliberate silence.
+    """
 
     text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: dict[str, Any] | None = None
+    error: BackendError | None = None
 
 
 class ModelBackend(ABC):

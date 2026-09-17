@@ -48,6 +48,9 @@ class StepResult:
     tool_calls: list[Any] = field(default_factory=list)
     drained_count: int = 0
     usage: dict[str, Any] | None = None
+    # Infrastructure failure, not something the model said. Session decides
+    # whether to retry; the loop never turns it into conversation text.
+    error: Any | None = None
     # V1 relevance budget: True when T0 ignore — drain performed, complete skipped.
     # session.run_agent() must check this BEFORE incrementing total_steps.
     skipped: bool = False
@@ -341,6 +344,15 @@ class AgentLoop:
         completion: Completion = await self.backend.complete(
             self.conversation, self.tool_specs
         )
+        if completion.error is not None:
+            # Nothing is appended: an API failure must not enter the
+            # conversation as an assistant turn. The drained radio above is
+            # already in place, so a retry loses nothing.
+            return StepResult(
+                text=None,
+                drained_count=len(drained),
+                error=completion.error,
+            )
         assistant_msg: Message = {"role": "assistant", "content": completion.text or ""}
         if completion.tool_calls:
             assistant_msg["tool_calls"] = [

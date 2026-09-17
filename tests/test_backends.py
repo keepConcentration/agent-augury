@@ -98,29 +98,37 @@ async def test_tool_call_response_parses_json_arguments():
     assert call.id == "call_1"
 
 
-async def test_http_error_returns_error_text():
-    """HTTP errors (4xx/5xx) must return error text, not raise."""
+async def test_http_error_returns_structured_error():
+    """HTTP errors must not raise, and must NOT masquerade as model output.
+
+    They used to come back as ``Completion(text="[backend error] ...")``, which
+    the runtime could not tell apart from an agent choosing to stay quiet.
+    """
     def handler(request):
         return httpx.Response(404, json={"error": "Not Found"})
 
     backend = make_backend(handler)
     completion = await backend.complete([], [])
-    assert completion.text is not None
-    assert "[backend error]" in completion.text
-    assert "404" in completion.text
-    assert "Not Found" in completion.text
+    assert completion.text is None, "an API failure is not something the model said"
+    assert completion.error is not None
+    assert completion.error.kind == "model_not_found"
+    assert completion.error.status == 404
+    assert completion.error.retryable is False
+    assert "Not Found" in completion.error.detail
 
 
-async def test_network_error_returns_error_text():
-    """Network errors (DNS, connection refused) must return error text, not raise."""
+async def test_network_error_returns_structured_error():
+    """Network errors must not raise, and stay retryable."""
     def handler(request):
         raise httpx.RequestError("connection refused")
 
     backend = make_backend(handler)
     completion = await backend.complete([], [])
-    assert completion.text is not None
-    assert "[backend error]" in completion.text
-    assert "connection refused" in completion.text
+    assert completion.text is None
+    assert completion.error is not None
+    assert completion.error.kind == "network"
+    assert completion.error.retryable is True
+    assert "connection refused" in completion.error.detail
 
 
 # ---------------------------------------------------------------------------

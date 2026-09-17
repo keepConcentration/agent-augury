@@ -562,6 +562,8 @@ class TestSessionBotManagerIntegration:
         # Mock start_all / stop_all to track calls
         session.bot_manager.start_all = AsyncMock()
         session.bot_manager.stop_all = AsyncMock()
+        # base_url points nowhere; this test is about bot lifecycle, not retries
+        session.max_backend_retries = 0
 
         await session.run()
 
@@ -647,6 +649,8 @@ class TestSessionBotManagerIntegration:
 
         session = Session.from_config(load_config(str(path)))
         assert session.bot_manager is None
+        # base_url points nowhere; this test is about bot_manager, not retries
+        session.max_backend_retries = 0
 
         # Should complete without error
         await session.run()

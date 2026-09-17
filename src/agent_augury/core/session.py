@@ -39,6 +39,7 @@ except ImportError:
     pass
 
 from ..auth.token_store import TokenStore
+from ..backend.errors import jittered_backoff
 from ..backends_factory import build_backend
 from ..channels.discord.bot import BotManager, DiscordBotAdapter
 from ..channels.discord.inbound import attach_discord_inbound
@@ -70,6 +71,10 @@ OnStep = Callable[[str, Any], None]
 OnToolEvent = Callable[[dict[str, Any]], None]
 
 # HITL / Discord mid-run replies land here when agents invent bad thread ids.
+
+# Model-call failures retried per agent before that agent gives up.
+MAX_BACKEND_RETRIES = 3
+
 HUMAN_CHAT_THREAD_NAME = "human"
 
 # LocalTool 트랙 B로 주입하는 web_search tool spec (AGENT_TOOLS §3.2/§4.3.2).
@@ -187,6 +192,9 @@ class Session:
         self._exit_reason: str | None = None
         self._checkpoint_lock = asyncio.Lock()
         self._approvals_persist: bool = True
+        # Model-call retries per agent. Lowered in tests and by callers that
+        # would rather fail fast than wait out a dead endpoint.
+        self.max_backend_retries: int = MAX_BACKEND_RETRIES
         self._compact_opts: Any = None
         self._compactions_this_flush: list[dict[str, Any]] = []
         self._restored_pending_approvals: list[Any] = []
@@ -1205,6 +1213,7 @@ class Session:
             """Run one agent's step loop as long as it makes progress and the
             global budget allows."""
             idle_streak = 0
+            backend_retries = 0
             while True:
                 if self._interrupt.is_set():
                     break
@@ -1273,6 +1282,36 @@ class Session:
                         agent_id=agent.agent_id,
                     )
                     break
+
+                # A failed API call is not a quiet agent: retry it instead of
+                # parking, or the gate waits on an agent that never spoke.
+                if getattr(result, "error", None) is not None:
+                    err = result.error
+                    if not err.retryable or backend_retries >= self.max_backend_retries:
+                        _publish_session_error(
+                            self,
+                            f"[{agent.agent_id}] backend {err}",
+                            agent_id=agent.agent_id,
+                        )
+                        break
+                    backend_retries += 1
+                    delay = jittered_backoff(backend_retries)
+                    _publish_session_error(
+                        self,
+                        f"[{agent.agent_id}] backend {err} "
+                        f"— retry {backend_retries}/{self.max_backend_retries} "
+                        f"in {delay:.0f}s",
+                        agent_id=agent.agent_id,
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            self._interrupt.wait(), timeout=delay
+                        )
+                        break  # interrupted during backoff
+                    except TimeoutError:
+                        pass
+                    continue
+                backend_retries = 0
 
                 # V1 relevance budget: T0 ignore — drain 됐지만 complete 생략됨.
                 # step counter를 증가시키지 않고 다음 iteration으로 진행한다.

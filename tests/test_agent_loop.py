@@ -275,8 +275,12 @@ async def test_tool_call_id_propagated_to_tool_result_messages():
     assert tool_msgs[0]["tool_call_id"] == "call_abc123"
 
 
-async def test_step_with_http_404_returns_error_text():
-    """Backend returning HTTP 404 must surface error text, not raise."""
+async def test_step_with_http_404_surfaces_structured_error():
+    """A backend failure reaches Session as StepResult.error, never as text.
+
+    Text would be indistinguishable from the model staying quiet, and a live
+    session stalled at a closed gate for exactly that reason.
+    """
     import httpx
 
     from agent_augury.backend.openai_compat import OpenAICompatBackend
@@ -300,9 +304,12 @@ async def test_step_with_http_404_returns_error_text():
         system_prompt="test",
     )
     result = await agent.step()
-    assert result.text is not None
-    assert "[backend error]" in result.text
-    assert "404" in result.text
+    assert result.text is None
+    assert result.error is not None
+    assert result.error.kind == "model_not_found"
+    assert result.error.status == 404
+    # nothing was written into the conversation
+    assert not [m for m in agent.conversation if m.get("role") == "assistant"]
 
 
 # ---------------------------------------------------------------------------

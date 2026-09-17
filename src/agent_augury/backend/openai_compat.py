@@ -10,6 +10,7 @@ import httpx
 
 from ..model_listing import extract_model_ids
 from .base import Completion, Message, ModelBackend, ToolCall, ToolSpec
+from .errors import classify_http, network_error
 
 logger = logging.getLogger(__name__)
 
@@ -55,37 +56,27 @@ class OpenAICompatBackend(ModelBackend):
                 ):
                     await asyncio.sleep(2 ** attempt)
                     continue
-                detail = exc.response.text[:500] if exc.response is not None else ""
-                if status in (401, 403):
-                    hint = (
-                        f"Authentication failed (HTTP {status}). "
-                        "Check that the API key env var is set to your real key "
-                        f"(not the env var name itself). Model '{self.model}'."
-                    )
-                else:
-                    hint = (
-                        f"HTTP {status} from chat/completions. "
-                        f"Model '{self.model}' may not exist."
-                    )
-                return Completion(text=f"[backend error] {hint} Detail: {detail}")
+                body = exc.response.text if exc.response is not None else ""
+                code = status if isinstance(status, int) else None
+                return Completion(
+                    error=classify_http(code, body, model=self.model)
+                )
             except httpx.RequestError as exc:
                 if attempt < 2:
                     last_error = str(exc)
                     await asyncio.sleep(2 ** attempt)
                     continue
                 return Completion(
-                    text=(
-                        f"[backend error] Network error (retried 3 times): {last_error}. "
-                        f"Check your connection."
+                    error=network_error(
+                        f"{last_error} (retried 3 times)", model=self.model
                     )
                 )
             else:
                 break
         else:
             return Completion(
-                text=(
-                    f"[backend error] Network error (retried 3 times): {last_error}. "
-                    f"Check your connection."
+                error=network_error(
+                    f"{last_error} (retried 3 times)", model=self.model
                 )
             )
 

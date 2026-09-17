@@ -383,4 +383,5 @@ agent-augury/
 - 페이즈 진입 신호·초안 소유: `docs/architecture/PHASE_ENTRY_SIGNAL_DESIGN.md`
 - radio 압축(보류): `docs/architecture/RADIO_DIGEST_DESIGN.md`
 - 백엔드 오류 분류: `docs/architecture/BACKEND_ERROR_CLASSIFICATION_DESIGN.md`
+- Spring AI 게이트웨이(구상): `docs/architecture/SPRING_AI_GATEWAY_DESIGN.md`
 - 턴 종료 (COMPLETED / idle streak): `docs/architecture/SESSION_TURN_TERMINATION_DESIGN.md`

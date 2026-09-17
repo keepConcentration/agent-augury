@@ -69,7 +69,7 @@ return Completion(text=f"[backend error] {hint} Detail: {detail}")
 - 모델 폴백 (다른 모델로 전환)
 - 컨텍스트 압축 기반 복구
 - 프로바이더별 적응형 백오프
-- 20종 분류 체계 — **3종이면 충분** (§4.1)
+- 20종 분류 체계 — `kind` 는 8종이나 **분기는 불리언 둘** (§4.1)
 
 ---
 
@@ -124,27 +124,42 @@ Hermes 에는 20+ 분류 · 자격증명 풀 · 모델 폴백 · 컨텍스트 �
 
 ## 4. 설계
 
-### 4.1 분류는 3종
+### 4.1 분류 — `kind` 는 원인, 분기는 불리언
 
-| kind | 예 | 행동 |
-|------|-----|------|
-| `retryable` | 429, 500/502/503, 타임아웃, 네트워크 | 백오프 후 재시도 |
-| `fatal` | 401/403, 400, 404(model not found) | 즉시 턴 종료 (재시도 무의미) |
-| `unknown` | 그 외 | `retryable` 로 취급하되 한도를 짧게 |
+**분류의 개수는 "서로 다른 행동"의 개수를 넘을 수 없다.** Hermes 가 20종인 것은
+행동이 20가지(키 교체·모델 폴백·컨텍스트 압축·요청 수술…)이기 때문이다.
+우리 행동은 **재시도 / 종료** 둘뿐이므로 20종으로 나눠도 18개가 같은 경로로 떨어진다.
 
-20종으로 나눌 이유가 지금은 없다 — 키 로테이션도 모델 폴백도 없기 때문이다.
-**필요해질 때 쪼갠다.** `kind` 옆에 원문 `status` / `detail` 을 실어두면
-나중에 세분화가 값싸다.
+그래서 **분기는 불리언 두 개**가 하고, `kind` 는 표시·로그·나중 분화용 문자열이다.
+값을 추가해도 기존 코드가 깨지지 않는다.
+
+| kind | retryable | should_fallback | 지금 행동 |
+|------|:---------:|:---------------:|-----------|
+| `rate_limit` | ✓ | ✗ | 백오프 재시도 |
+| **`upstream_busy`** | ✓ | **✓** | 백오프 재시도 (폴백은 나중) |
+| `server_error` | ✓ | ✗ | 백오프 재시도 |
+| `timeout` / `network` | ✓ | ✗ | 백오프 재시도 |
+| `auth` | ✗ | ✗ | 즉시 종료 |
+| `bad_request` | ✗ | ✗ | 즉시 종료 |
+| `model_not_found` | ✗ | **✓** | 종료 (폴백 생기면 재시도) |
+| `unknown` | ✓ | ✗ | 짧게 재시도 |
+
+**400 은 `bad_request`(종료)지만, 컨텍스트 초과 패턴이면 `unknown`** 으로 떨어뜨린다.
+압축기(`core/compact.py`)가 있긴 하나 오류 경로에 연결돼 있지 않고, 대화를 줄이면
+프로토콜 상태(초안·투표)와 어긋날 수 있어 **별도 검토** 대상이다.
 
 ### 4.2 `Completion` 계약
 
 ```python
 @dataclass
 class BackendError:
-    kind: str                 # "retryable" | "fatal" | "unknown"
+    kind: str                  # 원인 (표시·로그·나중 분화)
+    retryable: bool            # 재시도할까
+    should_fallback: bool      # 다른 모델이면 될까 — 지금은 아무도 읽지 않음
+    model: str | None = None   # 어느 모델이 실패했나
     status: int | None = None
-    message: str = ""         # 사람이 읽을 한 줄
-    detail: str = ""          # 원문 (잘라서)
+    message: str = ""          # 사람이 읽을 한 줄
+    detail: str = ""           # 원문 (잘라서)
 
 @dataclass
 class Completion:
@@ -154,10 +169,17 @@ class Completion:
     error: BackendError | None = None      # 신규
 ```
 
-- `error` 가 있으면 `text` 는 **`None`** 이다. 오류 문자열을 모델 발화로 쓰지 않는다.
+- `error` 가 있으면 `text` 는 **`None`**. 오류 문자열을 모델 발화로 쓰지 않는다.
 - 기존 호출자는 `error` 를 몰라도 깨지지 않는다 (기본값 `None`).
 
-`[backend error]` 문자열 7군데를 전부 `BackendError` 로 바꾼다.
+**`should_fallback` 을 지금 계산하는 이유 (구조적):** "이 429 가 내 키인가 상위 모델
+포화인가"는 **응답 본문에만** 있고, 그 본문은 백엔드만 본다. 나중에 계산하려면
+세션이 `detail` 문자열을 다시 파싱해야 하는데, 그것이 Hermes 가
+*"replaces scattered inline string-matching"* 이라며 없앤 패턴이다.
+**불리언 하나의 비용으로 그 정보를 경계 너머로 옮긴다.**
+
+**`model` 을 싣는 이유:** 폴백이 생기면 `"agent-2: X 실패 → Y 로 전환"` 을 남겨야
+하는데, 그 시점에는 이미 백엔드가 바뀐 뒤라 실패한 모델 이름을 잃는다.
 
 ### 4.3 `AgentLoop.step()`
 
@@ -177,10 +199,19 @@ if completion.error:
 
 park 판정 **앞에** 둔다. 오류는 "조용함"이 아니다.
 
+**여기에 두는 것이 폴백 seam 이다 (구조적).** 대체 모델 설정은 세션이 들고 있다.
+재시도를 `AgentLoop.step()` 안에 넣으면 나중에 폴백을 붙일 때 루프가 config 를
+알아야 해서 계층이 뒤집힌다.
+
+```text
+X  AgentLoop.step() 안에서 재시도  -> 폴백 시 loop 가 config 를 알아야 함
+O  Session.run_agent 에서 재시도   -> 폴백도 같은 자리에 분기 하나로 들어감
+```
+
 ```text
 result = await agent.step()
 if result.error:
-    if result.error.kind == "fatal":
+    if not result.error.retryable:
         publish session error; break
     if backend_retries >= max_backend_retries:   # 기본 3
         publish session error; break
@@ -232,6 +263,53 @@ chatter §10 의 **D12** 로 이미 기록돼 있다. 본 설계는 그 앞단(�
 
 ---
 
+## 5.2 폴백을 나중에 붙일 때 바뀌는 것 (검증 가능한 목록)
+
+현 구조에서 폴백 추가가 왜 작은지 — 그리고 본 설계가 무엇을 미리 확보하는지.
+
+**이미 유리한 점 (본 설계가 만든 게 아니라 원래 그런 것):**
+
+| | |
+|---|---|
+| `build_backend(spec)` | 에이전트마다 **독립 인스턴스**. 여러 번 부르면 끝 |
+| `AgentLoop.backend` | 참조 하나, `complete()` 호출 지점이 **단 한 곳** (`loop.py`) |
+
+호출 지점이 하나이므로 **라우터·전략 클래스를 지금 만들 이유가 없다** —
+추상화를 넣어도 나중에 고칠 줄 수가 줄지 않는다.
+
+**본 설계가 미리 확보하는 것 (나중에는 비싸거나 불가능):**
+
+1. `should_fallback` — 판정 근거(응답 본문)가 백엔드에만 있다 (§4.2)
+2. `BackendError.model` — 전환 후에는 실패한 모델 이름을 잃는다 (§4.2)
+3. 재시도가 `Session.run_agent` 에 있음 — 폴백도 같은 자리 (§4.4)
+
+**그래서 폴백 추가 시 변경은 3곳:**
+
+```python
+# 1) 설정 — build_backend 는 spec 을 받으므로 그대로 재사용
+backend: {type: ..., model: A, fallbacks: [B, C]}
+
+# 2) AgentLoop — 필드 둘 + property. 호출 지점(complete) 무변경
+self.backends = [...]
+self._backend_idx = 0
+@property
+def backend(self): return self.backends[self._backend_idx]
+
+# 3) Session.run_agent — 분기 하나
+if err.should_fallback and agent.switch_to_next_model():
+    continue
+```
+
+**함께 필요해지는 것 (그때 같이):** 체크포인트에 현재 모델 저장 + 복원.
+**지금 넣지 않는다** — 읽는 쪽(복원)이 없어 이득이 0이고, 미지의 키는 무시되므로
+나중에 넣어도 스키마 마이그레이션이 없다. 저장 2줄 + 복원 2줄, 비용은 지금이나
+그때나 같다.
+
+**정하지 않는 것:** `fallbacks` 설정 스키마, 모델당 재시도 예산 배분.
+폴백 설계에서 함께 정해야 지금 정한 것을 다시 바꾸지 않는다.
+
+---
+
 ## 6. 마일스톤
 
 | 순서 | ID | 내용 | 완료 조건 |
@@ -267,10 +345,10 @@ B1~B3 은 한 PR. B4 는 분리 가능.
 |---|------|------|
 | E1 | 재시도 횟수 | **3** (백엔드 내부 재시도와 별개) |
 | E2 | 백오프 | Hermes 식 `jittered_backoff(base=5, max=120)` |
-| E3 | 분류 3종 vs 세분화 | **3종.** `status`/`detail` 을 실어 나중에 쪼갤 여지만 |
+| E3 | 분류 3종 vs 세분화 | **`kind` 8종 + 불리언 2개.** 분기는 둘, 이름은 로그·미래용 (§4.1) |
 | E4 | 오류를 대화에 남길까 | **아니오** — 모델이 자기 발화로 오인한다 |
 | E5 | 백엔드 내부 재시도(현행 2회)는? | **유지.** 루프 재시도는 그 위층 |
-| E6 | `upstream_rate_limit` 구분 | V1 **안 함** (모델 폴백이 없어 행동이 같음). `detail` 에 보존 |
+| E6 | `upstream_busy` 구분 | **구분함** — 폴백 예정이므로 판정을 지금 백엔드에서 한다. 행동은 아직 같지만 `should_fallback` 으로 표시만 (§4.2, §5.2) |
 
 ---
 

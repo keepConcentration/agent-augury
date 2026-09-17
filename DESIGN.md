@@ -382,4 +382,5 @@ agent-augury/
 - 턴 종료 계약: `docs/architecture/SESSION_TURN_TERMINATION_DESIGN.md`
 - 페이즈 진입 신호·초안 소유: `docs/architecture/PHASE_ENTRY_SIGNAL_DESIGN.md`
 - radio 압축(보류): `docs/architecture/RADIO_DIGEST_DESIGN.md`
+- 백엔드 오류 분류: `docs/architecture/BACKEND_ERROR_CLASSIFICATION_DESIGN.md`
 - 턴 종료 (COMPLETED / idle streak): `docs/architecture/SESSION_TURN_TERMINATION_DESIGN.md`

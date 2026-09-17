@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...backend.base import Completion, ModelBackend
-from ..protocol.signals import is_ready_message
+from ..protocol.signals import has_signal, is_ready_message
 from ..server import MessageServer
 from .approval import (
     ApprovalStore,
@@ -485,7 +485,7 @@ class AgentLoop:
         )
         if (
             prefix
-            and content.startswith(prefix)
+            and has_signal(content, prefix)
             and draft_author
             and draft_author != self.agent_id
         ):
@@ -505,7 +505,7 @@ class AgentLoop:
                 },
                 ensure_ascii=False,
             )
-        if content.startswith("APPROVE:") and self.gate_needs_signal:
+        if has_signal(content, "APPROVE:") and self.gate_needs_signal:
             # Voting before the gate's entry signal exists cannot open it, and
             # a pile of votes on a gate that will not move reads like a stall.
             needs = self.gate_needs_signal
@@ -522,7 +522,7 @@ class AgentLoop:
                 },
                 ensure_ascii=False,
             )
-        if content.startswith("APPROVE:"):
+        if has_signal(content, "APPROVE:"):
             if self.gate_open or self.agent_id not in self.gate_approvals:
                 return None
             if args.get("thread") != self.gate_thread_id:

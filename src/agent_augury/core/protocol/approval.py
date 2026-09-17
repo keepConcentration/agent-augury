@@ -22,6 +22,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..server import MessageServer
+from .signals import has_signal
 
 GateCallback = Callable[[], None]
 
@@ -99,7 +100,7 @@ class ConsensusGate:
             # - require_proposal=False: any message on the matching thread binds
             # - require_proposal=True: only the entry signal binds, and it counts
             if self.require_proposal:
-                if not message["content"].startswith(self.entry_prefix):
+                if not has_signal(message["content"], self.entry_prefix):
                     return  # waiting for the entry signal
                 self._proposal_received = True
             self.thread_id = thread_id
@@ -115,14 +116,14 @@ class ConsensusGate:
 
         # Stage 2: waiting for human after agent unanimity
         if self.await_human_after_agents and self.human_pending:
-            if content.startswith("REJECT:"):
+            if has_signal(content, "REJECT:"):
                 self._reset_for_redo()
                 return
-            if author == "human" and content.startswith("APPROVE:"):
+            if author == "human" and has_signal(content, "APPROVE:"):
                 self._open_gate(message)
             return
 
-        if content.startswith(self.entry_prefix):
+        if has_signal(content, self.entry_prefix):
             if self.draft_author is None:
                 self.draft_author = author
             elif author != self.draft_author:
@@ -140,9 +141,9 @@ class ConsensusGate:
             # soft-blocking removes the accidental re-APPROVE that used to
             # rescue it.
             self._maybe_open(message)
-        elif content.startswith("REJECT:"):
+        elif has_signal(content, "REJECT:"):
             self._reset_for_redo()
-        elif content.startswith("APPROVE:"):
+        elif has_signal(content, "APPROVE:"):
             if author == "human":
                 # Ignore human votes before agent unanimity (after_agents T5)
                 return

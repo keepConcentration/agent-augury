@@ -189,6 +189,9 @@ class AgentLoop:
         # injects before step(), and the model call in between takes
         # seconds, so parallel agents would all see None and all draft.
         self.gate_draft_author_fn: Callable[[], str | None] | None = None
+        # What P2 agreed this agent would do, and who posts the P5 draft.
+        self.assignment: str | None = None
+        self.submitter_id: str | None = None
         # waiting-at-a-gate AND this agent already signalled — Session computes
         # it; the loop never re-derives it.
         self.protocol_done: bool = False
@@ -243,6 +246,8 @@ class AgentLoop:
                 gate_thread_id=self.gate_thread_id,
                 gate_thread_name=self.gate_thread_name,
                 gate_entry_prefix=self.gate_entry_prefix,
+                assignment=self.assignment,
+                submitter_id=self.submitter_id,
                 session_threads=threads or None,
                 ready_thread_id=ready_tid,
             )

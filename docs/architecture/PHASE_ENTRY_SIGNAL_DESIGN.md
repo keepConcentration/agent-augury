@@ -510,6 +510,45 @@ SUBMITTER: agent-3
 
 `SUBMITTER:` 가 없으면 기존 문구("Anyone may compose...") 그대로.
 
+### 6b.4b M4b 구현 — `ASSIGN` 까지 확장 (세션 `d24695b5`)
+
+설계는 M4b 를 `SUBMITTER:` 하나로 잡았다. 실행에서 더 큰 구멍이 드러났다.
+
+**관측:** P2 가 "agent-3 이 O 입장을 맡는다"로 합의했는데 agent-3 은 **끝까지
+O 논거를 한 번도 내지 않았다.** agent-2 는 "@agent-3 O 입장 기다립니다"를 네 번
+반복하다 스스로 X 로 돌아섰고, 최종 검토에 팀이 직접
+`agent-3: O 입장 예정이었으나 논거 미제출` 이라고 적었다. 사용자가 요청한
+"서로 설득"이 **일어나지 않았다** (4:0 합창).
+
+**원인:** 분담은 P2 스레드의 산문 안에만 있고, **런타임은 그 내용을 전혀 모른다.**
+P3 프롬프트는 `"Execute your assigned share (as negotiated in P2)"` 라고만 해서
+에이전트가 20턴 전 메시지를 스스로 기억해야 한다.
+
+**구현: `ASSIGN` + `SUBMITTER` 구조화 줄**
+
+```text
+PROPOSE: 분할안
+ASSIGN agent-1: 공리주의 관점
+ASSIGN agent-3: O 입장 옹호      <- 아무도 안 맡았던 쪽
+SUBMITTER: agent-2
+```
+
+- 파싱: `protocol/assignments.py` — 정규식. **NLP 아님**(§2.2 비목표 유지).
+- 시점: `CollaborationProtocol._on_message` 에서 P2 진입 신호를 볼 때.
+  REJECT 후 재제안하면 **덮어쓴다**.
+- 검증: participants 에 없는 id 는 **버린다** (오타가 P5 를 망가뜨리지 않게).
+- 체크포인트: `assignments` / `submitter_id` 스냅샷.
+- 사용처: **프롬프트뿐.** P3/P4 에 `Your assigned share: ...`,
+  P5 에 선출자 지목("YOU to submit" / "wait for their FINAL:").
+
+**강제하지 않는다 (§6b.5 그대로).** 게이트 조건이 아니므로 `ASSIGN` 줄이 없거나
+틀려도 세션이 멈추지 않는다 — 이 저장소가 밟은 교착 두 건이 전부 "게이트에
+조건을 하나 더 얹어서" 생겼다.
+
+**남은 것:** 배정을 **지켰는지** 는 여전히 아무도 확인하지 않는다. 그건
+M2(P4 `all("RESULT:")`) / C4 의 영역이고, 둘 다 교착 표면이 있어 **사용자 확인
+전까지 켜지 않는다.**
+
 ### 6b.5 왜 M4b 를 강제하지 않나
 
 선출을 게이트 조건으로 만들면 **선출자가 침묵할 때 P5 가 교착**한다.

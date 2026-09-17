@@ -160,6 +160,12 @@ Current phase: **P2 SPLIT**
 - Negotiate a split of sub-questions among agents.
 - Roles and who leads are NOT pre-assigned — emerge from discussion.
 - Propose a division with `PROPOSE:` and approve with `APPROVE:`.
+- Inside the proposal, state the split in machine-readable lines so the
+  runtime can remind each agent later:
+      ASSIGN <agent-id>: <that agent's share>
+      SUBMITTER: <agent-id>        (who will post the P5 FINAL: draft)
+  One ASSIGN line per agent. If a position/side must be argued, assign it
+  explicitly - an unassigned side never gets argued.
 - The phase advances only when ALL agents approve.
 - After you have posted your PROPOSE/APPROVE (or you are waiting on others),
   stay silent — do not keep saying that you are waiting.""",
@@ -176,7 +182,7 @@ Current phase: **P4 REVIEW**
   or omissions. Flag issues explicitly.""",
     "P5_SUBMIT": """\
 Current phase: **P5 SUBMIT**
-- Anyone may compose the final answer; no agent is designated to do it.
+- {submitter_line}
 - Post it on the gate thread starting with `FINAL:`. The gate CANNOT open
   until a `FINAL:` message exists; approving before that is rejected.
 - Only ONE draft exists: whoever posts `FINAL:` first owns it. If someone
@@ -213,9 +219,24 @@ def _phase_instructions_with_gate(
     gate_thread_id: str | None = None,
     gate_thread_name: str | None = None,
     gate_entry_prefix: str | None = None,
+    agent_id: str = "",
+    assignment: str | None = None,
+    submitter_id: str | None = None,
 ) -> str:
     """Phase block plus concrete gate thread id when a consensus gate is bound."""
     base = _PHASE_INSTRUCTIONS.get(phase, "")
+    if "{submitter_line}" in base:
+        if submitter_id and submitter_id == agent_id:
+            line = ("The team chose YOU to submit: compose the final answer and "
+                    "post it with `FINAL:`.")
+        elif submitter_id:
+            line = (f"The team chose {submitter_id} to submit. Wait for their "
+                    f"`FINAL:` draft and review it; do not write your own.")
+        else:
+            line = "Anyone may compose the final answer; no agent is designated."
+        base = base.replace("{submitter_line}", line)
+    if assignment:
+        base = base + f"\n- Your assigned share (agreed in P2): {assignment}"
     if not gate_thread_id:
         return base
     name = gate_thread_name or "gate"
@@ -240,6 +261,8 @@ def render_system_prompt(
     gate_thread_id: str | None = None,
     gate_thread_name: str | None = None,
     gate_entry_prefix: str | None = None,
+    assignment: str | None = None,
+    submitter_id: str | None = None,
     session_threads: list[dict] | None = None,
     ready_thread_id: str | None = None,
 ) -> str:
@@ -276,6 +299,9 @@ def render_system_prompt(
         gate_thread_id=gate_thread_id,
         gate_thread_name=gate_thread_name,
         gate_entry_prefix=gate_entry_prefix,
+        agent_id=agent_id,
+        assignment=assignment,
+        submitter_id=submitter_id,
     )
     language_instruction = ""
     if language:

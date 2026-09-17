@@ -34,6 +34,7 @@ from typing import Any
 
 from ..server import MessageServer
 from .approval import ConsensusGate
+from .assignments import parse_assignments, parse_submitter
 from .phases import (
     COMPLETED,
     P1_EXPLORE,
@@ -45,7 +46,7 @@ from .phases import (
     Phase,
     PhaseManager,
 )
-from .signals import is_ready_message
+from .signals import has_signal, is_ready_message
 
 # Callback fired on any phase change
 PhaseCallback = Callable[[Phase, Phase], None]
@@ -96,6 +97,10 @@ class CollaborationProtocol:
         self._gate_open_fired: set[Phase] = set()
         # v0.2: READY-based P1 finish policy
         self._ready_states: set[str] = set()
+        # What P2 agreed each agent would do, and who posts the P5 draft.
+        # Advisory only: surfaced in prompts, never a gate condition.
+        self._assignments: dict[str, str] = {}
+        self.submitter_id: str | None = None
         # Subscribe once at construction (not only on checkpoint restore).
         self._server.subscribe(self._on_message)
 
@@ -128,6 +133,8 @@ class CollaborationProtocol:
             "current_gate_phase": self._current_gate_phase,
             "gate_open_fired": sorted(self._gate_open_fired),
             "ready_states": sorted(self._ready_states),
+            "assignments": dict(self._assignments),
+            "submitter_id": self.submitter_id,
             "gates": gates,
         }
 
@@ -139,6 +146,11 @@ class CollaborationProtocol:
         # In-place: agents hold a reference to this set (see Session inject).
         self._ready_states.clear()
         self._ready_states.update(str(a) for a in (data.get("ready_states") or []))
+        assigned = data.get("assignments")
+        if isinstance(assigned, dict):
+            self._assignments = {str(k): str(v) for k, v in assigned.items()}
+        sub = data.get("submitter_id")
+        self.submitter_id = str(sub) if sub else None
         gates_data = data.get("gates") or {}
         for phase_name, snap in gates_data.items():
             if not isinstance(snap, dict):
@@ -165,10 +177,20 @@ class CollaborationProtocol:
         tolerant). ``READYFOO`` / bare ``READY`` are ignored.
         When all participants have sent READY, automatically finish P1.
         """
+        content = message.get("content", "")
+        if self.phase == P2_SPLIT and has_signal(content, "PROPOSE:"):
+            # The agreed split, so P3+ can remind each agent of its own share.
+            # A redone proposal (after REJECT:) replaces the previous one.
+            found = parse_assignments(content, self.participants)
+            if found:
+                self._assignments = found
+            submitter = parse_submitter(content, self.participants)
+            if submitter:
+                self.submitter_id = submitter
+            return
         if self.phase != P1_EXPLORE:
             return
         author = message.get("author", "")
-        content = message.get("content", "")
         if author in self.participants and is_ready_message(content):
             self._ready_states.add(author)
             if self.all_ready:
@@ -183,6 +205,10 @@ class CollaborationProtocol:
     def ready_states(self) -> AbstractSet[str]:
         """Live read-only view of participants that have sent READY."""
         return self._ready_states
+
+    def assignment_for(self, agent_id: str) -> str | None:
+        """The share P2 agreed this agent would take, if it named one."""
+        return self._assignments.get(agent_id)
 
     def has_ready(self, agent_id: str) -> bool:
         """True if this participant has already sent a READY signal."""

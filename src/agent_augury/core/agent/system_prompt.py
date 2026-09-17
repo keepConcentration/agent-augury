@@ -179,8 +179,10 @@ Current phase: **P5 SUBMIT**
 - Anyone may compose the final answer; no agent is designated to do it.
 - Post it on the gate thread starting with `FINAL:`. The gate CANNOT open
   until a `FINAL:` message exists; approving before that is rejected.
+- Only ONE draft exists: whoever posts `FINAL:` first owns it. If someone
+  already posted one, do not write your own; read theirs.
 - Once a `FINAL:` draft is posted, everyone approves it with `APPROVE:`,
-  or asks for a redo with `REJECT:`.""",
+  or asks for a redo with `REJECT:` (that clears the draft and the votes).""",
 }
 
 

@@ -184,6 +184,8 @@ class AgentLoop:
         # The gate's entry signal regardless of whether it has arrived
         # (prompt wording); gate_needs_signal is the "still missing" view.
         self.gate_entry_prefix: str | None = None
+        # Who already posted this gate's draft (first writer wins).
+        self.gate_draft_author: str | None = None
         # waiting-at-a-gate AND this agent already signalled — Session computes
         # it; the loop never re-derives it.
         self.protocol_done: bool = False
@@ -474,6 +476,29 @@ class AgentLoop:
     def _duplicate_signal_denied(self, args: dict[str, Any]) -> str | None:
         """Soft-block a re-``APPROVE:``/``READY:`` from an agent already counted."""
         content = str(args.get("content") or "")
+        prefix = self.gate_entry_prefix
+        if (
+            prefix
+            and content.startswith(prefix)
+            and self.gate_draft_author
+            and self.gate_draft_author != self.agent_id
+        ):
+            # One draft per gate: a second one splits the vote and means
+            # everyone ends up approving their own text.
+            return json.dumps(
+                {
+                    "error": "draft_already_posted",
+                    "phase": self.current_phase or "?",
+                    "author": self.gate_draft_author,
+                    "needs": prefix,
+                    "message": (
+                        f"{self.gate_draft_author} already posted the {prefix} "
+                        f"draft. Read it and APPROVE: it, or REJECT: to ask "
+                        f"for a redo."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         if content.startswith("APPROVE:") and self.gate_needs_signal:
             # Voting before the gate's entry signal exists cannot open it, and
             # a pile of votes on a gate that will not move reads like a stall.

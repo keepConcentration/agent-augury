@@ -66,10 +66,14 @@ async def test_late_proposal_opens_gate_after_everyone_approved():
 
     for a in ("a1", "a2", "a3"):
         await server.send_message(tid, author=a, content="APPROVE: ok")
-    assert gate.approvals == {"a1", "a2", "a3"}
+    # M4a: a vote needs a draft to be about, so these do not stick
+    assert gate.approvals == set()
     assert not gate.is_open  # no proposal yet
 
     await server.send_message(tid, author="a1", content="PROPOSE: the plan")
+    assert not gate.is_open           # earlier votes were never counted
+    for a in ("a1", "a2", "a3"):
+        await server.send_message(tid, author=a, content="APPROVE: ok")
     assert gate.is_open
 
 
@@ -86,9 +90,9 @@ async def test_late_proposal_parks_for_human_when_after_agents():
     fired: list[bool] = []
     gate.on_human_pending(lambda: fired.append(True))
 
+    await server.send_message(tid, author="a1", content="PROPOSE: plan")
     for a in ("a1", "a2"):
         await server.send_message(tid, author=a, content="APPROVE: ok")
-    await server.send_message(tid, author="a1", content="PROPOSE: plan")
 
     assert gate.human_pending is True
     assert not gate.is_open
@@ -609,7 +613,7 @@ async def test_all_approved_without_proposal_nobody_is_done():
     for a in agents:
         await server.send_message(tid, author=a, content="APPROVE: done")
 
-    assert gate.approvals == set(agents)
+    assert gate.approvals == set()      # M4a: proposal-less votes uncounted
     assert not gate.has_proposal
     assert not gate.is_open
     # nobody may park — someone still has to PROPOSE
@@ -617,6 +621,9 @@ async def test_all_approved_without_proposal_nobody_is_done():
 
     # and once a proposal lands the gate opens on the votes already cast
     await server.send_message(tid, author="a1", content="PROPOSE: the plan")
+    assert not gate.is_open
+    for a in agents:
+        await server.send_message(tid, author=a, content="APPROVE: done")
     assert gate.is_open
     assert [protocol.is_agent_done(a) for a in agents] == [False] * 4  # gate open
 

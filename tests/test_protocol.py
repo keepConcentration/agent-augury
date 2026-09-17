@@ -82,7 +82,13 @@ async def test_reject_clears_collected_approvals():
     await server.send_message(plan, author="b", content="REJECT: 분할이 이상함", mentions=[])
     assert not gate.is_open
 
-    # consensus must re-form from zero
+    # REJECT means redo: the proposal is gone too, so votes alone cannot reopen
+    await server.send_message(plan, author="b", content="APPROVE: v2 ok", mentions=[])
+    await server.send_message(plan, author="a", content="APPROVE: v2 ok", mentions=[])
+    assert not gate.is_open, "unanimous votes must not open a gate with no proposal"
+
+    # consensus must re-form from zero, on an actual v2
+    await server.send_message(plan, author="a", content="PROPOSE: v2", mentions=[])
     await server.send_message(plan, author="b", content="APPROVE: v2 ok", mentions=[])
     assert not gate.is_open
     await server.send_message(plan, author="a", content="APPROVE: v2 ok", mentions=[])

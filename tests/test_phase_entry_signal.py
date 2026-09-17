@@ -52,11 +52,14 @@ async def test_p5_does_not_open_without_final():
     )
     for a in agents:
         await server.send_message(tid, author=a, content="APPROVE: ship it")
-    assert gate.approvals == set(agents)
+    assert gate.approvals == set()   # M4a: nothing to vote on yet
     assert not gate.is_open          # no FINAL: draft exists
 
     await server.send_message(tid, author="a1", content="FINAL: the answer is 165")
-    assert gate.is_open              # late draft opens on the votes already cast
+    assert not gate.is_open          # the team still has to approve the draft
+    for a in agents:
+        await server.send_message(tid, author=a, content="APPROVE: ship it")
+    assert gate.is_open
 
 
 @pytest.mark.asyncio
@@ -188,3 +191,107 @@ def test_prompt_mentions_the_gate_entry_signal():
         gate_entry_prefix="PROPOSE:",
     )
     assert "`PROPOSE:` / `APPROVE:` only to this" in p2
+
+
+# ---------------------------------------------------------------------------
+# M4a - one draft per gate (first writer wins)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_second_agent_cannot_post_a_rival_draft():
+    """Live repro: all four agents posted their own FINAL:, then approved it."""
+    server = MessageServer()
+    agents = ["a1", "a2"]
+    for a in agents:
+        server.register_agent(a)
+    protocol, gate, tid = await _gate(
+        server, agents, P5_SUBMIT, "submission",
+        require_proposal=True, entry_prefix="FINAL:",
+    )
+    await server.send_message(tid, author="a1", content="FINAL: 98")
+    assert gate.draft_author == "a1"
+
+    rival = AgentLoop(agent_id="a2", backend=Quiet(), server=server)
+    rival.current_phase = P5_SUBMIT
+    _inject_protocol_gate_state(rival, protocol)
+
+    before = len(server.snapshot()["messages"])
+    out = json.loads(
+        await rival._execute_tool(
+            "send_message", {"thread": tid, "content": "FINAL: 98 (my version)"}
+        )
+    )
+    assert out["error"] == "draft_already_posted"
+    assert out["author"] == "a1"
+    assert len(server.snapshot()["messages"]) == before
+
+
+@pytest.mark.asyncio
+async def test_draft_author_may_revise_but_votes_reset():
+    """Revising is legitimate; the votes cast on the old text are not."""
+    server = MessageServer()
+    agents = ["a1", "a2"]
+    for a in agents:
+        server.register_agent(a)
+    protocol, gate, tid = await _gate(
+        server, agents, P5_SUBMIT, "submission",
+        require_proposal=True, entry_prefix="FINAL:",
+    )
+    await server.send_message(tid, author="a1", content="FINAL: 98")
+    await server.send_message(tid, author="a2", content="APPROVE: ok")
+    assert gate.approvals == {"a2"}
+
+    author = AgentLoop(agent_id="a1", backend=Quiet(), server=server)
+    author.current_phase = P5_SUBMIT
+    _inject_protocol_gate_state(author, protocol)
+    out = json.loads(
+        await author._execute_tool(
+            "send_message", {"thread": tid, "content": "FINAL: 97 (fixed)"}
+        )
+    )
+    assert "error" not in out                    # the author may revise
+    assert gate.approvals == set(), "a2 never saw 97"
+    assert not gate.is_open
+
+
+@pytest.mark.asyncio
+async def test_reject_lets_someone_else_draft():
+    """Without resetting the draft on REJECT, a redo would deadlock."""
+    server = MessageServer()
+    agents = ["a1", "a2"]
+    for a in agents:
+        server.register_agent(a)
+    protocol, gate, tid = await _gate(
+        server, agents, P5_SUBMIT, "submission",
+        require_proposal=True, entry_prefix="FINAL:",
+    )
+    await server.send_message(tid, author="a1", content="FINAL: 98")
+    await server.send_message(tid, author="a2", content="REJECT: recheck")
+    assert gate.draft_author is None
+    assert not gate.has_proposal
+
+    other = AgentLoop(agent_id="a2", backend=Quiet(), server=server)
+    other.current_phase = P5_SUBMIT
+    _inject_protocol_gate_state(other, protocol)
+    out = json.loads(
+        await other._execute_tool(
+            "send_message", {"thread": tid, "content": "FINAL: 97"}
+        )
+    )
+    assert "error" not in out
+    assert gate.draft_author == "a2"
+
+
+def test_draft_author_survives_checkpoint():
+    from agent_augury.core.protocol.approval import ConsensusGate
+
+    server = MessageServer()
+    gate = ConsensusGate(server, thread_name="submission", entry_prefix="FINAL:")
+    gate.draft_author = "a3"
+    snap = gate.snapshot()
+    assert snap["draft_author"] == "a3"
+
+    fresh = ConsensusGate(server, thread_name="submission", entry_prefix="FINAL:")
+    fresh.restore_state(snap)
+    assert fresh.draft_author == "a3"

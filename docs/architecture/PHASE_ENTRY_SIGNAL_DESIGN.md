@@ -262,6 +262,198 @@ if self.entry_mode == "all" and not (set(self.participants) <= self.contribution
 
 ---
 
+## 6b. M4 — 초안은 하나, 작성자는 P2에서 정한다
+
+> **Status:** 설계만 (M4a 우선, M4b는 그 위)
+
+### 6b.1 문제 (실측)
+
+E1~E4 적용 후 첫 실행(98 문제) P5 스레드:
+
+```text
+agent-4 -> FINAL: ... = 98
+agent-3 -> FINAL: ... = 98      <- 같은 내용
+agent-2 -> FINAL: ... = 98      <- 같은 내용
+agent-1 -> (FINAL 제출했다고 서술)
+그 다음 APPROVE x4
+```
+
+게이트가 `FINAL:` 을 **요구**하게는 됐지만 **하나로 제한**하지 않았다.
+넷이 동시에 초안을 썼고, 결과적으로 **각자 자기 초안을 자기가 승인**했다.
+"초안 -> 팀이 검토 -> 승인"이라는 P5의 의미가 다시 사라진다.
+
+### 6b.2 M4a — first-writer-wins (기계, 강제)
+
+게이트가 **첫 진입 신호의 작성자**를 기억한다.
+
+```python
+# ConsensusGate
+self.draft_author: str | None = None      # approvals 와 같은 게이트 상태
+
+if content.startswith(self.entry_prefix):
+    if self.draft_author is None:
+        self.draft_author = author
+    self._proposal_received = True
+    self._maybe_open(message)
+```
+
+소프트 차단 (`gate_closed` / `already_approved` 와 같은 계층):
+
+```text
+content.startswith(entry_prefix)
+  and draft_author is not None
+  and author != draft_author
+-> error: draft_already_posted
+```
+
+```json
+{ "error": "draft_already_posted",
+  "author": "agent-4",
+  "needs": "FINAL:",
+  "message": "agent-4 already posted the FINAL: draft. Read it and APPROVE: it, or REJECT: to ask for a redo." }
+```
+
+- **작성자 본인의 갱신은 허용** (`author == draft_author`) — 초안 수정은 정당하다.
+- 주입: `agent.gate_draft_author: str | None` — 스칼라 하나, Loop 재추론 금지 (§3.4와 동일).
+- 체크포인트: `draft_author`는 게이트 내부 상태 -> `snapshot()` / `restore_state()` 에 한 줄.
+  `approvals` 와 대칭이므로 **새 병렬 set 아님**.
+
+### 6b.3 전제조건 — `REJECT:` 가 초안도 리셋해야 한다
+
+현재 `REJECT:` 는 `approvals` 만 지우고 `_proposal_received` 는 **남긴다**:
+
+```python
+elif content.startswith("REJECT:"):
+    self.approvals.clear()
+    self.human_pending = False       # _proposal_received 그대로
+```
+
+M4a 를 넣으면 REJECT 후 **새 초안을 올릴 수 없어 교착**이다. 그러므로:
+
+```python
+elif content.startswith("REJECT:"):
+    self.approvals.clear()
+    self.human_pending = False
+    self._proposal_received = False
+    self.draft_author = None         # 다시 누구나 쓸 수 있다
+```
+
+의미상으로도 이쪽이 맞다 — REJECT 는 "다시 제안하라"는 뜻이다.
+**P2 에도 동일 적용** (REJECT 후 새 `PROPOSE:` 필요).
+
+**마이그레이션 영향 (실측, 정확히 1건):**
+
+`tests/test_protocol.py::test_reject_clears_collected_approvals` 가 이 계약에 걸린다.
+
+```python
+PROPOSE: v1
+APPROVE (a)
+REJECT  (b)        # approvals 비워짐
+APPROVE (b)        # not open
+APPROVE (a)        # -> assert gate.is_open   <- 재-PROPOSE 없이 열림
+```
+
+D9 적용 후에는 **새 `PROPOSE:` 없이는 안 열린다.** 그런데 이 테스트는 본문에
+`"APPROVE: v2 ok"` 라고 써놓고 **v2 를 제안한 적이 없다** — 테스트 자신의 픽션이
+새 계약 쪽이 맞다는 증거다. `PROPOSE: v2` 한 줄을 넣어 갱신한다.
+
+영향 없는 것들:
+- `test_protocol.py:149` — `require_proposal=False` 게이트. `_maybe_open` 이
+  `has_proposal` 을 보지 않으므로 리셋이 무해.
+- `test_human_approval_gate.py:137` — human REJECT (stage-2 분기). `approvals`
+  비움만 검증. 단 **그 분기에도 초안 리셋을 같이 넣어야** 일관된다.
+
+### 6b.3b 구현 중 확정 — 초안 없는 표는 아예 세지 않는다 (D10 확장)
+
+설계는 D10을 "초안 **교체** 시 approvals 리셋"으로만 잡았다. 구현해 보니
+그것만으로는 구멍이 남는다:
+
+```text
+PROPOSE: v1 / APPROVE(a) / REJECT(b)     -> 초안·표 모두 리셋
+APPROVE(b) / APPROVE(a)                  -> 초안이 없는데 표가 쌓임
+PROPOSE: v2                              -> _maybe_open -> 2/2 -> 열림
+```
+
+아무도 v2를 본 적 없이 v2가 제출된다. 그런데 이 상태(`draft_author is None`
++ `approvals` 비어있지 않음)는 **D10(지각 PROPOSE) 상태와 완전히 동일**해서
+둘을 구분할 수 없다. 규칙을 하나 골라야 한다.
+
+**확정: 초안이 없을 때 던진 `APPROVE:` 는 `approvals` 에 넣지 않는다.**
+
+```python
+elif content.startswith("APPROVE:"):
+    ...
+    if self.require_proposal and not self.has_proposal:
+        return          # 투표할 대상이 없다
+```
+
+M4의 취지("초안 하나를 팀이 검토·승인")와 일치한다.
+
+**교착 위험 없음** — 이유가 둘:
+1. `entry_signal_required`(§3.4)가 그 전송을 툴 계층에서 이미 막는다.
+2. `is_agent_done` 가드가 초안 없는 동안 **아무도 park 시키지 않는다.**
+
+D10의 `_maybe_open`-on-entry-signal 은 **안전망으로 유지**한다 (사람 경로 등
+소프트 차단이 안 걸리는 통로).
+
+**계약 변경 영향 (실측):** 내가 D10/entry-signal 때 쓴 테스트 4건이
+"초안 전 표가 쌓인다"를 전제하고 있었다 — 전부 새 계약으로 갱신.
+`require_proposal=False` 게이트(P3/P4)는 첫 APPROVE가 `has_proposal` 을
+세우므로 이 규칙에 걸리지 않는다.
+
+### 6b.4 M4b — `SUBMITTER:` (정보, 강제 아님)
+
+P2 는 이미 분담을 협상한다. 거기서 **P5 에 말할 사람**도 같이 정한다.
+
+```text
+PROPOSE: 분할안
+- agent-1: 괄호 계산
+- agent-2: 곱셈/나눗셈
+...
+SUBMITTER: agent-3
+```
+
+- 파싱: `^SUBMITTER:\s*(\S+)$` — 정규식 한 줄. **NLP 아님** (§2.2 비목표 유지).
+- 시점: **P2 게이트가 열릴 때 1회**. 열린 PROPOSE 본문에서 읽어 `protocol.submitter_id` 에 저장.
+- 검증: `participants` 에 없는 id면 **무시 + `log` warning** (오타로 P5 를 망가뜨리지 않는다).
+- 체크포인트: `protocol.snapshot()` 에 `submitter_id` 한 줄.
+- 사용처: **P5 프롬프트뿐.**
+
+```text
+- The team chose **agent-3** to submit. agent-3 posts `FINAL:`;
+  everyone else reviews that draft and approves it.
+```
+
+`SUBMITTER:` 가 없으면 기존 문구("Anyone may compose...") 그대로.
+
+### 6b.5 왜 M4b 를 강제하지 않나
+
+선출을 게이트 조건으로 만들면 **선출자가 침묵할 때 P5 가 교착**한다.
+이 저장소는 같은 모양의 교착을 이미 두 번 밟았다:
+
+| 사례 | 원인 |
+|------|------|
+| D10 | 지각 `PROPOSE:` 를 만장일치 재검사 안 함 |
+| P2 파킹 데드락 | 제안 없이 전원 APPROVE -> 전원 done -> 아무도 못 씀 |
+
+M4a 가 바닥에 깔려 있으면 선출이 실패해도 **누군가 쓰면 그게 초안**이라 세션이 진행된다.
+**강제는 M4a 하나, M4b 는 그 위의 힌트.** 기계를 두 개 만들지 않는다.
+
+### 6b.6 재우기는 이미 동작한다
+
+"한 명이 쓰고 나머지는 재운다"에서 **재우는 쪽은 신규 작업이 아니다.**
+`APPROVE:` -> `is_agent_done` -> `protocol_done` -> `run_agent` 최상단 park
+(chatter C2). 안 자는 것은 아직 승인하지 않은 에이전트뿐이고, 그건 자면 안 된다.
+
+### 6b.7 F3 각주
+
+`AGENT_RELEVANCE_BUDGET_DESIGN.md:522` 는 F3(phase_role) 제거 사유를
+**"코드에 assignee/proposer 없음"** 으로 적고 있다. `submitter_id` 가 생기면
+그 근거 데이터가 생긴다 — P5 에서 선출자의 `attention.floor` 를 올리는 식.
+**본 설계 범위 아님.** 각주로만 남긴다.
+
+---
+
 ## 7. 마일스톤
 
 | 순서 | ID | 내용 | 완료 조건 |
@@ -271,6 +463,8 @@ if self.entry_mode == "all" and not (set(self.participants) <= self.contribution
 | 3 | **E3** | `gate_needs_signal` 주입 + `entry_signal_required` 소프트 차단 | 조기 APPROVE 미전송 |
 | 4 | **E4** | 프롬프트·넛지 문구 entry_prefix 인자화 | P5 지시에 `FINAL:` 등장 |
 | 5 | **E5** | M3 어셈블러 삭제 + `DESIGN.md` §2.3 갱신 | grep `assembler` = 0 |
+| 6 | **M4a** | first-writer-wins + `REJECT:` 초안 리셋 | 초안이 항상 1개; REJECT 후 재작성 가능 |
+| 7 | **M4b** | `SUBMITTER:` 파싱 -> P5 프롬프트 | 선출자 침묵해도 세션 진행 |
 | — | M2 | P4 `all("RESULT:")` | D1 결정 후 |
 
 E1~E4는 한 PR로 묶어도 된다(같은 축). E5는 독립.
@@ -290,6 +484,13 @@ E1~E4는 한 PR로 묶어도 된다(같은 축). E5는 독립.
 | P3 | 신호 없음 — 첫 APPROVE로 진행 (기존) |
 | `is_agent_done` | entry 미충족이면 전원 False (데드락 가드 유지) |
 | 체크포인트 | `entry_prefix`는 스냅샷에 없음; 재구성으로 복원 |
+| **M4a** 두 번째 `FINAL:` | `draft_already_posted`, 메시지 미적재 |
+| **M4a** 작성자 본인 재게시 | 허용 (초안 수정) |
+| **M4a** REJECT 후 | 다른 에이전트가 새 `FINAL:` 가능 (교착 없음) |
+| **M4a** 체크포인트 | `draft_author` 복원 |
+| **M4b** `SUBMITTER: agent-3` | P5 프롬프트에 agent-3 등장 |
+| **M4b** 잘못된 id | 무시 + warning, P5 기본 문구 |
+| **M4b** 선출자 침묵 | 다른 에이전트 `FINAL:` 로 게이트 열림 |
 | 프롬프트 | P5 블록에 `FINAL:`, 게이트 힌트도 `FINAL:` |
 
 ---
@@ -303,6 +504,11 @@ E1~E4는 한 PR로 묶어도 된다(같은 축). E5는 독립.
 | D3 | `entry_signal_required` vs 표 허용 후 미개방 | **차단** — 혼란 상태를 만들지 않음 |
 | D4 | P2도 `FINAL:`처럼 본문 강제? | 아니오 — `PROPOSE:` 가 이미 그 역할 |
 | D5 | 어셈블러 삭제 vs 보존 | **삭제** (§6) |
+| D6 | 중복 초안: 차단 vs 방치 | **차단** (M4a) |
+| D7 | `SUBMITTER:` 파싱 시점 | P2 게이트 open 시 **1회** |
+| D8 | 선출자 침묵 시 타임아웃? | **없음** — M4a 폴백으로 충분 |
+| D9 | `REJECT:` 가 초안 리셋 — P2 에도? | **예** (의미상 일관) |
+| D10 | 초안 갱신 시 `approvals` 리셋? | **예 (확정)** + 초안 없을 때의 표는 애초에 안 셈 (§6b.3b) |
 
 ---
 

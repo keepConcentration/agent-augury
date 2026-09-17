@@ -51,6 +51,9 @@ class ConsensusGate:
         self._bound: bool = False
         self._on_open: GateCallback | None = None
         self._proposal_received: bool = False
+        # Who posted the draft this gate is voting on. Votes belong to a
+        # specific draft, so a replacement resets them (see on_message).
+        self.draft_author: str | None = None
         # HUMAN_APPROVAL_GATE_DESIGN: after_agents 2nd stage
         self.await_human_after_agents = bool(await_human_after_agents)
         self.human_pending: bool = False
@@ -113,14 +116,19 @@ class ConsensusGate:
         # Stage 2: waiting for human after agent unanimity
         if self.await_human_after_agents and self.human_pending:
             if content.startswith("REJECT:"):
-                self.approvals.clear()
-                self.human_pending = False
+                self._reset_for_redo()
                 return
             if author == "human" and content.startswith("APPROVE:"):
                 self._open_gate(message)
             return
 
         if content.startswith(self.entry_prefix):
+            if self.draft_author is None:
+                self.draft_author = author
+            elif self.approvals:
+                # The draft changed under the voters' feet: whatever they
+                # approved is not what would be submitted. Re-collect.
+                self.approvals.clear()
             self._proposal_received = True
             # A PROPOSE may arrive AFTER everyone already voted (agents on a
             # pre-bound thread can APPROVE before any proposal exists). Without
@@ -129,8 +137,7 @@ class ConsensusGate:
             # rescue it.
             self._maybe_open(message)
         elif content.startswith("REJECT:"):
-            self.approvals.clear()
-            self.human_pending = False
+            self._reset_for_redo()
         elif content.startswith("APPROVE:"):
             if author == "human":
                 # Ignore human votes before agent unanimity (after_agents T5)
@@ -138,9 +145,22 @@ class ConsensusGate:
             if not self.require_proposal:
                 # P3+ (require_proposal=False): first APPROVE acts as the proposal
                 self._proposal_received = True
+            if self.require_proposal and not self.has_proposal:
+                # Nothing to vote on yet. Counting these would let a draft
+                # be submitted on approvals nobody gave it (M4a/D10).
+                # No deadlock: the tool layer blocks this send, and
+                # is_agent_done() keeps everyone awake until a draft lands.
+                return
             if author in self.participants:
                 self.approvals.add(author)
                 self._maybe_open(message)
+
+    def _reset_for_redo(self) -> None:
+        """``REJECT:`` — votes AND the draft go; someone must propose again."""
+        self.approvals.clear()
+        self.human_pending = False
+        self._proposal_received = False
+        self.draft_author = None
 
     def _maybe_open(self, message: dict[str, Any]) -> None:
         """Open (or park for human) once every participant has approved."""
@@ -174,6 +194,7 @@ class ConsensusGate:
             "approvals": sorted(self.approvals),
             "opened_at_seq": self.opened_at_seq,
             "proposal_received": self._proposal_received,
+            "draft_author": self.draft_author,
             "require_proposal": self.require_proposal,
             "await_human_after_agents": self.await_human_after_agents,
             "human_pending": self.human_pending,
@@ -192,6 +213,8 @@ class ConsensusGate:
         opened = snap.get("opened_at_seq")
         self.opened_at_seq = int(opened) if opened is not None else None
         self._proposal_received = bool(snap.get("proposal_received", False))
+        da = snap.get("draft_author")
+        self.draft_author = str(da) if da else None
         if "await_human_after_agents" in snap:
             self.await_human_after_agents = bool(snap["await_human_after_agents"])
         self.human_pending = bool(snap.get("human_pending", False))

@@ -136,6 +136,22 @@ async def test_signal_in_reply_text_gets_a_nudge():
     assert loop._unsent_signal_nudge("APPROVE: ok", sent) is None
 
 
+def test_terminal_phases_say_the_protocol_is_over():
+    """Live `a858cd97`: a follow-up question ran 39 steps of imitated protocol.
+
+    At COMPLETED the phase block was empty, so the only thing steering the
+    agent was a conversation full of PROPOSE:/APPROVE:/FINAL: from the run
+    that had just ended.
+    """
+    from agent_augury.core.agent.system_prompt import render_system_prompt
+    from agent_augury.core.protocol.phases import COMPLETED, REJECTED
+
+    for phase in (COMPLETED, REJECTED):
+        block = render_system_prompt("a1", phase=phase)
+        assert f"**{phase}**" in block, f"{phase} renders no phase block"
+        assert "closed history" in block
+
+
 def test_every_gated_phase_says_how_to_end_it():
     """Live run `63fec483`: P3 took 13 messages where P4/P5 took 4 each.
 

@@ -195,6 +195,20 @@ Current phase: **P5 SUBMIT**
   already posted one, do not write your own; read theirs.
 - Once a `FINAL:` draft is posted, everyone approves it with `APPROVE:`,
   or asks for a redo with `REJECT:` (that clears the draft and the votes).""",
+    # Terminal phases still render: a follow-up question arrives with the
+    # protocol spent, and with no block here the only thing steering the agent
+    # is a conversation full of PROPOSE:/APPROVE:/FINAL: from the run that just
+    # ended -- so it keeps performing the protocol (live: `a858cd97`).
+    "COMPLETED": """Current phase: **COMPLETED** - the P1-P5 run for the PREVIOUS question is over.
+- Those gate threads are closed history. `PROPOSE:` / `APPROVE:` / `FINAL:`
+  posted now open nothing; no gate is listening.
+- Do NOT re-run the protocol, and do not repeat the previous answer.
+- Answer the user's new question directly in your reply. Message a teammate
+  only when you actually need something from them.""",
+    "REJECTED": """Current phase: **REJECTED** - the P1-P5 run ended without consensus.
+- Those gate threads are closed history; signals posted now open nothing.
+- Answer the user directly in your reply, and say plainly what the team
+  could not agree on.""",
 }
 
 

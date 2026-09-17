@@ -393,14 +393,22 @@ READY:   ∧ agent_id ∈ agent.ready_states    → already_ready
 
 ---
 
-## 5. 설계 3 — work-before-vote (C4, D6 대기)
+## 5. 설계 3 — work-before-vote (C4) · **폐기** (2026-09-17)
 
-더미 작업 로그 위험 유지. 카운트는 서버 메시지 조회.
+> **Status:** **폐기.** 구현된 적 없음 — 지울 코드도 없다.
+> 선행으로 잡아둔 `server.current_seq` 도 불필요해졌다.
 
-**각주 — `phase_entered_seq` 훅 없음:**  
-`_setup_gate_for_phase`는 seq를 모름. seq는 `len(self._messages)` (`server.py` ~330)이고  
-공개 접근자 없음. C4 착수 시 **`server.current_seq` (또는 동일) 한 줄 선행**.  
-급하지 않음 (D6).
+투표 전에 작업 로그를 요구하는 안이었다. 두 가지 이유로 접는다.
+
+1. **과녁이 틀렸다.** P3 폭주(세션 `63fec483`, 13메시지)를 갈라 보면 첫 표 이전이
+   9개, 이후가 3개다. 비용은 *투표가 일러서*가 아니라 **끝내는 법을 몰라서** 났다.
+   `_PHASE_INSTRUCTIONS` 의 P3/P4 블록에 `APPROVE:` 라는 단어를 넣자
+   세션 `a858cd97` 에서 **13 → 6** 이 됐다.
+   (`PHASE_ENTRY_SIGNAL_DESIGN` §6b.8 · §6b.10)
+2. **더미 로그를 유도한다.** 원안이 이미 안고 있던 약점이다. "아무 비시그널
+   메시지"를 세므로 에이전트가 통과용 한 줄을 쓰게 된다. 형제 안
+   M2(`all("RESULT:")`)는 타입이 있어 이 위험이 작았는데, 그 M2 조차 같은
+   이유로 폐기됐다.
 
 ---
 
@@ -451,7 +459,7 @@ READY:   ∧ agent_id ∈ agent.ready_states    → already_ready
 | 3 | **C0a** | `EVENT_TYPES` + 스키마 + 게이트 발행 (`translate` 불필요; Ink UI 없음) |
 | 4 | **C2+D5** | while park + Loop D5; 선택: debug park/skip (b) |
 | 5 | **C0b** | Ink `GateStatusBar` |
-| 6 | C4 | work-before-vote + `server.current_seq` (D6) |
+| ~~6~~ | ~~C4~~ | ~~work-before-vote~~ — **폐기** (§5) |
 | 7 | C5 | mode light/off |
 
 C0a를 C2 앞에 두는 이유: park/skip이 step 로그를 죽이므로 **투표 이벤트로 관측을 먼저** 확보.
@@ -499,7 +507,7 @@ C0a를 C2 앞에 두는 이유: park/skip이 step 로그를 죽이므로 **투�
 | D5 human | 멘션∨URGENT만 |
 | D5 메시지/위치 | full radio; drain 직후·attention 전 |
 | D5↔C2 | 분리 불가 |
-| D6 C4 | 실측 후; `current_seq` 선행 |
+| D6 C4 | **폐기** — 비용은 퇴장 규칙 부재였고 프롬프트로 해결 (§5) |
 | D7 restore | 매 step 재주입 |
 | D8 T0 갭 | 별 이슈 |
 | D9 empty approvals | `frozenset()` |

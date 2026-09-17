@@ -1,15 +1,18 @@
 # Phase entry signal — 페이즈에 이름이 아니라 내용을 주기
 
-> **Status:** **E1~E5 구현 완료** (M2만 보류)
+> **Status:** **완료** — E1~E5 · M4a~M4c 구현, **M2 폐기**(§5, 2026-09-17)
 > **Date:** 2026-09-16
 > **Priority:** P2 (정확도 아님 — 프로토콜이 의미를 갖게)
 > **Parent:** `DESIGN.md` §2.3 (P1~P5), `core/protocol/approval.py`
-> **인접:** `PROTOCOL_CHATTER_REDUCTION_DESIGN.md` §5 (C4 work-before-vote, D6 보류),
->   `SESSION_TURN_TERMINATION_DESIGN.md`
-> **Code touch (예정):** `protocol/approval.py`, `protocol/collaboration.py`,
+> **인접:** `PROTOCOL_CHATTER_REDUCTION_DESIGN.md` §5 (C4 — 같은 이유로 폐기),
+>   `RADIO_DIGEST_DESIGN.md` (M5 — 폐기), `SESSION_TURN_TERMINATION_DESIGN.md`
+> **Code touch:** `protocol/approval.py`, `protocol/collaboration.py`,
+>   `protocol/signals.py`, `protocol/assignments.py`,
 >   `core/session.py`, `agent/loop.py`, `agent/system_prompt.py`
-> **Tests (예정):** `tests/test_phase_entry_signal.py`
-> **결정:** M1 `one(prefix)` 채택 · M2 `all(prefix)`는 실측 후 · M3 어셈블러 삭제
+> **Tests:** `tests/test_phase_entry_signal.py`, `tests/test_signal_matching.py`,
+>   `tests/test_assignments.py`, `tests/test_gate_drafter_vote.py`
+> **결정:** M1 `one(prefix)` 채택 · **M2 `all(prefix)` 폐기** · M3 어셈블러 삭제
+> **검증:** 세션 `a858cd97` — 게이트 4개 전부 사람 개입 없이 열림 (§6b.10)
 
 ---
 
@@ -219,30 +222,59 @@ While the gate is closed, send `{entry_prefix}` / `APPROVE:` only to this thread
 
 ---
 
-## 5. M2 (별도 결정) — P4 `all("RESULT:")`
+## 5. M2 — P4 `all("RESULT:")` · **폐기** (2026-09-17)
 
-§2.3의 P4는 "각자 결과를 근거와 함께 방송"이다. 이는 `one`이 아니라 **전원 기여**다.
+> **Status:** **폐기.** 구현된 적 없음 — 지울 코드도 없다.
+
+### 5.1 무엇이었나
+
+§2.3의 P4는 "각자 결과를 근거와 함께 방송"이므로 `one` 이 아니라 **전원 기여**다.
+게이트에 `contributions` 집합을 두고, 전원이 `RESULT:` 를 낼 때까지 열지 않는 안이었다.
 
 ```python
-# ConsensusGate
-self.contributions: set[str] = set()      # approvals와 대칭
-
-if content.startswith(self.entry_prefix) and author in self.participants:
+# 채택하지 않은 설계
+self.contributions: set[str] = set()      # approvals 와 대칭
+if has_signal(content, self.entry_prefix) and author in self.participants:
     self.contributions.add(author)
-...
 # _maybe_open 조건에 추가
 if self.entry_mode == "all" and not (set(self.participants) <= self.contributions):
     return
 ```
 
-- `approvals`와 같은 게이트 내부 상태 → `snapshot()`에 `contributions` 한 줄 추가.
-  **새 병렬 set 아님** (게이트가 SSOT).
-- C4(work-before-vote)와의 차이: C4는 "아무 비시그널 메시지"라 **더미 로그**를 유도한다
-  (chatter §5.1). `all("RESULT:")`는 **타입이 있는 기여**라 그 위험이 작다.
-- 위험: 한 명이 `RESULT:`를 안 내면 P4가 안 열린다 → 데드락. `is_agent_done` 가드를
-  `entry` 미충족 전반으로 확장해야 함(§3.4와 동일 이유).
+### 5.2 왜 폐기하나 — 과녁이 틀렸다
 
-**D1: M1 실측 후 결정.** M1만으로 P5가 의미를 가지면 M2는 안 해도 된다.
+D1은 "M1 실측 후 결정"이었다. 실측이 나왔고, **비용은 M2가 겨냥하던 자리에 없었다.**
+
+세션 `63fec483` 에서 P3(thread-2)이 13메시지로 폭주했을 때, 그 13개를 갈라 보면:
+
+```text
+첫 표(APPROVE:) 이전   9개   <- 전부 확인 요청·확인 응답
+첫 표 이후             3개   <- 표가 돌자 즉시 종료
+```
+
+**들어가는 법(진입 신호)이 없어서가 아니라 나가는 법(종료 신호)을 몰라서** 났다.
+`_PHASE_INSTRUCTIONS` 의 P3/P4 블록에는 `APPROVE:` 라는 단어가 아예 없었다 (§6b.8).
+
+문장 두 줄을 넣자 세션 `a858cd97` 에서 **13 → 6 메시지**가 됐다.
+M2가 고치려던 비용은 **이미 사라졌다.**
+
+### 5.3 그리고 값이 비싸다
+
+M2는 `require_proposal=True` 를 P3/P4로 넓히는 **장치** 변경이다.
+그러면 **새 교착 종류**가 생긴다 — 한 명이 `RESULT:` 를 끝내 안 내면 P4가 안 열린다.
+§3.4와 같은 이유로 `is_agent_done` 가드를 `entry` 미충족 전반으로 확장해야 하고,
+소프트 차단·스냅샷·복원에 모두 손이 간다.
+
+**이미 없어진 비용을 위해 교착 하나를 사는 거래다.** 하지 않는다.
+
+### 5.4 형제 항목
+
+- **C4 (work-before-vote, `PROTOCOL_CHATTER_REDUCTION_DESIGN` §5)** — 같은 이유로
+  폐기. 게다가 C4는 "아무 비시그널 메시지"를 세므로 **더미 로그를 유도**한다는
+  약점이 M2보다 크다. 선행 작업으로 잡아둔 `server.current_seq` 도 불필요해졌다.
+- **M5 (`RADIO_DIGEST_DESIGN`)** — 별도 이유로 폐기 (radio 의 79%가 작업 로그).
+
+세 항목 모두 **"측정이 설계를 이겼다"** 는 같은 결말이다.
 
 ---
 
@@ -776,6 +808,50 @@ P1 에는 게이트가 없어서 원래 문구가 틀린 말이었다.
 같은 종류의 방어를 넣을 때는 **P1 의 세 필드부터 확인**할 것.
 
 
+### 6b.10 검증 (세션 `a858cd97`)
+
+§6b.8(P3/P4 종료 규칙)과 §6b.9(P1 넛지)를 넣고 처음 돌린 실행.
+
+| 스레드 | 페이즈 | 이번 | `63fec483` | `d6bcbc56` |
+|--------|--------|-----:|-----:|-----:|
+| thread-1 | P2 | 5 | 5 | 5 |
+| **thread-2** | **P3** | **6** | **13** | 13 |
+| thread-3 | P4 | 5 | 4 | 4 |
+| thread-4 | P5 | **4** | 4 | 4(+사람) |
+| **합계** | | **24** | 30 | 29 |
+| 스텝 | | **46** | 65 | 67 |
+
+§6b.8 이 건 기준(*"thread-2 가 6메시지 이하면 M2 는 폐기 후보"*)을 **정확히 맞췄다.**
+`(URGENT)` 남용 0건, "확인 부탁드립니다 / 확인 완료" 왕복 소멸.
+
+**P1 넛지가 실전에서 처음 발동했다.**
+
+```text
+agent-4 (답변 텍스트):  "READY:\n\n풀이 과정: ... 정답: 156"   <- send_message 없음
+
+[runtime] You wrote READY: in your reply, but nobody received it
+          -- only `send_message` actually sends it. Send it to thread `thread-5`.
+
+seq 3  agent-4  thread-5  "READY: done"                        <- 4/4, P2 진입
+```
+
+직전 실행(`43addf1b`)에서 세션을 3/4 로 멈춰세웠던 바로 그 자리다.
+
+#### 고치지 않기로 한 것 — `PROAPPROVE:`
+
+```text
+seq 9  agent-1  thread-2  "PROAPPROVE: 곱셈/나눗셈 검증 완료 ..."
+```
+
+agent-1 이 `PROPOSE:` 와 `APPROVE:` 를 섞어 썼다. `has_signal` 은 맨 앞이
+`APPROVE:` 가 아니므로 받지 않았고, agent-1 은 네 메시지 뒤 seq 13 에서
+제대로 된 `APPROVE:` 를 보내 **스스로 복구**했다.
+
+받아주려면 흐릿한 매칭이 필요한데, `signals.py` 가 일부러 피하는 것이 정확히
+그것이다 — **남의 말을 인용한 것을 표로 세는 쪽이 신호를 놓치는 쪽보다 훨씬 나쁘다.**
+24개 중 1개 낭비이고 자가 복구됐다. 그대로 둔다.
+
+
 ---
 
 ## 7. 마일스톤
@@ -823,7 +899,7 @@ E1~E4는 한 PR로 묶어도 된다(같은 축). E5는 독립.
 
 | # | 질문 | 제안 |
 |---|------|------|
-| D1 | P4 `all("RESULT:")` 채택? | M1 실측 후 |
+| D1 | P4 `all("RESULT:")` 채택? | **아니오 — 폐기** (§5). 비용은 진입이 아니라 퇴장에 있었다 |
 | D2 | `require_proposal` 이름 유지 vs `entry_required` 개명 | **유지** (호환·diff 최소) |
 | D3 | `entry_signal_required` vs 표 허용 후 미개방 | **차단** — 혼란 상태를 만들지 않음 |
 | D4 | P2도 `FINAL:`처럼 본문 강제? | 아니오 — `PROPOSE:` 가 이미 그 역할 |
@@ -843,4 +919,15 @@ E1~E4는 한 PR로 묶어도 된다(같은 축). E5는 독립.
 없으면 **표를 받지 않는다**(`entry_signal_required`).
 P5는 `FINAL:` 초안 없이 못 열리므로 **제출 스레드에 최종 답이 반드시 남는다** —
 이것이 P5를 P4와 구별하는 최소 변경이다.
-P4 전원 기여(`RESULT:`)와 어셈블러 삭제는 분리해서 판단한다.
+
+그 위에 실사용이 세 가지를 더 가르쳐 줬다.
+
+| | 배운 것 | 값 |
+|--|--------|-----|
+| M4a (§6b.2) | 초안은 하나 | `FINAL:` 중복 4건 → 1건 |
+| M4c (§6b.6) | **초안을 쓴 것이 곧 그 표다** | 게이트당 왕복 1회 절감, P5·P3 교착 제거 |
+| §6b.8 | **페이즈마다 끝내는 법을 말해야 한다** | P3 13 → 6 메시지 |
+
+반대로 **P4 전원 기여(M2)는 폐기했다** (§5). 측정해 보니 비용은 진입이 아니라
+퇴장에 있었고, 그것은 장치가 아니라 프롬프트 두 줄로 없어졌다.
+**설계가 아니라 측정이 무엇을 만들지 정했다.**

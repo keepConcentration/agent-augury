@@ -184,8 +184,11 @@ class AgentLoop:
         # The gate's entry signal regardless of whether it has arrived
         # (prompt wording); gate_needs_signal is the "still missing" view.
         self.gate_entry_prefix: str | None = None
-        # Who already posted this gate's draft (first writer wins).
-        self.gate_draft_author: str | None = None
+        # Live view of who already posted this gate's draft (first writer
+        # wins). A COPY would be stale by the time the tool runs: Session
+        # injects before step(), and the model call in between takes
+        # seconds, so parallel agents would all see None and all draft.
+        self.gate_draft_author_fn: Callable[[], str | None] | None = None
         # waiting-at-a-gate AND this agent already signalled — Session computes
         # it; the loop never re-derives it.
         self.protocol_done: bool = False
@@ -477,11 +480,14 @@ class AgentLoop:
         """Soft-block a re-``APPROVE:``/``READY:`` from an agent already counted."""
         content = str(args.get("content") or "")
         prefix = self.gate_entry_prefix
+        draft_author = (
+            self.gate_draft_author_fn() if self.gate_draft_author_fn else None
+        )
         if (
             prefix
             and content.startswith(prefix)
-            and self.gate_draft_author
-            and self.gate_draft_author != self.agent_id
+            and draft_author
+            and draft_author != self.agent_id
         ):
             # One draft per gate: a second one splits the vote and means
             # everyone ends up approving their own text.
@@ -489,10 +495,10 @@ class AgentLoop:
                 {
                     "error": "draft_already_posted",
                     "phase": self.current_phase or "?",
-                    "author": self.gate_draft_author,
+                    "author": draft_author,
                     "needs": prefix,
                     "message": (
-                        f"{self.gate_draft_author} already posted the {prefix} "
+                        f"{draft_author} already posted the {prefix} "
                         f"draft. Read it and APPROVE: it, or REJECT: to ask "
                         f"for a redo."
                     ),

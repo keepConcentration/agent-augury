@@ -125,6 +125,10 @@ class ConsensusGate:
         if content.startswith(self.entry_prefix):
             if self.draft_author is None:
                 self.draft_author = author
+            elif author != self.draft_author:
+                # A rival draft: the gate ignores it entirely. It must not
+                # touch votes cast on the draft that actually owns the gate.
+                return
             elif self.approvals:
                 # The draft changed under the voters' feet: whatever they
                 # approved is not what would be submitted. Re-collect.

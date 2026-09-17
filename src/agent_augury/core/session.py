@@ -1836,7 +1836,7 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
         agent.gate_approvals = gate.approvals
         agent.ready_states = protocol.ready_states
         agent.gate_entry_prefix = gate.entry_prefix
-        agent.gate_draft_author = gate.draft_author
+        agent.gate_draft_author_fn = lambda g=gate: g.draft_author
         agent.gate_needs_signal = (
             gate.entry_prefix
             if (gate.require_proposal and not gate.has_proposal)
@@ -1850,7 +1850,7 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
         agent.gate_approvals = frozenset()
         agent.ready_states = protocol.ready_states
         agent.gate_entry_prefix = None
-        agent.gate_draft_author = None
+        agent.gate_draft_author_fn = None
         agent.gate_needs_signal = None
     else:
         # Other phases without a gate — no restriction
@@ -1862,5 +1862,5 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
         agent.gate_approvals = frozenset()
         agent.ready_states = frozenset()
         agent.gate_entry_prefix = None
-        agent.gate_draft_author = None
+        agent.gate_draft_author_fn = None
         agent.gate_needs_signal = None

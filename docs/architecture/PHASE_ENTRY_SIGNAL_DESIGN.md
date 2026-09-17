@@ -401,6 +401,54 @@ D10의 `_maybe_open`-on-entry-signal 은 **안전망으로 유지**한다 (사�
 `require_proposal=False` 게이트(P3/P4)는 첫 APPROVE가 `has_proposal` 을
 세우므로 이 규칙에 걸리지 않는다.
 
+### 6b.3c 실행 후 수정 2건 (윤리 딜레마 세션 `c06dfe95`)
+
+M4a 적용 첫 실행에서도 `FINAL:` 이 **4개** 들어갔다. `draft_already_posted` 는
+단 1회만 발동.
+
+```text
+seq 35 agent-1 FINAL:   -> draft_author = agent-1
+seq 36 agent-4 FINAL:   <- 차단 실패
+seq 37 agent-3 FINAL:   <- 차단 실패
+seq 38 agent-2 FINAL:   <- 차단 실패
+```
+
+**(1) 주입값이 낡는다.** `agent.gate_draft_author = gate.draft_author` 는
+**문자열 복사**다. 주입은 `step()` 전이고 그 사이 모델 호출이 수 초 걸리므로,
+병렬 에이전트 넷이 전부 `None` 을 들고 출발한다.
+`gate_approvals` 는 **set 참조**라 이 문제가 없었다 — 같은 실수를 스칼라에서 반복.
+
+**수정:** 라이브 뷰로 주입한다.
+
+```python
+agent.gate_draft_author_fn = lambda g=gate: g.draft_author   # 값이 아니라 뷰
+```
+
+**남는 창:** 체크는 동기지만 `await tools.execute(...)` 지점에서 다른 태스크가
+끼어들 수 있다. 창이 **수 초 -> 한 번의 await** 로 줄 뿐 완전 제거는 아니다.
+완전하려면 `send_message` 자체가 거부 가능해야 하는데 과하다 —
+**게이트 판정은 이미 정확하다**(메시지 seq 순 첫 번째가 소유). 소프트 차단은
+정확성이 아니라 **잡음 제거**용이라는 점을 명시한다.
+
+**(2) 경쟁 초안이 정당한 표를 지웠다 (잠재).** 초안 교체 시 approvals 를 비우는
+분기에 **작성자 확인이 없었다.**
+
+```python
+elif author != self.draft_author:
+    return          # 지는 초안은 게이트가 통째로 무시 — 표를 건드리지 않는다
+elif self.approvals:
+    self.approvals.clear()
+```
+
+이번 실행에서는 seq 36~38 시점에 표가 비어 터지지 않았지만, 표가 모인 뒤
+경쟁 초안이 오면 날아간다.
+
+**(3) REJECT 로 소유권 탈취 — 수정 안 함.** agent-2 가 내용 반려가 아니라
+"내 초안을 승인해 달라"는 뜻으로 `REJECT:` 를 보내 초안·표를 리셋하고 작성자가
+됐다(seq 42-43). REJECT 는 **침묵하는 작성자를 대체할 유일한 통로**라 막으면
+교착 위험이 생긴다(D8). (1) 을 고치면 경쟁 초안 자체가 안 생기므로 이 혼란의
+**증상** 으로 본다. 재현되면 그때 재검토.
+
 ### 6b.4 M4b — `SUBMITTER:` (정보, 강제 아님)
 
 P2 는 이미 분담을 협상한다. 거기서 **P5 에 말할 사람**도 같이 정한다.

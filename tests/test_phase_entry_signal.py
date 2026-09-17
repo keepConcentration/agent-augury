@@ -295,3 +295,61 @@ def test_draft_author_survives_checkpoint():
     fresh = ConsensusGate(server, thread_name="submission", entry_prefix="FINAL:")
     fresh.restore_state(snap)
     assert fresh.draft_author == "a3"
+
+
+@pytest.mark.asyncio
+async def test_draft_block_sees_a_claim_made_after_injection():
+    """Live repro: four agents each posted FINAL: and only one was blocked.
+
+    Session injects gate state BEFORE step(); the model call in between takes
+    seconds. A snapshot of draft_author is None for every agent that started
+    before the winner's message landed, so they all drafted.
+    """
+    server = MessageServer()
+    agents = ["a1", "a2"]
+    for a in agents:
+        server.register_agent(a)
+    protocol, gate, tid = await _gate(
+        server, agents, P5_SUBMIT, "submission",
+        require_proposal=True, entry_prefix="FINAL:",
+    )
+    latecomer = AgentLoop(agent_id="a2", backend=Quiet(), server=server)
+    latecomer.current_phase = P5_SUBMIT
+    _inject_protocol_gate_state(latecomer, protocol)   # nobody has drafted yet
+    assert gate.draft_author is None
+
+    # ... a1 wins the race while a2 is still inside backend.complete() ...
+    await server.send_message(tid, author="a1", content="FINAL: 98")
+
+    out = json.loads(
+        await latecomer._execute_tool(
+            "send_message", {"thread": tid, "content": "FINAL: mine"}
+        )
+    )
+    assert out["error"] == "draft_already_posted"
+    assert out["author"] == "a1"
+
+
+@pytest.mark.asyncio
+async def test_rival_draft_does_not_wipe_votes():
+    """A losing draft is ignored; it must not clear the winner's approvals."""
+    server = MessageServer()
+    agents = ["a1", "a2", "a3"]
+    for a in agents:
+        server.register_agent(a)
+    _, gate, tid = await _gate(
+        server, agents, P5_SUBMIT, "submission",
+        require_proposal=True, entry_prefix="FINAL:",
+    )
+    await server.send_message(tid, author="a1", content="FINAL: 98")
+    await server.send_message(tid, author="a2", content="APPROVE: ok")
+    await server.send_message(tid, author="a3", content="APPROVE: ok")
+    assert gate.approvals == {"a2", "a3"}
+
+    # a rival draft slips through (race / non-protocol sender)
+    await server.send_message(tid, author="a2", content="FINAL: my version")
+    assert gate.draft_author == "a1", "ownership must not transfer"
+    assert gate.approvals == {"a2", "a3"}, "votes on a1's draft must survive"
+
+    await server.send_message(tid, author="a1", content="APPROVE: ok")
+    assert gate.is_open

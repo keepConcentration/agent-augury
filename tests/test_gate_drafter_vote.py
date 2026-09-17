@@ -148,3 +148,40 @@ def test_every_gated_phase_says_how_to_end_it():
     for phase in ("P2_SPLIT", "P3_EXECUTE", "P4_REVIEW", "P5_SUBMIT"):
         block = render_system_prompt("a1", phase=phase)
         assert "APPROVE:" in block, f"{phase} never says how to close its gate"
+
+
+@pytest.mark.asyncio
+async def test_spent_protocol_drops_the_previous_turns_assignment():
+    """Live `a858cd97`: a follow-up question arrived with the protocol COMPLETED.
+
+    The phase block is empty at COMPLETED, so the stale P2 line was the ONLY
+    protocol text left in the prompt -- agents kept "verifying" the previous
+    turn's arithmetic and leaked its answer into the new one.
+    """
+    from agent_augury.core.agent.system_prompt import render_system_prompt
+    from agent_augury.core.protocol.phases import COMPLETED
+    from agent_augury.core.session import _inject_protocol_gate_state
+
+    server = MessageServer()
+    for a in ("a1", "a2"):
+        server.register_agent(a)
+    protocol = CollaborationProtocol(server, participants=["a1", "a2"])
+    protocol._assignments = {"a2": "괄호 계산 검증 - (7-3)=4"}
+    protocol._submitter_id = "a1"
+
+    agent = AgentLoop("a2", server, Quiet())
+
+    protocol.phase_manager._phase = P2_SPLIT
+    _inject_protocol_gate_state(agent, protocol)
+    assert agent.assignment == "괄호 계산 검증 - (7-3)=4"   # live during the run
+
+    protocol.phase_manager._phase = COMPLETED
+    _inject_protocol_gate_state(agent, protocol)
+    assert agent.assignment is None
+    assert agent.submitter_id is None
+    agent.current_phase = COMPLETED
+    prompt = render_system_prompt(
+        "a2", phase=COMPLETED,
+        assignment=agent.assignment, submitter_id=agent.submitter_id,
+    )
+    assert "assigned share" not in prompt

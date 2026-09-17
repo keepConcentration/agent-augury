@@ -497,3 +497,73 @@ rev.5: `error`는 **`CancelledError` 제외**; `reason=error`의 **`steps`=미�
 rev.4: `turn_done` **`_do_run` finally**; turn_done → log; §5.1 부분 게이트;  
 rev.3: streak **continue 앞**; reason 표; **`drained_count`**; B in-flight ≤N−1;  
 stdio·headless **동일 helper**.
+
+---
+
+## 8. 후속 턴 — 끝난 프로토콜이 남긴 것 (세션 `a858cd97`)
+
+사칙연산 세션이 COMPLETED 로 끝난 뒤, 같은 세션에 **BSD 추측 증명 요청**이 들어왔다.
+`protocol_spent` 가드 덕에 프로토콜은 **재시작하지 않았다** (체크포인트 `phase: COMPLETED`,
+로그에 `[phase]` 전환 없음). 그런데 39스텝, 서버 메시지 16건을 더 썼고 답이 오염됐다.
+
+### 8.1 원인 — 지난 턴의 분담이 프롬프트에 그대로 남았다
+
+체크포인트에 이렇게 남아 있었다.
+
+```json
+"phase": "COMPLETED",
+"assignments": {
+  "agent-2": "괄호 내부 계산 검증 - (7-3)=4, (125-37)=88, ...",
+  "agent-3": "곱셈/나눗셈 계산 검증 - 18×4, 24÷6, ..."
+},
+"submitter_id": "agent-1"
+```
+
+`_inject_protocol_gate_state` 는 `assignment` / `submitter_id` 를 **분기 앞에서
+무조건** 넣었다. 그리고 `_phase_instructions_with_gate` 는
+
+```python
+base = _PHASE_INSTRUCTIONS.get(phase, "")   # COMPLETED -> ""
+if assignment:
+    base = base + f"
+- Your assigned share (agreed in P2): {assignment}"
+```
+
+COMPLETED 에는 페이즈 블록이 없으므로, **남은 유일한 프로토콜 문장이 지난 턴의
+분담 지시**가 됐다.
+
+> `- Your assigned share (agreed in P2): 괄호 내부 계산 검증 - (7-3)=4 ...`
+
+그래서 agent-2 는 **타원곡선 질문 안에서 사칙연산을 계속 검증**했고,
+agent-1 은 `<final_summary>정답: 156</final_summary>` 를 네 번 재발행했다.
+
+### 8.2 조치
+
+터미널 페이즈에서는 분담을 비운다. 분담은 **그 질문의 것**이지 다음 질문의 것이 아니다.
+
+```python
+if protocol.phase in (COMPLETED, REJECTED):
+    agent.assignment = None
+    agent.submitter_id = None
+else:
+    agent.assignment = protocol.assignment_for(agent.agent_id)
+    agent.submitter_id = protocol.submitter_id
+```
+
+### 8.3 남는 것 (조치 안 함)
+
+- **대화 이력이 프로토콜을 흉내 내게 한다.** 페이즈 지시가 사라져도 에이전트는
+  이력에 쌓인 `PROPOSE:` / `APPROVE:` / `FINAL:` 을 보고 게이트 스레드에 계속
+  글을 올린다. 그 메시지들은 아무 게이트도 열지 않는다(프로토콜은 spent).
+  §8.2 로 프롬프트 오염은 끊기지만 이력은 남는다. 턴 경계 표시나 이력 절단은
+  **별도 결정**이다.
+- **합의가 검증처럼 보인다.** 제출된 `FINAL:` 의 첫 줄이
+  *"결론: 이 정리는 일반적으로 증명되었습니다"* 로 **본문과 정반대**였는데,
+  세 에이전트가 모두 *"수학적으로 정확합니다"* 라며 APPROVE 했다. 승인 본문은
+  초안을 인용하지 않고 **자기가 이미 믿던 것의 체크리스트**였다.
+  게이트는 *전원이 표를 던졌다* 는 사실만 보증한다 — **읽었다는 보증이 아니다.**
+  런타임으로 고칠 수 있는 종류가 아니므로 기록만 남긴다.
+- **백엔드 모델 열화.** `qa`, `proof`, `ORSURVEILLANCE`, 짝이 맞지 않는
+  `</final_summary>`, `유finite성` / `브레uil` 같은 혼종 표기가 다수 새어 나왔다.
+  고유명사도 상당수 환각이다(`코일레트`, `코딜레-루빈슈타인`, 함수체 BSD 를
+  `천자오(Zhao)` 로). 프로토콜 문제가 아니라 모델 문제다.

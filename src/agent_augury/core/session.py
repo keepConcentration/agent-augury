@@ -1867,8 +1867,16 @@ def _inject_protocol_gate_state(agent, protocol: CollaborationProtocol) -> None:
     are allowed (to finish exploration). All other send_message calls are
     blocked by the gate-closed logic in AgentLoop._execute_tool.
     """
-    agent.assignment = protocol.assignment_for(agent.agent_id)
-    agent.submitter_id = protocol.submitter_id
+    if protocol.phase in (COMPLETED, REJECTED):
+        # The split belonged to THAT question. A follow-up turn resumes with the
+        # protocol spent, and a stale "your assigned share" line is the only
+        # protocol text left in the prompt -- live (`a858cd97`), agents kept
+        # re-verifying the previous turn's arithmetic inside a new question.
+        agent.assignment = None
+        agent.submitter_id = None
+    else:
+        agent.assignment = protocol.assignment_for(agent.agent_id)
+        agent.submitter_id = protocol.submitter_id
     gate = protocol.gate_for(protocol.phase)
     if gate is not None:
         agent.gate_open = gate.is_open

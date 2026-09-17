@@ -115,3 +115,43 @@ def test_p5_names_the_elected_submitter():
 
     nobody = render_system_prompt("agent-3", phase=P5_SUBMIT)
     assert "no agent is designated" in nobody
+
+
+# ---------------------------------------------------------------------------
+# Live repro: the first real SUBMITTER line in the wild was not parsed
+# ---------------------------------------------------------------------------
+
+REAL_PROPOSAL = """PROPOSE: 수학 계산 문제의 분담
+
+ASSIGN agent-1: 계산 결과 도출 (풀이 과정 포함)
+ASSIGN agent-2: 계산 결과 도출 (풀이 과정 포함)
+ASSIGN agent-3: 계산 결과 도출 (풀이 과정 포함)
+ASSIGN agent-4: 계산 결과 도출 (풀이 과정 포함) + 전체 결과 검증 및 제출
+
+모든 에이전트가 같은 결과(-8)를 도출하면 검증 완료입니다.
+SUBMITTER: agent-4 (검증 후 최종 제출)
+"""
+
+
+def test_real_proposal_from_a_live_session():
+    """Anchoring SUBMITTER to end-of-line dropped the trailing parenthetical,
+    so the election silently did nothing and a different agent drafted."""
+    got = parse_assignments(REAL_PROPOSAL, AGENTS)
+    assert len(got) == 4
+    assert parse_submitter(REAL_PROPOSAL, AGENTS) == "agent-4"
+
+
+@pytest.mark.parametrize(
+    "line,expected",
+    [
+        ("SUBMITTER: agent-4 (검증 후 최종 제출)", "agent-4"),
+        ("**SUBMITTER: agent-3**", "agent-3"),
+        ("SUBMITTER = agent-1  # 제출 담당", "agent-1"),
+        ("SUBMITTER: 나는 agent-2 를 제안합니다", "agent-2"),
+        ("SUBMITTER: agent-2 가 아니라 agent-3", "agent-2"),   # earliest wins
+        ("SUBMITTER: outsider", None),
+        ("SUBMITTER: 미정", None),
+    ],
+)
+def test_submitter_line_shapes(line, expected):
+    assert parse_submitter(line, AGENTS) == expected

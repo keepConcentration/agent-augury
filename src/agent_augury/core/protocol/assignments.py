@@ -27,7 +27,9 @@ _ID = r"([A-Za-z0-9_.\-]+)"
 
 _ASSIGN_RE = re.compile(_LEAD + r"ASSIGN[ \t]+" + _ID + r"[ \t]*[:=][ \t]*(.+?)[ \t]*$",
                         re.IGNORECASE | re.MULTILINE)
-_SUBMITTER_RE = re.compile(_LEAD + r"SUBMITTER[ \t]*[:=][ \t]*" + _ID + r"[ \t]*$",
+# The id is rarely alone on the line: "SUBMITTER: agent-4 (verify then submit)"
+# was the first real one seen, and anchoring to end-of-line dropped it.
+_SUBMITTER_RE = re.compile(_LEAD + r"SUBMITTER[ 	]*[:=][ 	]*(.+)$",
                            re.IGNORECASE | re.MULTILINE)
 
 # Strip the decoration models wrap a share in (**bold**, `code`, trailing dots).
@@ -46,8 +48,17 @@ def parse_assignments(content: str, participants: list[str]) -> dict[str, str]:
 
 
 def parse_submitter(content: str, participants: list[str]) -> str | None:
-    """Return the agent elected to post the P5 draft, if the proposal named one."""
-    for agent_id in _SUBMITTER_RE.findall(content or ""):
-        if agent_id in participants:
-            return agent_id
+    """Return the agent elected to post the P5 draft, if named.
+
+    Takes the participant mentioned earliest on the line, so trailing
+    prose and light phrasing both resolve.
+    """
+    for rest in _SUBMITTER_RE.findall(content or ""):
+        best = None
+        for agent_id in participants:
+            at = rest.find(agent_id)
+            if at >= 0 and (best is None or at < best[0]):
+                best = (at, agent_id)
+        if best:
+            return best[1]
     return None

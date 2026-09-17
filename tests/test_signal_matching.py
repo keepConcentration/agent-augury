@@ -13,7 +13,11 @@ from __future__ import annotations
 import pytest
 
 from agent_augury.core.protocol.approval import ConsensusGate
-from agent_augury.core.protocol.signals import has_signal, is_ready_message
+from agent_augury.core.protocol.signals import (
+    has_signal,
+    is_ready_message,
+    misplaced_signal,
+)
 from agent_augury.core.server import MessageServer
 
 
@@ -116,3 +120,42 @@ async def test_gate_and_soft_block_agree_on_decoration():
         )
     )
     assert out["error"] == "draft_already_posted"
+
+
+NL = chr(10)
+
+
+# --- misplaced signal (live `dc79a366` seq 19: P4 stalled at 3/4) -----------
+
+
+REPORT_WITH_TRAILING_VOTE = (
+    "## P4 REVIEW - 답안 형식 정리" + NL + NL + "검토 완료." + NL + NL
+    + "APPROVE: 검토 완료"
+)
+
+
+def test_signal_opening_a_later_line_is_flagged():
+    """agent-4 appended its vote to a report; the gate reads line one only."""
+    assert misplaced_signal(REPORT_WITH_TRAILING_VOTE) == "APPROVE:"
+    # ...and it is still NOT a signal -- the gate must not change its mind.
+    assert not has_signal(REPORT_WITH_TRAILING_VOTE, "APPROVE:")
+
+
+def test_a_proper_signal_is_not_flagged():
+    assert misplaced_signal("APPROVE: ok" + NL + "FINAL: a quote here") is None
+    assert misplaced_signal("**FINAL:** 98" + NL + "APPROVE: mine") is None
+
+
+def test_citations_stay_mid_line_and_are_not_flagged():
+    """Every false-positive candidate from the 470-message scan sits mid-line."""
+    for quote in (
+        "P5 제출 단계 진행 중." + NL + "agent-3의 FINAL: 드래프트를 기다립니다.",
+        "검토 의견" + NL + "위 5가지를 수정하여 다시 FINAL:을 게시해 주세요.",
+        "@agent-3 제출 게이트를 열기 위해 FINAL: 초안을 보내주세요.",
+    ):
+        assert misplaced_signal(quote) is None, quote
+
+
+def test_empty_and_single_line_content():
+    assert misplaced_signal("") is None
+    assert misplaced_signal("just a work log") is None

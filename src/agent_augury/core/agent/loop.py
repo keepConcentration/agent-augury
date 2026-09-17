@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...backend.base import Completion, ModelBackend
-from ..protocol.signals import has_signal, is_ready_message
+from ..protocol.signals import has_signal, is_ready_message, misplaced_signal
 from ..server import MessageServer
 from .approval import (
     ApprovalStore,
@@ -516,6 +516,26 @@ class AgentLoop:
     def _duplicate_signal_denied(self, args: dict[str, Any]) -> str | None:
         """Soft-block a re-``APPROVE:``/``READY:`` from an agent already counted."""
         content = str(args.get("content") or "")
+        buried = misplaced_signal(content)
+        if buried is not None and self._protocol_active():
+            # The agent appended its vote to the end of a report. The gate reads
+            # line one, so nothing would be counted -- and the agent would go on
+            # believing it had voted (live `dc79a366`: P4 sat at 3/4 until a
+            # human said "you are the only one left").
+            return json.dumps(
+                {
+                    "error": "signal_not_first",
+                    "phase": self.current_phase or "?",
+                    "needs": buried,
+                    "message": (
+                        f"{buried} is further down the message, so nothing was "
+                        f"signalled -- only the FIRST line counts. Send "
+                        f"{buried} as its own message, or move it to the very "
+                        f"top. If you were quoting someone, leave it out."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         prefix = self.gate_entry_prefix
         draft_author = (
             self.gate_draft_author_fn() if self.gate_draft_author_fn else None

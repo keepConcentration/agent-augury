@@ -42,3 +42,38 @@ def is_ready_message(content: str) -> bool:
     colon (``READYFOO``, bare ``READY``).
     """
     return has_signal(content, "READY:")
+
+
+# Every prefix the protocol reads. Order is irrelevant; each carries its colon.
+SIGNAL_PREFIXES = (
+    "READY:",
+    "PROPOSE:",
+    "APPROVE:",
+    "REJECT:",
+    "FINAL:",
+    "RESULT:",
+)
+
+
+def misplaced_signal(content: str) -> str | None:
+    """The signal an agent meant to send but buried below the first line.
+
+    Only the opening of a message is a signal -- a prefix further down is
+    usually a citation ("waiting for agent-3's FINAL:"), so the gate must not
+    count it. But agents also append their vote to the end of a report, and
+    then believe they voted: measured over 470 real messages, a signal
+    *opening a later line* was an intended signal **4 times out of 4**, while
+    every citation sat mid-line. One of those four stalled P4 at 3/4 until a
+    human intervened (`dc79a366` seq 19).
+
+    Returns the prefix so the caller can tell the agent to move it up. This
+    does NOT make the message a signal -- the gate still reads line one.
+    """
+    lines = (content or "").splitlines() or [""]
+    if any(has_signal(lines[0], p) for p in SIGNAL_PREFIXES):
+        return None                      # already a proper signal
+    for line in lines[1:]:
+        for prefix in SIGNAL_PREFIXES:
+            if has_signal(line, prefix):
+                return prefix
+    return None

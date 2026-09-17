@@ -926,6 +926,94 @@ Gross-Zagier 공식의 분모 누락, 계수 0 증명 2단계의 방향성 오�
 런타임이 강제할 수 있는 종류가 아니므로 기록만 남긴다.
 
 
+### 6b.14 신호를 보고서 꼬리에 붙이면 아무 일도 안 일어난다 (세션 `dc79a366`)
+
+P4 가 3/4 에서 멈춰 사람이 찔러야 했다.
+
+```text
+16 agent-3 thread-3  "## REVIEW 보고: ..."        (작업 로그)
+17 agent-3 thread-3  "APPROVE:"                   <- 표
+18 agent-1 thread-3  "APPROVE: ..."               <- 표
+19 agent-4 thread-3  "## P4 REVIEW - 답안 형식 정리 및 제출 준비 검토
+                      ...
+                      APPROVE: 검토 완료"          <- 표가 아니다
+21 agent-2 thread-3  "APPROVE: ..."               <- 표
+22 human             @agent-4 approve 너만 남았어
+23 agent-4 thread-3  "APPROVE: 이미 전송 완료되었습니다..."
+```
+
+agent-3·agent-2 는 **보고서와 표를 두 메시지로 나눴다**(16/17, 20/21).
+agent-4 는 **보고서 끝에 붙였다.** `has_signal` 은 첫 줄만 보므로 세지 않았고,
+agent-4 의 속마음은 *"이미 APPROVE:를 전송했습니다"* 였다. 본인은 투표했다고
+믿는데 게이트는 모르는 상태 — §6b.9(넛지)로도 안 잡힌다. **`send_message` 를
+실제로 했기 때문이다.**
+
+#### 왜 게이트를 느슨하게 하지 않는가
+
+첫 줄만 신호로 보는 것은 의도된 엄격함이다(`signals.py` 도입부). 인용
+(*"agent-3 의 `FINAL:` 초안을 기다립니다"*)을 표로 세면 훨씬 나쁘다.
+
+#### 측정 — 어디서 갈리는가
+
+체크포인트 **전 세션 470 메시지**를 훑어, "신호 토큰이 있는데 선두 신호가
+아닌" 13건을 분류했다.
+
+| 형태 | 건수 | 정체 |
+|------|-----:|------|
+| 신호가 **뒷줄의 첫 글자** | **4** | **4건 모두 의도된 신호** (버려짐) |
+| 신호가 **줄 중간** | 9 | 대부분 인용·대기 서술 |
+
+**뒷줄 시작 = 의도, 줄 중간 = 인용.** 470건에서 오탐 0, 미탐은 `@멘션` 뒤에
+바로 붙은 2건뿐이다.
+
+버려진 4건:
+
+```text
+63fec483  4  agent-2  "PROBLEM: ..." 다음 줄에 PROPOSE:   <- 분담안 무효
+dc79a366  7  agent-4  "@agent-3 제안 승인합니다" 뒤에 APPROVE:
+dc79a366  8  agent-2  "FYI: ..." 다음 줄에 PROPOSE:       <- 유령 분담안(아래)
+dc79a366 19  agent-4  보고서 끝에 APPROVE:                <- P4 정지
+```
+
+#### 조치 — 세지 말고 되돌려 보낸다
+
+`signals.misplaced_signal()` 을 만들고 **소프트 차단**한다.
+게이트 판정은 **하나도 바꾸지 않는다.**
+
+```python
+def misplaced_signal(content):
+    lines = (content or "").splitlines() or [""]
+    if any(has_signal(lines[0], p) for p in SIGNAL_PREFIXES):
+        return None                  # 이미 제대로 된 신호
+    for line in lines[1:]:
+        for prefix in SIGNAL_PREFIXES:
+            if has_signal(line, prefix):
+                return prefix
+    return None
+```
+
+문구는 두 경우를 다 감당한다 — *"뒤쪽에 있어서 아무것도 신호되지 않았다.
+따로 보내거나 맨 위로 올려라. 인용이었다면 빼라."*
+
+#### 부수 피해 — 유령 분담안
+
+seq 8 이 재미있다. agent-2 의 `PROPOSE:`(SUBMITTER: agent-2)가 `FYI:` 뒤에
+묻혀 **런타임에는 기록되지 않았다.** 그런데 **에이전트들은 읽었다.**
+
+```text
+agent-4 (속마음): "agent-2 가 SUBMITTER"
+agent-2 (속마음): "agent-3 이 FINAL: 초안을 제출하면"
+agent-1 -> thread-4: "@agent-3 ... FINAL: 초안을 보내주세요"
+```
+
+런타임의 `submitter_id` 는 seq 6(agent-3)이었고 결국 agent-3 이 제출해 맞게
+끝났지만, **팀은 존재하지 않는 계획을 믿고 움직였다.** 묻힌 신호는 표 한 장을
+잃는 데서 끝나지 않는다 — **런타임과 에이전트의 세계관이 갈라진다.**
+
+(역설적으로 seq 8 이 묻힌 덕에 M4a 의 경쟁 초안 차단이 발동하지 않았다.
+제대로 보냈다면 `draft_already_posted` 로 막혔을 것이다.)
+
+
 ---
 
 ## 7. 마일스톤

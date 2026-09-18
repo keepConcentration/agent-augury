@@ -1,6 +1,6 @@
 # 페이즈 기계 — 난이도 라우팅과 모델 체킹
 
-> **Status:** draft **rev.3** (리뷰 2차 반영 · 구상 · **착수 미정**)
+> **Status:** draft **rev.4** (리뷰 3차 반영 · 구상 · **착수 미정**)
 > **Date:** 2026-09-18
 > **Priority:** R1 = P2 (비용 38~44% 절감) · R2 = P1 (교착을 실행 전에 잡는다)
 > **Parent:** `PHASE_ENTRY_SIGNAL_DESIGN.md`, `FOLLOWUP_TURN_PROTOCOL_DESIGN.md`
@@ -12,6 +12,8 @@
 > **rev.2:** 측정으로 R1 의 원래 신호가 **6세션 중 3에서만 맞는다**는 것이 드러나 신호를 바꿨다 (§2.2)
 > **rev.3:** `SPLIT:` 도 `ASSIGN` 과 같은 소유권 병을 앓는다 → **게이트 open 때 소유자 것만 커밋** (§2.3).
 >   §4 의 `_human_approval_needs_interact` 를 `has_interact_surface()` 로 교정. BFS 범위에서 S1 분리 (§3.4)
+> **rev.4:** 스테이징을 **버렸다** — 게이트 open 때 서버에서 소유자 초안을 **다시 읽는다** (§2.3).
+>   체크포인트 질문이 사라지고 `MessageServer` SSOT 와도 맞는다
 
 ---
 
@@ -149,11 +151,17 @@ P5 의 `FINAL:` + 전원 승인은 남으므로 **검토가 0이 되지는 않�
 
 | | 내용 | 위험 | 측정 |
 |--|------|------|------|
-| **R1a** | `SPLIT:` 파서 + P2 프롬프트 한 줄. **라우팅은 안 붙인다** | **없음** — 동작 변경 0 | **선언 출현율.** 산수 질문 n회에서 `SPLIT: none` 이 몇 번 나오나 |
+| **R1a** | `SPLIT:` 파서 + P2 프롬프트 한 줄. **파서만 — 필드에 연결하지 않는다** | **없음** — 동작 변경 0 | **선언 출현율.** 산수 질문 n회에서 `SPLIT: none` 이 몇 번 나오나 |
 | **R1b** | `next_phase_after_gate` 라우팅 + 전이 | 답 품질 | E6 (on/off 답 동일성) |
 
-**R1a 가 0% 에 가까우면 R1b 는 폐기다.** 그때는 프롬프트 문구를 고치거나,
-애초에 라우팅을 포기하고 P3/P4 의 퇴장 규칙(이미 있음)으로 만족한다.
+> **R1a 는 `split_none` 필드를 만들지 않는다.** `parse_split` 만 두고 출현율은
+> 서버 메시지를 사후에 훑어 센다. 필드를 만들어 `_on_message` 에서 바로
+> 커밋하면 **§2.3 의 소유권 병이 그대로 재발한다** — `split_none` 은
+> `_commit_p2_draft`(§2.3, 착수 2번) 가 들어온 **뒤에만** 연결한다.
+
+**착수 임계값.** `SPLIT: none` 출현율이 **n ≥ 10 실행에서 50% 이상**이면
+R1b 를 붙인다. 그 아래면 프롬프트 문구를 한 번 고쳐 다시 재고, 여전히 낮으면
+**R1b 폐기** — 라우팅을 포기하고 P3/P4 의 퇴장 규칙(이미 있음)으로 만족한다.
 
 #### 신호 등록
 
@@ -205,39 +213,72 @@ rev.2 는 `gate.draft_author not in (None, author)` 로 막으려 했다. 두 �
 2. **스레드 검사가 없다.** `_on_message` 는 `self.phase == P2_SPLIT` 만 본다.
    게이트 스레드가 아닌 곳의 `PROPOSE:` 도 ASSIGN 이 기록된다.
 
-#### 수정 — 스테이징 후, 게이트 open 때 소유자 것만 커밋
+#### 수정 — 게이트 open 때 **서버에서 다시 읽는다** (스테이징 없음)
+
+rev.3 은 작성자별 스테이징 딕셔너리를 두려 했다. 그러면 *"`_staged` 를
+체크포인트에 넣나"* 라는 질문이 생기고, 넣지 않으면 **P2 중간에 재개하면
+스테이징이 비어 분담이 사라진다**(지금은 `_assignments` 가 persist 되므로
+회귀다).
+
+**그 상태를 아예 만들지 않는 길이 있다.** 초안은 이미 서버에 있다.
 
 ```python
-# _on_message: 커밋하지 않고 작성자별로 쌓아 둔다
-self._staged[author] = {
-    "assignments": parse_assignments(content, self.participants),
-    "submitter":   parse_submitter(content, self.participants),
-    "split_none":  parse_split(content),
-}
-
-# P2 게이트가 열릴 때 (1회): 이긴 초안의 것만 채택
-owner = self._gates[P2_SPLIT].draft_author
-picked = self._staged.pop(owner, None) or {}
-self._assignments = picked.get("assignments") or {}
-self.submitter_id = picked.get("submitter")
-self.split_none   = bool(picked.get("split_none"))
-self._staged.clear()
+def _commit_p2_draft(self) -> None:
+    # P2 게이트 open 시 1회. 이긴 초안을 서버에서 읽어 한 번만 파싱한다.
+    gate = self._gates.get(P2_SPLIT)
+    if gate is None or gate.draft_author is None:
+        return
+    content = ""
+    for m in self._server.snapshot()["messages"]:      # SSOT
+        if (m["thread_id"] == gate.thread_id
+                and m["author"] == gate.draft_author
+                and has_signal(m["content"], gate.entry_prefix)):
+            content = m["content"]                     # 마지막 것 = 최종 초안
+    self._assignments = parse_assignments(content, self.participants) or {}
+    self.submitter_id = parse_submitter(content, self.participants)
+    self.split_none = parse_split(content)
 ```
 
-이렇게 하면 네 가지가 한꺼번에 사라진다.
+그리고 `_on_message` 의 P2 분기는 **파싱을 그만한다** — 신호 기록만 남긴다.
+
+이렇게 하면 다섯 가지가 한꺼번에 사라진다.
 
 | 병 | 왜 사라지나 |
 |----|------------|
-| 경쟁 초안 오염 | 소유자 것만 채택 |
+| 경쟁 초안 오염 | `draft_author` 의 메시지만 읽는다 |
 | 구독 순서 의존 | open 시점에는 `draft_author` 가 확정돼 있다 |
-| 스레드 누락 | 게이트가 이미 스레드로 걸렀다 |
-| 재초안 잔존 | 같은 작성자의 새 파싱이 자기 것을 덮고, `SPLIT` 도 **같이** 재평가된다 |
+| 스레드 누락 | `thread_id` 로 직접 거른다 |
+| 재초안 잔존 | 소유자의 **마지막** 초안만 읽으므로 자동으로 최신 |
+| **체크포인트 질문** | **보관할 상태가 없다.** 재개 후 open 이어도 서버에서 읽으면 된다 |
 
-`REJECT:` 는 `_reset_for_redo` 에서 `_staged` 와 `split_none` 도 비운다.
+`REJECT:` 는 `_reset_for_redo` 가 `draft_author` 를 비우므로 다음 초안에서
+다시 읽힌다. `split_none` 만 같이 초기화하면 된다.
 
 > **이것은 새 설계가 아니라 결정 복원이다.** `PHASE_ENTRY_SIGNAL_DESIGN` D7 이
 > 이미 *"`SUBMITTER:` 파싱 시점 = P2 게이트 open 시 **1회**"* 로 정해 두었는데,
 > 구현이 메시지마다 파싱하는 쪽으로 흘렀다. 그 드리프트가 S3 위반의 원인이다.
+> 그리고 `DESIGN.md` §3.3 의 **"MessageServer 가 SSOT"** 와도 이쪽이 맞는다 —
+> 초안의 정본은 스레드이고, 프로토콜은 그것을 읽는 쪽이다.
+
+#### 커밋 지점 — `next_phase_after_gate` **앞**이어야 한다
+
+R1b 가 `split_none` 을 읽으므로 순서가 기능 조건이다. 실제 호출 사슬:
+
+```text
+ConsensusGate._open_gate
+  -> gate._on_open()                                  # _setup_gate_for_phase 가 심음
+  -> CollaborationProtocol._handle_gate_open(phase)
+       ├─ _gate_open_fired.add(phase)
+       ├─ **_commit_p2_draft()  <- 여기**              # phase == P2_SPLIT 일 때
+       └─ self._on_gate_open(phase)
+            -> _on_protocol_gate_open(session, phase)  # session.py:1718
+                 -> next_phase_after_gate(phase)       # split_none 을 읽는다
+                 -> advance(...)
+```
+
+**`_handle_gate_open` 안, `_on_gate_open` 호출 직전.** 세션 콜백
+(`_on_protocol_gate_open`)에 두면 이미 늦다 — 그 함수가 곧
+`next_phase_after_gate` 를 부른다.
 
 ### 2.4 전이 허용
 
@@ -269,7 +310,7 @@ ConsensusGate 열림
 def next_phase_after_gate(self, phase):
     if self.mode == "light":
         return COMPLETED if phase == P5_SUBMIT else None
-    if phase == P2_SPLIT and self.split_declared_none:
+    if phase == P2_SPLIT and self.split_none:
         # 팀이 SPLIT: none 을 선언했다. P3 는 각자 자기 몫을 하는 단계이고
         # P4 는 그 결과를 대조하는 단계이므로, 몫이 없으면 둘 다 빈 단계다.
         return P5_SUBMIT
@@ -356,8 +397,6 @@ N=4, **활성 게이트 하나만 세면** 게이트당 약 1,600. 전이는 에
 
 ### 3.3 불변식 — 과거 버그가 어긴 것들
 
-| # | 불변식 | 어긴 버그 |
-|---|--------|-----------|
 | # | 불변식 | 어긴 버그 | 검사 수단 |
 |---|--------|-----------|-----------|
 | **S1** | 제출된 답은 **전원 승인을 받은 그 초안**이다 | 게이트 열린 뒤 초안 추가 (`374ce12`) | **게이트 API 단위테스트** (BFS 아님 — §3.4) |
@@ -401,6 +440,10 @@ def test_no_deadlock_reachable():
 ```
 
 - **N=3 으로 돈다.** N=4 도 되지만 3 이면 모든 버그 유형이 재현되고 빠르다.
+- **BFS 는 headless 를 가정한다** (`has_interact_surface() == False`). D12 의
+  채택안은 *"interact 가 붙어 있으면 대기"* 이므로, 그 경우 전원 park 는
+  **종단이 아니어도 정상**이다. 이 가정을 안 적으면 D12 를 고친 뒤에도 L2 가
+  계속 빨갛다 — **`interact=True` 는 검사 대상이 아니라 면제 조건**이다.
 
 #### 모델의 경계 — 어디까지 실제 객체인가
 
@@ -549,7 +592,7 @@ seq 37 agent-4: "3. 전체적 구조: 10개 섹션의 구성이 논리적이고 
 | **E4** | BFS 를 CI 에서 매번 돌릴까 | §3.2 의 1,600 은 활성 게이트 하나만 센 낙관값. **N=3 으로 재고 나서 정한다.** 느리면 활성 게이트만 모델링 |
 | ~~E5~~ | ~~interact 부착 판정~~ | **해결.** `Session.has_interact_surface()` 가 이미 있다(`session.py:205` → `gateway.has_interact_surface()`). `_human_approval_needs_interact` 는 **쓰면 안 된다** — `any_human_approval` 이 거짓이면 Ink 가 붙어 있어도 False 다 |
 | **E6** | R1b 가 정확도를 떨어뜨리는지 | 같은 산수 질문을 R1b on/off 로 돌려 답이 같은지. **쉬운 문제에서만 검증 가능** — 어려운 문제는 애초에 `SPLIT: none` 이 안 나온다 |
-| **E8** | `SPLIT:` 채택률이 몇 % 면 R1b 를 붙이나 | R1a 측정 후. **0% 에 가까우면 R1b 폐기** (§2.2) |
+| ~~E8~~ | ~~채택률 임계값~~ | **확정: n≥10 에서 50% 이상이면 R1b 착수.** 그 아래면 프롬프트 1회 수정 후 재측정, 여전히 낮으면 폐기 (§2.2) |
 | **E9** | 전원 park 종료의 `reason` | 새 값(`gate_deadlock`) vs 기존 idle 로 접기. 새 값을 권함 — 원인이 다르다 (§4.1) |
 | **E7** | `SPLIT: none` 남용 방어 | 안 만든다. 남용해도 P5 의 초안+전원 승인은 남는다(§2.2 대가). 실제로 어려운 문제에서 나오면 그때 |
 
@@ -559,7 +602,8 @@ seq 37 agent-4: "3. 전체적 구조: 10개 섹션의 구성이 논리적이고 
 
 | 순서 | 내용 | 얻는 것 | 실패해도 |
 |------|------|---------|----------|
-| 1 | **R2 BFS** (S1·S2·L1) | 과거 버그 2개의 회귀 방어망 | **테스트만 추가** — 동작 변경 0 |
+| 1 | **R2 BFS** (**L1·L2 만**) | 교착 회귀 방어망 | **테스트만 추가** — 동작 변경 0 |
+| 1b | (선택) S1~S3 게이트 API 단위테스트 | 안전성 회귀 방어망 | 테스트만 추가 |
 | 2 | **§2.3 분담 소유자** | 프롬프트가 승인 안 된 몫을 시키는 것 제거 | 독립 버그 수정 |
 | 3 | **L2 + D12** | 헤드리스 영구 정지 해소 | `has_interact_surface()` 로 값이 싸졌다 (E5) |
 | 4 | **R1a** `SPLIT:` 파서 + 프롬프트 | **채택률 측정** | 동작 변경 0 |
@@ -632,6 +676,30 @@ BFS 에 넣으면 **초록이 코드 상태와 어긋난다**. BFS 는 L1·L2 �
 **R1 을 R1a/R1b 로 쪼갰다.** 절감이 전적으로 **채택률**에 달렸는데 §2.1 의
 여섯 세션에는 `SPLIT:` 이 아예 없었다(산문만). R1a(파서+프롬프트, 동작 변경 0)
 로 출현율을 먼저 재고, 0% 에 가까우면 **R1b 는 폐기**다.
+
+### rev.4 에서 바뀐 것
+
+**스테이징을 버렸다.** rev.3 의 작성자별 `_staged` 딕셔너리는 *"체크포인트에
+넣나"* 라는 질문을 만들고, 안 넣으면 **P2 중간 재개 시 분담이 사라지는 회귀**가
+된다(지금은 `_assignments` 가 persist 된다).
+
+→ 게이트 open 때 **서버에서 소유자의 마지막 초안을 다시 읽는다**(§2.3).
+보관할 상태가 없으므로 체크포인트 질문 자체가 사라지고, `DESIGN.md` §3.3 의
+**"MessageServer 가 SSOT"** 와도 맞는다 — 초안의 정본은 스레드다.
+
+**커밋 지점을 못박았다.** `_handle_gate_open` 안, `_on_gate_open` 호출 **직전**.
+세션 콜백에 두면 이미 늦다 — 그 함수가 곧 `next_phase_after_gate` 를 부른다.
+
+**BFS 는 headless 가정임을 명시했다.** D12 채택안이 *"interact 가 붙어 있으면
+대기"* 이므로 `interact=True` 는 **검사 대상이 아니라 면제 조건**이다. 안 적으면
+D12 를 고친 뒤에도 L2 가 계속 빨갛다.
+
+**문서 버그 셋을 고쳤다** — §3.3 이중 표 헤더, §7 1번의 구버전 범위
+(`S1·S2·L1` → `L1·L2`), `split_none` / `split_declared_none` 이름 혼선.
+
+**임계값을 확정했다.** E8: `n≥10` 에서 **50% 이상**이면 R1b 착수. 그리고
+**R1a 는 `split_none` 필드를 만들지 않는다** — 만들어서 `_on_message` 에서
+커밋하면 §2.3 의 소유권 병이 그대로 재발한다.
 
 ### 남은 것
 

@@ -12,6 +12,8 @@ message the gate then ignores.
 
 from __future__ import annotations
 
+import re
+
 # Leading noise that still means "this is my signal".
 # NOT stripped: ``>`` (blockquote) and quote marks — those usually mean the
 # agent is citing someone else's message, not making its own claim.
@@ -77,3 +79,29 @@ def misplaced_signal(content: str) -> str | None:
             if has_signal(line, prefix):
                 return prefix
     return None
+
+
+# A signal word opening the message but with the colon missing. Live: one agent
+# repeated bare ``APPROVE`` six times in a row (`c06dfe95`) and another twice
+# (`e3237b35`) -- 8 of 593 messages, every one of them ``APPROVE``. The word
+# reads like a complete verdict on its own, unlike PROPOSE:/FINAL: which
+# introduce content.
+_BARE_RE = re.compile(
+    r"^(READY|PROPOSE|APPROVE|REJECT|FINAL|RESULT)\b(?![ \t]*[:=])",
+    re.IGNORECASE,
+)
+
+
+def missing_colon_signal(content: str) -> str | None:
+    """The signal an agent opened with but left the colon off.
+
+    Returns the canonical prefix (``"APPROVE:"``) so the caller can say what
+    to write instead. This does NOT make the message a signal -- the colon
+    requirement is deliberate (``APPROVED`` must not count as a vote).
+    """
+    text = strip_decoration(content or "")
+    if any(has_signal(text, p) for p in SIGNAL_PREFIXES):
+        return None                      # already well-formed
+    first = (text.splitlines() or [''])[0]
+    m = _BARE_RE.match(first)
+    return f"{m.group(1).upper()}:" if m else None

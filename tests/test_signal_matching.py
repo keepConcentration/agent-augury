@@ -17,6 +17,7 @@ from agent_augury.core.protocol.signals import (
     has_signal,
     is_ready_message,
     misplaced_signal,
+    missing_colon_signal,
 )
 from agent_augury.core.server import MessageServer
 
@@ -159,3 +160,31 @@ def test_citations_stay_mid_line_and_are_not_flagged():
 def test_empty_and_single_line_content():
     assert misplaced_signal("") is None
     assert misplaced_signal("just a work log") is None
+
+
+# --- colon-less signal (live `c06dfe95` x6, `e3237b35` x2) ------------------
+
+
+def test_bare_approve_is_reported():
+    """The colon is what separates a vote from the word APPROVED.
+
+    Scanned 593 real messages: 8 opened with a signal word and no colon, and
+    every one was APPROVE -- the word reads like a complete verdict on its
+    own. One agent repeated it six times believing it had voted.
+    """
+    assert missing_colon_signal("APPROVE") == "APPROVE:"
+    assert missing_colon_signal("**APPROVE**") == "APPROVE:"
+    assert missing_colon_signal("READY" + NL + "준비됨") == "READY:"
+
+
+def test_well_formed_and_lookalikes_are_left_alone():
+    assert missing_colon_signal("APPROVE: ok") is None
+    assert missing_colon_signal("APPROVED: 완료") is None   # different word
+    assert missing_colon_signal("계산 결과 114") is None
+    assert missing_colon_signal("") is None
+
+
+def test_it_does_not_make_the_message_a_signal():
+    """Reporting is not counting -- the gate still refuses a colon-less word."""
+    assert missing_colon_signal("APPROVE") == "APPROVE:"
+    assert not has_signal("APPROVE", "APPROVE:")

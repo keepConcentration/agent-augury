@@ -192,3 +192,31 @@ def test_no_nudge_for_an_agent_already_counted():
     fired, text = _nudge_for("a1", {"a1"}, has_proposal=True)
     assert not fired
     assert text == ""
+
+
+def test_nudge_tells_non_submitters_to_wait_not_to_draft():
+    """Live `e3237b35`: the nudge told two agents to post FINAL: while the
+    team had picked agent-4 — the exact action M4a then blocks."""
+    server = MessageServer()
+    for a in ("a1", "a2", "a3"):
+        server.register_agent(a)
+    session = Session(server=server, agents=[])
+    protocol = CollaborationProtocol(server, participants=["a1", "a2", "a3"])
+    gate = protocol.bind_gate(P2_SPLIT, "plan", require_proposal=True)
+    gate.thread_id = "thread-1"
+    gate.participants = ["a1", "a2", "a3"]
+    protocol.submitter_id = "a3"
+    protocol.phase_manager._phase = P2_SPLIT
+    session.protocol = protocol
+
+    a1 = AgentLoop(agent_id="a1", backend=ScriptBackend([]), server=server)
+    assert session._maybe_nudge_gate_thread(a1)
+    text = [m["content"] for m in a1.conversation if m["role"] == "user"][-1]
+    assert "the team chose a3" in text
+    assert "Do NOT write your own" in text
+
+    # ...but the chosen agent is still asked for the draft.
+    a3 = AgentLoop(agent_id="a3", backend=ScriptBackend([]), server=server)
+    assert session._maybe_nudge_gate_thread(a3)
+    a3_text = [m["content"] for m in a3.conversation if m["role"] == "user"][-1]
+    assert "Send PROPOSE:" in a3_text

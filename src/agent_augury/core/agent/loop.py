@@ -21,7 +21,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...backend.base import Completion, ModelBackend
-from ..protocol.signals import has_signal, is_ready_message, misplaced_signal
+from ..protocol.signals import (
+    has_signal,
+    is_ready_message,
+    misplaced_signal,
+    missing_colon_signal,
+)
 from ..server import MessageServer
 from .approval import (
     ApprovalStore,
@@ -516,6 +521,24 @@ class AgentLoop:
     def _duplicate_signal_denied(self, args: dict[str, Any]) -> str | None:
         """Soft-block a re-``APPROVE:``/``READY:`` from an agent already counted."""
         content = str(args.get("content") or "")
+        bare = missing_colon_signal(content)
+        if bare is not None and self._protocol_active():
+            # The colon is what separates a vote from the word "APPROVED".
+            # Live: one agent sent bare APPROVE six times running, another
+            # twice -- and both believed they had voted.
+            return json.dumps(
+                {
+                    "error": "signal_missing_colon",
+                    "phase": self.current_phase or "?",
+                    "needs": bare,
+                    "message": (
+                        f"That opens with a signal word but no colon, so it "
+                        f"counts as nothing. Write {bare} exactly — the colon "
+                        f"is what makes it a signal."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         buried = misplaced_signal(content)
         if buried is not None and self._protocol_active():
             # The agent appended its vote to the end of a report. The gate reads

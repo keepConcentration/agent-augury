@@ -1485,6 +1485,24 @@ class Session:
             if (gate.require_proposal and not gate.has_proposal)
             else "APPROVE:"
         )
+        # Never push a non-submitter to write the draft. The P5 prompt tells
+        # them to wait for the chosen agent, M4a soft-blocks them anyway, and
+        # live (`e3237b35`) this nudge told two agents to post FINAL: while
+        # the team had picked agent-4.
+        submitter = protocol.submitter_id
+        if needs == gate.entry_prefix and submitter and submitter != agent.agent_id:
+            agent.conversation.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"[protocol] Phase {phase}: the team chose {submitter} "
+                        f"to post the {gate.entry_prefix} draft and it has not "
+                        f"arrived yet. Do NOT write your own — wait, then "
+                        f"APPROVE: theirs on thread '{gate.thread_id}'."
+                    ),
+                }
+            )
+            return True
         agent.conversation.append(
             {
                 "role": "user",

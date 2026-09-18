@@ -1,6 +1,6 @@
 # 페이즈 기계 — 난이도 라우팅과 모델 체킹
 
-> **Status:** draft **rev.4** (리뷰 3차 반영 · 구상 · **착수 미정**)
+> **Status:** draft **rev.5** (리뷰 4차 반영 · 구상 · **착수 미정**)
 > **Date:** 2026-09-18
 > **Priority:** R1 = P2 (비용 38~44% 절감) · R2 = P1 (교착을 실행 전에 잡는다)
 > **Parent:** `PHASE_ENTRY_SIGNAL_DESIGN.md`, `FOLLOWUP_TURN_PROTOCOL_DESIGN.md`
@@ -239,6 +239,28 @@ def _commit_p2_draft(self) -> None:
     self.split_none = parse_split(content)
 ```
 
+**"마지막 초안"의 정의는 게이트와 같은 판정이어야 한다.** 위 스캔은
+`has_signal(content, gate.entry_prefix)` 를 쓰는데, 이것이 정확히
+`ConsensusGate.on_message` 가 초안을 인정할 때 쓴 술어다. **느슨하게 고치면
+안 된다** — 예컨대 `"PROPOSE:" in content` 로 바꾸면 `APPROVE:` 로 시작하는
+메시지의 뒷줄에 있는 `PROPOSE:` 까지 초안으로 읽는다.
+
+확인해 보면 `has_signal` 은 **첫 줄만** 보므로 현재는 그런 메시지를 집지 않는다.
+
+```text
+"APPROVE: ok
+
+PROPOSE:
+ASSIGN a1: x"  -> has_signal(.., "PROPOSE:") = False
+"## 보고
+PROPOSE: 분담"                   -> False
+"**PROPOSE:** 분담"                        -> True
+```
+
+그리고 그런 메시지는 애초에 `misplaced_signal` 소프트 차단이 되돌려 보낸다
+(`PHASE_ENTRY_SIGNAL` §6b.14). **두 층이 같은 술어를 쓰므로 어긋나지 않는다** —
+그것이 `signals.py` 도입부가 요구하는 것이다.
+
 그리고 `_on_message` 의 P2 분기는 **파싱을 그만한다** — 신호 기록만 남긴다.
 
 이렇게 하면 다섯 가지가 한꺼번에 사라진다.
@@ -280,6 +302,20 @@ ConsensusGate._open_gate
 (`_on_protocol_gate_open`)에 두면 이미 늦다 — 그 함수가 곧
 `next_phase_after_gate` 를 부른다.
 
+#### P2 중에는 분담이 비어 있다 — 의도다
+
+`_on_message` 가 파싱을 그만하므로, **게이트가 열리기 전까지
+`assignment_for()` 는 빈 값**이다. 즉 P2 진행 중 프롬프트에
+*"Your assigned share"* 줄이 나가지 않는다.
+
+**바뀐 동작이고, 바뀌는 편이 맞다.** P2 는 분담을 **협상하는** 단계다.
+아직 승인되지 않은(그리고 `REJECT:` 로 버려질 수 있는) 초안의 몫을 미리
+지시하면, 에이전트가 무효가 될 계획을 실행한다. 실제로 그 모양이 관측됐다 —
+`dc79a366` 에서 에이전트들이 **게이트에 기록되지도 않은 유령 분담안**을 믿고
+움직였다(`PHASE_ENTRY_SIGNAL` §6b.14).
+
+P3 진입은 **커밋 → advance** 순서이므로(위 사슬) P3 부터는 정상적으로 채워진다.
+
 ### 2.4 전이 허용
 
 `_valid_transitions` 는 full 모드에서 `P2_SPLIT: {P3_EXECUTE, REJECTED}` 다.
@@ -310,9 +346,12 @@ ConsensusGate 열림
 def next_phase_after_gate(self, phase):
     if self.mode == "light":
         return COMPLETED if phase == P5_SUBMIT else None
-    if phase == P2_SPLIT and self.split_none:
-        # 팀이 SPLIT: none 을 선언했다. P3 는 각자 자기 몫을 하는 단계이고
-        # P4 는 그 결과를 대조하는 단계이므로, 몫이 없으면 둘 다 빈 단계다.
+    if phase == P2_SPLIT and self.split_none and not self._assignments:
+        # 팀이 SPLIT: none 을 선언했고 ASSIGN 도 없다. P3 는 각자 자기 몫을
+        # 하는 단계이고 P4 는 그 결과를 대조하는 단계이므로 둘 다 빈 단계다.
+        #
+        # `not self._assignments` 가 E2 다 — 둘이 같이 오면 ASSIGN 이 이긴다.
+        # 이 조건을 빼면 모순된 초안에서 P3 를 건너뛴다.
         return P5_SUBMIT
     return {...}.get(phase)
 ```
@@ -620,11 +659,13 @@ seq 37 agent-4: "3. 전체적 구조: 10개 섹션의 구성이 논리적이고 
 아직 모른다(§2.2). 4번은 동작을 안 바꾸면서 그 값을 준다. 5번은 유일하게
 **답의 품질을 바꿀 수 있는** 변경이므로, 4번의 숫자를 보고 착수 여부를 정한다.
 
-**문서 선행 패치(이 rev.3 에 포함):**
+**구현 전에 이 문서가 못박아 둔 것** (구현자가 옛 결정을 집어 들지 않도록):
 
-- §4 의 interact 판정을 `has_interact_surface()` 로 교정 — 구현자가 옛 플래그를
-  집어 들지 않도록
-- `SPLIT:` 에도 `ASSIGN` 과 **같은 소유권 규칙**을 적용 (§2.3 스테이징)
+- interact 판정은 `has_interact_surface()` — `_human_approval_needs_interact` 아님 (§4)
+- `SPLIT:` 커밋은 **게이트 open 때 서버 재읽기** — 스테이징 아님 (§2.3, rev.4)
+- 커밋은 `_handle_gate_open` 안, `_on_gate_open` **직전** (§2.3)
+- 라우팅 조건은 `split_none and not self._assignments` — **ASSIGN 우선** (§2.4, E2)
+- BFS 는 **L1·L2 만**, headless 가정 (§3.4)
 
 
 ## 8. 요약
@@ -700,6 +741,29 @@ D12 를 고친 뒤에도 L2 가 계속 빨갛다.
 **임계값을 확정했다.** E8: `n≥10` 에서 **50% 이상**이면 R1b 착수. 그리고
 **R1a 는 `split_none` 필드를 만들지 않는다** — 만들어서 `_on_message` 에서
 커밋하면 §2.3 의 소유권 병이 그대로 재발한다.
+
+### rev.5 에서 바뀐 것
+
+**E2 를 스케치에 박았다.** §2.2 는 *"둘 다 오면 ASSIGN 우선"* 으로 확정했는데
+§2.4 의 라우팅 조건은 `split_none` 만 봤다 — 구현자가 그대로 쓰면 **모순된
+초안에서 P5 로 간다**. `split_none and not self._assignments` 로 고치고,
+`not self._assignments` 가 E2 라는 주석을 붙였다.
+
+**§7 의 rev.3 잔여 문구를 지웠다** (스테이징 언급). 대신 *"구현 전에 이 문서가
+못박아 둔 것"* 다섯 줄로 바꿨다 — 리뷰마다 뒤집힌 결정들을 한 곳에 모아
+구현자가 옛 결정을 집어 들지 않게.
+
+**초안 술어를 못박았다.** `_commit_p2_draft` 의 "마지막 초안"은 게이트가 쓴
+것과 **같은 술어**(`has_signal(content, entry_prefix)`)여야 한다.
+확인해 보면 `has_signal` 은 첫 줄만 보므로 `APPROVE:` 로 시작하는 메시지의
+뒷줄 `PROPOSE:` 는 집지 않고, 그런 메시지는 애초에 `misplaced_signal` 소프트
+차단이 되돌려 보낸다. **두 층이 같은 술어를 쓰는 것이 핵심**이고, 느슨하게
+고치면(`"PROPOSE:" in content` 류) 깨진다.
+
+**P2 중 분담이 비는 것을 의도로 명시했다.** `_on_message` 가 파싱을 그만하므로
+게이트 open 전까지 `assignment_for()` 가 빈 값이다. **바뀌는 편이 맞다** —
+승인되지도 않은(그리고 `REJECT:` 로 버려질 수 있는) 초안의 몫을 미리 지시하면
+에이전트가 무효가 될 계획을 실행한다. `dc79a366` 의 유령 분담안이 그 모양이었다.
 
 ### 남은 것
 

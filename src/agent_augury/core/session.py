@@ -1461,18 +1461,39 @@ class Session:
         gate = protocol.gate_for(phase)
         if gate is None or not gate.thread_id or gate.is_open:
             return False
+        # Only nudge an agent the gate has NOT counted. Telling an agent that
+        # already signalled "you have not voted" would simply be false.
+        pending = sorted(set(gate.participants) - gate.approvals)
+        if agent.agent_id not in pending:
+            return False
         key = (agent.agent_id, phase)
         if key in self._gate_thread_nudged:
             return False
         self._gate_thread_nudged.add(key)
+        # The decisive fact lives in gate.approvals and was never shown to the
+        # model. Across five live runs a human had to supply this same sentence
+        # ("you are the only one left") -- the runtime already knew it.
+        if len(pending) == 1:
+            who = (
+                "You are the ONLY one left — the gate opens the moment "
+                "you signal."
+            )
+        else:
+            who = f"Still missing: {', '.join(pending)}."
+        needs = (
+            gate.entry_prefix
+            if (gate.require_proposal and not gate.has_proposal)
+            else "APPROVE:"
+        )
         agent.conversation.append(
             {
                 "role": "user",
                 "content": (
-                    f"[protocol] Phase is {phase}. "
-                    f"The gate thread id is '{gate.thread_id}' "
-                    f"(name={gate.thread_name!r}). "
-                    "Send PROPOSE:/APPROVE: on that thread only. "
+                    f"[protocol] Phase {phase}: the gate has not counted you "
+                    f"yet. {who} Send {needs} as the FIRST line of a "
+                    f"send_message to thread '{gate.thread_id}' "
+                    f"(name={gate.thread_name!r}) — saying you approved in "
+                    f"prose does not count. "
                     f"Do not create another thread named {gate.thread_name!r}."
                 ),
             }

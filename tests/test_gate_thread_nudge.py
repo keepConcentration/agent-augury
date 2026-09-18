@@ -14,6 +14,7 @@ from agent_augury.core.protocol.collaboration import CollaborationProtocol
 from agent_augury.core.protocol.phases import P2_SPLIT
 from agent_augury.core.server import MessageServer
 from agent_augury.core.session import Session
+from agent_augury.gateway import SurfaceSubscription
 
 
 def test_render_system_prompt_includes_gate_thread_id():
@@ -105,6 +106,9 @@ async def test_p2_gate_thread_nudge_once():
     session.protocol.start = lambda: None  # type: ignore[method-assign]
     session.protocol.phase_manager._phase = P2_SPLIT
     session.protocol._setup_gate_for_phase(P2_SPLIT)
+    session.gateway.attach(
+        SurfaceSubscription(name="test-ui", mode="interact")
+    )
 
     async def _setup() -> None:
         session._setup_done = True
@@ -136,3 +140,55 @@ async def test_p2_gate_thread_nudge_once():
     assert b1.last_messages is not None
     system = b1.last_messages[0]["content"]
     assert f"Gate thread id: `{plan}`" in system
+
+
+def _nudge_for(agent_id, approvals, *, require_proposal=True, has_proposal=False):
+    """Render the nudge an agent would get, without running a session."""
+    server = MessageServer()
+    for a in ("a1", "a2", "a3"):
+        server.register_agent(a)
+    session = Session(server=server, agents=[])
+    protocol = CollaborationProtocol(server, participants=["a1", "a2", "a3"])
+    gate = protocol.bind_gate(P2_SPLIT, "plan", require_proposal=require_proposal)
+    gate.thread_id = "thread-1"
+    gate.participants = ["a1", "a2", "a3"]
+    gate.approvals = set(approvals)
+    gate._proposal_received = has_proposal
+    protocol.phase_manager._phase = P2_SPLIT
+    session.protocol = protocol
+    agent = AgentLoop(agent_id=agent_id, backend=ScriptBackend([]), server=server)
+    fired = session._maybe_nudge_gate_thread(agent)
+    texts = [m["content"] for m in agent.conversation if m["role"] == "user"]
+    return fired, (texts[0] if texts else "")
+
+
+def test_nudge_names_the_holdout():
+    """Live x5: a human kept supplying "you are the only one left".
+
+    The runtime already had it in gate.approvals and never rendered it.
+    """
+    fired, text = _nudge_for("a3", {"a1", "a2"}, has_proposal=True)
+    assert fired
+    assert "ONLY one left" in text
+    assert "APPROVE:" in text
+    assert "prose does not count" in text
+
+
+def test_nudge_lists_who_is_still_missing():
+    fired, text = _nudge_for("a2", {"a1"}, has_proposal=True)
+    assert fired
+    assert "Still missing: a2, a3" in text
+    assert "ONLY one left" not in text
+
+
+def test_nudge_asks_for_the_entry_signal_when_no_draft_exists():
+    fired, text = _nudge_for("a1", set(), has_proposal=False)
+    assert fired
+    assert "Send PROPOSE:" in text
+
+
+def test_no_nudge_for_an_agent_already_counted():
+    """Saying "you have not voted" to an agent that voted would be false."""
+    fired, text = _nudge_for("a1", {"a1"}, has_proposal=True)
+    assert not fired
+    assert text == ""

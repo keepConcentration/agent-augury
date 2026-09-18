@@ -1,6 +1,6 @@
 # 페이즈 기계 — 난이도 라우팅과 모델 체킹
 
-> **Status:** draft **rev.2** (리뷰 반영 · 구상 · **착수 미정**)
+> **Status:** draft **rev.3** (리뷰 2차 반영 · 구상 · **착수 미정**)
 > **Date:** 2026-09-18
 > **Priority:** R1 = P2 (비용 38~44% 절감) · R2 = P1 (교착을 실행 전에 잡는다)
 > **Parent:** `PHASE_ENTRY_SIGNAL_DESIGN.md`, `FOLLOWUP_TURN_PROTOCOL_DESIGN.md`
@@ -10,6 +10,8 @@
 >   `core/session.py`, `tests/`
 > **결정:** 학습된 예측기 **안 씀** (§2.6) · 라우팅 신호는 **선언(계약)** — 빈 `_assignments` 추론 **폐기** (§2.2)
 > **rev.2:** 측정으로 R1 의 원래 신호가 **6세션 중 3에서만 맞는다**는 것이 드러나 신호를 바꿨다 (§2.2)
+> **rev.3:** `SPLIT:` 도 `ASSIGN` 과 같은 소유권 병을 앓는다 → **게이트 open 때 소유자 것만 커밋** (§2.3).
+>   §4 의 `_human_approval_needs_interact` 를 `has_interact_surface()` 로 교정. BFS 범위에서 S1 분리 (§3.4)
 
 ---
 
@@ -128,11 +130,40 @@ SUBMITTER: agent-3
 - **판정은 선언에만 의존한다.** 빈 `_assignments` 는 라우팅에 쓰지 않는다 —
   ASSIGN 을 잊은 것과 분할이 불필요한 것은 다른 사건이다.
 
+`ASSIGN` 과 **같이** 오면 `ASSIGN` 을 우선한다 → P3 로 간다(보수 기본값,
+E2). 모순된 선언에서 비싼 쪽을 고르는 것이 안전하다.
+
 #### 대가
 
 선언이므로 **팀이 안 쓰면 아무 일도 일어나지 않는다**(현재 동작 = P3 로 진행).
 안전한 실패다. 반대로 남용하면 어려운 문제에서 P3·P4 를 건너뛰는데, 그때도
 P5 의 `FINAL:` + 전원 승인은 남으므로 **검토가 0이 되지는 않는다**(§2.4).
+
+#### 채택률이 절감의 전부다 — 먼저 그것만 측정한다
+
+§2.1 의 여섯 세션은 **산문으로만** "분할 불필요"를 말했다. `SPLIT:` 이라는
+신호는 존재하지 않았으므로, **프롬프트 한 줄로 팀이 실제로 쓸지는 모른다.**
+38% 절감은 전적으로 거기에 달렸다.
+
+→ R1 을 **두 조각으로 나눈다.**
+
+| | 내용 | 위험 | 측정 |
+|--|------|------|------|
+| **R1a** | `SPLIT:` 파서 + P2 프롬프트 한 줄. **라우팅은 안 붙인다** | **없음** — 동작 변경 0 | **선언 출현율.** 산수 질문 n회에서 `SPLIT: none` 이 몇 번 나오나 |
+| **R1b** | `next_phase_after_gate` 라우팅 + 전이 | 답 품질 | E6 (on/off 답 동일성) |
+
+**R1a 가 0% 에 가까우면 R1b 는 폐기다.** 그때는 프롬프트 문구를 고치거나,
+애초에 라우팅을 포기하고 P3/P4 의 퇴장 규칙(이미 있음)으로 만족한다.
+
+#### 신호 등록
+
+새 신호이므로 **두 곳에 한 줄씩** 넣어야 한다. 안 그러면 신호 정의가 두
+군데로 갈라진다.
+
+- `protocol/assignments.py` — `parse_assignments` / `parse_submitter` 옆에
+  `parse_split`. 정규식 한 개
+- `PHASE_ENTRY_SIGNAL_DESIGN.md` §6b.4 (`ASSIGN` / `SUBMITTER:` 를 정의한 곳)
+  에 `SPLIT:` 추가. **그 문서가 P2 기계 판독 줄의 SSOT 다**
 
 ### 2.3 인접 버그 — `_assignments` 는 "이긴 초안"의 것이 아니다
 
@@ -157,18 +188,56 @@ if self.phase == P2_SPLIT and has_signal(content, "PROPOSE:"):
 이것은 이미 한 번 관측됐다 — `dc79a366` seq 8 의 유령 분담안
 (`PHASE_ENTRY_SIGNAL_DESIGN` §6b.14). 그때는 신호가 묻혀서 **우연히** 무사했다.
 
-**수정:** 초안 소유자의 것만 받는다.
+#### rev.2 의 가드 스케치는 약하다
+
+rev.2 는 `gate.draft_author not in (None, author)` 로 막으려 했다. 두 구멍이 있다.
+
+1. **구독 순서 의존.** 확인해 보니 `_on_message` 가 `gate.on_message` **앞에**
+   등록된다(생성자에서 먼저 `subscribe`, `bind_gate` 가 나중).
+
+   ```text
+   subscribers = ['CollaborationProtocol._on_message', 'ConsensusGate.on_message']
+   ```
+
+   그래서 `_on_message` 는 **항상 게이트가 처리하기 전의** `draft_author` 를
+   본다. 첫 `PROPOSE:` 때는 `None` 이라 통과하는데, 이것이 맞는 동작인 이유가
+   **등록 순서라는 우연**이다. `bind_gate` 위치가 바뀌면 조용히 깨진다.
+2. **스레드 검사가 없다.** `_on_message` 는 `self.phase == P2_SPLIT` 만 본다.
+   게이트 스레드가 아닌 곳의 `PROPOSE:` 도 ASSIGN 이 기록된다.
+
+#### 수정 — 스테이징 후, 게이트 open 때 소유자 것만 커밋
 
 ```python
-if self.phase == P2_SPLIT and has_signal(content, "PROPOSE:"):
-    gate = self._gates.get(P2_SPLIT)
-    author = message.get("author", "")
-    if gate is not None and gate.draft_author not in (None, author):
-        return                          # 경쟁 초안: 게이트와 같이 무시
+# _on_message: 커밋하지 않고 작성자별로 쌓아 둔다
+self._staged[author] = {
+    "assignments": parse_assignments(content, self.participants),
+    "submitter":   parse_submitter(content, self.participants),
+    "split_none":  parse_split(content),
+}
+
+# P2 게이트가 열릴 때 (1회): 이긴 초안의 것만 채택
+owner = self._gates[P2_SPLIT].draft_author
+picked = self._staged.pop(owner, None) or {}
+self._assignments = picked.get("assignments") or {}
+self.submitter_id = picked.get("submitter")
+self.split_none   = bool(picked.get("split_none"))
+self._staged.clear()
 ```
 
-`if found:` 도 손봐야 한다 — 같은 작성자의 **재초안에 ASSIGN 이 없으면**
-지난 분담이 그대로 남는다. 초안이 바뀌면 분담도 그 초안의 것이어야 한다.
+이렇게 하면 네 가지가 한꺼번에 사라진다.
+
+| 병 | 왜 사라지나 |
+|----|------------|
+| 경쟁 초안 오염 | 소유자 것만 채택 |
+| 구독 순서 의존 | open 시점에는 `draft_author` 가 확정돼 있다 |
+| 스레드 누락 | 게이트가 이미 스레드로 걸렀다 |
+| 재초안 잔존 | 같은 작성자의 새 파싱이 자기 것을 덮고, `SPLIT` 도 **같이** 재평가된다 |
+
+`REJECT:` 는 `_reset_for_redo` 에서 `_staged` 와 `split_none` 도 비운다.
+
+> **이것은 새 설계가 아니라 결정 복원이다.** `PHASE_ENTRY_SIGNAL_DESIGN` D7 이
+> 이미 *"`SUBMITTER:` 파싱 시점 = P2 게이트 open 시 **1회**"* 로 정해 두었는데,
+> 구현이 메시지마다 파싱하는 쪽으로 흘렀다. 그 드리프트가 S3 위반의 원인이다.
 
 ### 2.4 전이 허용
 
@@ -289,42 +358,68 @@ N=4, **활성 게이트 하나만 세면** 게이트당 약 1,600. 전이는 에
 
 | # | 불변식 | 어긴 버그 |
 |---|--------|-----------|
-| **S1** | 제출된 답은 **전원 승인을 받은 그 초안**이다 | 게이트 열린 뒤 초안 추가 (`374ce12`) |
-| **S2** | 게이트는 **현재 초안에 대한** N개의 서로 다른 표로만 열린다 | 초안 없는 표를 세던 것 (D10) |
-| **S3** | 런타임이 기록한 분담 = 승인된 초안의 분담 | **§2.3 — 아직 어기는 중** |
-| **L1** | 도달 가능한 모든 상태에서, 어떤 에이전트 행동열이 COMPLETED 로 간다 | P2 park 교착, 작성자 미투표 |
-| **L2** | 모든 에이전트가 park 이면 그 상태는 종단이다 | **D12 — 아직 어기는 중** |
+| # | 불변식 | 어긴 버그 | 검사 수단 |
+|---|--------|-----------|-----------|
+| **S1** | 제출된 답은 **전원 승인을 받은 그 초안**이다 | 게이트 열린 뒤 초안 추가 (`374ce12`) | **게이트 API 단위테스트** (BFS 아님 — §3.4) |
+| **S2** | 게이트는 **현재 초안에 대한** N개의 서로 다른 표로만 열린다 | 초안 없는 표를 세던 것 (D10) | 게이트 API 단위테스트 |
+| **S3** | 런타임이 기록한 분담 = 승인된 초안의 분담 | **§2.3 — 아직 어기는 중** | 단위테스트 |
+| **L1** | 도달 가능한 모든 **비종단** 상태에서, 어떤 행동열이 **종단**으로 간다 | P2 park 교착, 작성자 미투표 | **BFS** |
+| **L2** | 모든 에이전트가 park 이면 그 상태는 **종단**이다 | **D12 — 아직 어기는 중** | **BFS** |
 
-S3 와 L2 는 **지금 코드가 어기고 있다.** 모델 체킹을 붙이면 라이브 실행 없이
-드러난다.
+**종단 = `COMPLETED` 또는 `REJECTED`.** L1 을 "COMPLETED 로 간다"로 쓰면
+정상적인 `REJECTED` 종료가 stuck 으로 잡힌다.
+
+S3 와 L2 는 **지금 코드가 어기고 있다.**
 
 ### 3.4 구현 — pytest 안의 BFS
 
 새 의존성도, 새 언어도 쓰지 않는다.
 
+**BFS 가 보는 것은 L1·L2 뿐이다.** S1~S3 는 게이트 API 단위테스트로 간다
+(§3.3) — S1 을 어긴 실제 버그가 **툴 계층**(`gate_already_open`)이었으므로,
+BFS 가 초록이어도 코드는 빨간 상태가 될 수 있다. **초록의 의미를 흐리지 않는다.**
+
 ```python
 # tests/test_phase_machine_invariants.py  (스케치)
+TERMINAL = {COMPLETED, REJECTED}
+
 def test_no_deadlock_reachable():
-    """모든 도달 상태에서 COMPLETED 로 가는 길이 있는가."""
     seen, stuck = set(), []
     frontier = [initial_state(n=3)]
     while frontier:
-        s = frontier.pop()
-        if s in seen:
+        st = frontier.pop()
+        if st in seen:
             continue
-        seen.add(s)
-        nxt = [apply(s, a) for a in legal_actions(s)]
-        if not nxt and not is_terminal(s):
-            stuck.append(s)
+        seen.add(st)
+        nxt = [apply(st, a) for a in legal_actions(st)]
+        if not nxt and st.phase not in TERMINAL:
+            stuck.append(st)          # L1 위반
+        if all_parked(st) and st.phase not in TERMINAL:
+            stuck.append(st)          # L2 위반 (D12)
         frontier.extend(nxt)
     assert not stuck, stuck[:3]
 ```
 
 - **N=3 으로 돈다.** N=4 도 되지만 3 이면 모든 버그 유형이 재현되고 빠르다.
-- **실제 객체를 쓴다** — `ConsensusGate` / `CollaborationProtocol` 을 그대로
-  구동해 모델과 코드가 갈라지지 않게 한다. 별도 모델을 쓰면 그 모델이
-  낡는 것이 다음 버그가 된다.
-- `park` 을 행동으로 넣어야 L2(D12)가 잡힌다.
+
+#### 모델의 경계 — 어디까지 실제 객체인가
+
+"실제 객체를 쓴다"를 뭉개면 모델이 다른 자리에서 다시 갈라진다. 경계를
+못박는다.
+
+| | 실제 코드 | 모델(흉내) |
+|--|-----------|-----------|
+| 게이트 상태·표 집계 | ✅ `ConsensusGate.on_message` | — |
+| 페이즈 전이 | ✅ `CollaborationProtocol.advance` / `next_phase_after_gate` | — |
+| 신호 판정 | ✅ `signals.has_signal` | — |
+| `legal_actions` | — | 🔶 "각 에이전트가 보낼 수 있는 신호" 열거 |
+| `park` | — | 🔶 `is_agent_done(a)` ∧ inbox 비었음 으로 **근사** |
+| 세션 루프·wakeup 타이밍 | — | ❌ 범위 밖 |
+| 툴 계층 소프트 차단 | — | ❌ 범위 밖 (§3.5) |
+
+즉 **프로토콜 객체는 진짜, 스케줄링은 근사**다. `park` 근사가 실제
+`_wait_for_gate_wakeup` 과 어긋나면 L2 결과도 어긋난다 — 그래서 D12 를
+고칠 때 **근사와 구현을 같이 맞춰야** 한다.
 
 ### 3.5 기대치를 낮게 유지한다
 
@@ -366,9 +461,39 @@ Does not end the turn merely because every agent is idle.
 | 전원 park → 턴 종료 | ✓ | ✗ | 구조 창 소멸 |
 | **전원 park → 턴 종료, 단 interact 서피스가 붙어 있으면 대기** | ✓ | ✓ | **후보** |
 
-세 번째가 맞아 보인다. 세션은 이미 interact 서피스 부착 여부를 안다
-(`_human_approval_needs_interact` 계열). **다만 이것은 R2 의 결론으로
-정하는 것이 맞다** — 불변식을 먼저 쓰고, 그것이 요구하는 것을 고친다.
+세 번째가 맞아 보인다. 판정에는 **`Session.has_interact_surface()`** 를 쓴다
+(`session.py:205` → `gateway.has_interact_surface()`).
+
+> **`_human_approval_needs_interact` 를 쓰면 안 된다.** 그것은 `any_human_approval`
+> 이 참일 때만 True 가 되므로, **human_approval 페이즈가 없는 세션은 Ink 가
+> 붙어 있어도 False** 다 → 사람이 보고 있는데 자동 종료된다. (E5 확정)
+
+**다만 이것은 R2 의 결론으로 정하는 것이 맞다** — 불변식을 먼저 쓰고, 그것이
+요구하는 것을 고친다.
+
+### 4.1 기존 종료 경로와 겹친다
+
+"전원 park → 턴 종료"는 **이미 있는 종료 경로 셋과 같은 자리에 선다.**
+
+| 기존 경로 | 어디 | 현재 `reason` |
+|-----------|------|---------------|
+| B — 프로토콜 터미널 | `_run_impl` 상단 break | `protocol_completed` |
+| D′ — 텍스트 idle streak | `idle_streak >= 2` | (idle 계열) |
+| `max_steps` | park 루프 + 루프 상단 | — |
+| **신규 — 전원 park** | `_wait_for_gate_wakeup` | **미정** |
+
+`derive_turn_done_reason` / `publish_turn_done`
+(`SESSION_TURN_TERMINATION_DESIGN`)과 교차하므로 **구현 시 두 가지를 정해야
+한다.**
+
+1. **`reason` 을 새로 만드나** (`gate_deadlock` 등) **기존 idle 로 접나.**
+   새로 만드는 쪽이 진단에 낫다 — "아무도 말 안 함"과 "게이트가 못 열림"은
+   원인이 다르다.
+2. **이중 종료·이중 Wire 방지.** park 에서 break 한 뒤 루프 하단의 D′ 가
+   또 타지 않아야 하고, `turn_done` 이 두 번 발행되지 않아야 한다.
+   park 은 **게이트 대기** 상태이고 D′ 는 **비게이트 idle** 이라 원래
+   배타적인데(`_is_gate_waiting()` 분기), 새 종료가 그 경계를 흐리지 않는지
+   확인이 필요하다.
 
 ---
 
@@ -419,11 +544,13 @@ seq 37 agent-4: "3. 전체적 구조: 10개 섹션의 구성이 논리적이고 
 | # | 질문 | 메모 |
 |---|------|------|
 | **E1** | R1 이 P4 까지 건너뛰나 | 본문은 둘 다 건너뛴다(§2.4). P3 없이 P4 는 대조할 것이 없다 |
-| **E2** | `SPLIT: none` 과 `ASSIGN` 이 **같이** 오면 | 모순이다. 후보: ASSIGN 우선(보수적 = P3 로 감). 팀이 둘 다 쓰는 빈도를 먼저 보고 정한다 |
+| ~~E2~~ | ~~`SPLIT: none` + `ASSIGN` 동시~~ | **확정: `ASSIGN` 우선 → P3.** 모순에서는 비싼 쪽이 안전하다 (§2.2) |
 | E3 | R1 을 `light` 에도? | light 에는 P2 가 없어 해당 없음 |
 | **E4** | BFS 를 CI 에서 매번 돌릴까 | §3.2 의 1,600 은 활성 게이트 하나만 센 낙관값. **N=3 으로 재고 나서 정한다.** 느리면 활성 게이트만 모델링 |
 | ~~E5~~ | ~~interact 부착 판정~~ | **해결.** `Session.has_interact_surface()` 가 이미 있다(`session.py:205` → `gateway.has_interact_surface()`). `_human_approval_needs_interact` 는 **쓰면 안 된다** — `any_human_approval` 이 거짓이면 Ink 가 붙어 있어도 False 다 |
-| **E6** | R1 이 정확도를 떨어뜨리는지 | 같은 산수 질문을 R1 on/off 로 돌려 답이 같은지. **쉬운 문제에서만 검증 가능** — 어려운 문제는 애초에 `SPLIT: none` 이 안 나온다 |
+| **E6** | R1b 가 정확도를 떨어뜨리는지 | 같은 산수 질문을 R1b on/off 로 돌려 답이 같은지. **쉬운 문제에서만 검증 가능** — 어려운 문제는 애초에 `SPLIT: none` 이 안 나온다 |
+| **E8** | `SPLIT:` 채택률이 몇 % 면 R1b 를 붙이나 | R1a 측정 후. **0% 에 가까우면 R1b 폐기** (§2.2) |
+| **E9** | 전원 park 종료의 `reason` | 새 값(`gate_deadlock`) vs 기존 idle 로 접기. 새 값을 권함 — 원인이 다르다 (§4.1) |
 | **E7** | `SPLIT: none` 남용 방어 | 안 만든다. 남용해도 P5 의 초안+전원 승인은 남는다(§2.2 대가). 실제로 어려운 문제에서 나오면 그때 |
 
 ---
@@ -435,7 +562,8 @@ seq 37 agent-4: "3. 전체적 구조: 10개 섹션의 구성이 논리적이고 
 | 1 | **R2 BFS** (S1·S2·L1) | 과거 버그 2개의 회귀 방어망 | **테스트만 추가** — 동작 변경 0 |
 | 2 | **§2.3 분담 소유자** | 프롬프트가 승인 안 된 몫을 시키는 것 제거 | 독립 버그 수정 |
 | 3 | **L2 + D12** | 헤드리스 영구 정지 해소 | `has_interact_surface()` 로 값이 싸졌다 (E5) |
-| 4 | **R1 라우팅** | P3+P4 구간(32~44%) 절감 | `next_phase_after_gate` 되돌림 |
+| 4 | **R1a** `SPLIT:` 파서 + 프롬프트 | **채택률 측정** | 동작 변경 0 |
+| 5 | **R1b** 라우팅 + 전이 | P3+P4 구간(32~44%) 절감 | `next_phase_after_gate` 되돌림 |
 
 **1번이 먼저인 이유:** 동작을 하나도 바꾸지 않으면서 그 뒤 세 개의 안전망이
 된다. 특히 4번이 새 교착을 만드는지 **붙이는 즉시** 안다.
@@ -444,8 +572,15 @@ seq 37 agent-4: "3. 전체적 구조: 10개 섹션의 구성이 논리적이고 
 라우팅이 `SPLIT:` 선언만 보게 되어 **선후 의존이 끊겼다**. 그래도 버그는
 버그이므로 2번에 남긴다.
 
-**4번이 마지막인 이유:** 새 신호(`SPLIT:`) + 프롬프트 + 파서 + 전이 + 테스트로
-표면이 가장 넓다. 그리고 유일하게 **답의 품질을 바꿀 수 있는** 변경이다.
+**R1 을 4·5 로 쪼갠 이유:** 절감이 전적으로 **채택률**에 달렸는데 그 값을
+아직 모른다(§2.2). 4번은 동작을 안 바꾸면서 그 값을 준다. 5번은 유일하게
+**답의 품질을 바꿀 수 있는** 변경이므로, 4번의 숫자를 보고 착수 여부를 정한다.
+
+**문서 선행 패치(이 rev.3 에 포함):**
+
+- §4 의 interact 판정을 `has_interact_surface()` 로 교정 — 구현자가 옛 플래그를
+  집어 들지 않도록
+- `SPLIT:` 에도 `ASSIGN` 과 **같은 소유권 규칙**을 적용 (§2.3 스테이징)
 
 
 ## 8. 요약
@@ -477,8 +612,30 @@ seq 37 agent-4: "3. 전체적 구조: 10개 섹션의 구성이 논리적이고 
 해로웠다고 보고한다**(0% vs 80~90%). 문제는 실재하지만 해법은 우리가 따로
 측정해야 한다.
 
+### rev.3 에서 바뀐 것
+
+**`SPLIT:` 도 `ASSIGN` 과 같은 병을 앓는다.** 경쟁 초안의 `SPLIT: none` 이
+늦게 도착하면 라우팅이 오염된다 — rev.2 의 가드 스케치는 **구독 순서라는
+우연**에 기대고 있었고(`_on_message` 가 게이트보다 먼저 등록된다), 스레드
+검사도 없었다. → **작성자별 스테이징 후 게이트 open 때 소유자 것만 커밋**
+(§2.3). 이것은 새 설계가 아니라 `PHASE_ENTRY_SIGNAL` **D7 결정의 복원**이다.
+
+**§4 가 E5 와 모순이었다.** 본문은 `_human_approval_needs_interact` 계열을
+쓰라고 하고 E5 는 쓰지 말라고 했다 — 구현자가 옛 플래그를 집어 들 자리였다.
+`has_interact_surface()` 로 교정하고 **왜 옛 플래그가 틀린지**를 같이 적었다.
+
+**BFS 범위에서 S1~S3 를 뺐다.** S1 을 어긴 실제 버그가 툴 계층이었으므로,
+BFS 에 넣으면 **초록이 코드 상태와 어긋난다**. BFS 는 L1·L2 만, S 계열은
+게이트 API 단위테스트로 간다. 종단은 `COMPLETED ∪ REJECTED` 로 못박았다 —
+`REJECTED` 를 빼면 정상 종료가 stuck 으로 잡힌다.
+
+**R1 을 R1a/R1b 로 쪼갰다.** 절감이 전적으로 **채택률**에 달렸는데 §2.1 의
+여섯 세션에는 `SPLIT:` 이 아예 없었다(산문만). R1a(파서+프롬프트, 동작 변경 0)
+로 출현율을 먼저 재고, 0% 에 가까우면 **R1b 는 폐기**다.
+
 ### 남은 것
 
 착수는 **동작을 안 바꾸는 것부터**다 — BFS(안전망) → 분담 소유자(독립 버그)
-→ D12(`has_interact_surface()` 로 값이 싸졌다) → R1(표면이 가장 넓고, 유일하게
-답의 품질을 바꿀 수 있다).
+→ D12(`has_interact_surface()`) → R1a(측정) → R1b(라우팅).
+**D12 구현 시 기존 종료 경로 셋(B·D′·`max_steps`)과 `reason` 을 교차
+확인해야 한다** — 이중 종료·이중 Wire 가 날 자리다(§4.1).

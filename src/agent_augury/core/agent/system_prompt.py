@@ -199,16 +199,18 @@ Current phase: **P5 SUBMIT**
     # protocol spent, and with no block here the only thing steering the agent
     # is a conversation full of PROPOSE:/APPROVE:/FINAL: from the run that just
     # ended -- so it keeps performing the protocol (live: `a858cd97`).
-    "COMPLETED": """Current phase: **COMPLETED** - the P1-P5 run for the PREVIOUS question is over.
-- Those gate threads are closed history. `PROPOSE:` / `APPROVE:` / `FINAL:`
+    # Terminal phases still render. A new question opens a fresh `light` round
+    # before any agent steps (FOLLOWUP_TURN_PROTOCOL_DESIGN), so agents only
+    # see these between the gate opening and the turn ending.
+    "COMPLETED": """Current phase: **COMPLETED** - this round is finished and the answer is in.
+- The gate threads are closed history. `PROPOSE:` / `APPROVE:` / `FINAL:`
   posted now open nothing; no gate is listening.
-- Do NOT re-run the protocol, and do not repeat the previous answer.
-- Answer the user's new question directly in your reply. Message a teammate
-  only when you actually need something from them.""",
-    "REJECTED": """Current phase: **REJECTED** - the P1-P5 run ended without consensus.
-- Those gate threads are closed history; signals posted now open nothing.
-- Answer the user directly in your reply, and say plainly what the team
-  could not agree on.""",
+- Say nothing further and do not repeat the answer. A new question from the
+  user opens a new round on its own.""",
+    "REJECTED": """Current phase: **REJECTED** - this round ended without consensus.
+- The gate threads are closed history; signals posted now open nothing.
+- Say plainly what the team could not agree on, then stop. A new question
+  opens a new round on its own.""",
 }
 
 

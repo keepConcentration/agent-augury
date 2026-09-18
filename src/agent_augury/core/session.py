@@ -1182,17 +1182,30 @@ class Session:
         """Core run logic (separated so start/stop wraps it cleanly)."""
         self._interrupt.clear()
 
+        # Broadcast the initial task to ALL agents (not just agents[0]), so
+        # every worker gets the same user prompt and acts on it per its role.
+        user_text = initial_prompt or self.task or ""
+
+        # FOLLOWUP_TURN_PROTOCOL_DESIGN: a new question on a finished protocol
+        # opens a new `light` round (P1 -> P5). Without it the follow-up answer
+        # is four independent drafts that nobody reviews. Only a real question
+        # starts a round -- a bare resume with no prompt must not.
+        if (
+            user_text
+            and self.protocol
+            and self.protocol.phase in (COMPLETED, REJECTED)
+        ):
+            self.protocol.begin_round(mode="light")
+
         # A protocol that finished in an EARLIER turn must not end this one:
         # resuming a COMPLETED session is free-form collaboration under a spent
         # protocol (SESSION_TURN_TERMINATION §4.4), so only a terminal reached
-        # *during this run* stops the agents.
+        # *during this run* stops the agents. A restarted round is live again,
+        # so this is False after begin_round() above.
         protocol_spent = bool(
             self.protocol and self.protocol.phase in (COMPLETED, REJECTED)
         )
 
-        # Broadcast the initial task to ALL agents (not just agents[0]), so
-        # every worker gets the same user prompt and acts on it per its role.
-        user_text = initial_prompt or self.task or ""
         if user_text:
             for agent in self.agents:
                 agent.conversation.append({"role": "user", "content": user_text})

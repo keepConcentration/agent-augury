@@ -9,7 +9,7 @@ import pytest
 from agent_augury.backend.base import Completion, ModelBackend, ToolCall
 from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.core.protocol.collaboration import CollaborationProtocol
-from agent_augury.core.protocol.phases import COMPLETED, P5_SUBMIT
+from agent_augury.core.protocol.phases import COMPLETED, P1_EXPLORE, P5_SUBMIT
 from agent_augury.core.server import MessageServer
 from agent_augury.core.session import Session, _on_protocol_gate_open
 from agent_augury.gateway.turn_done import derive_turn_done_reason, publish_turn_done
@@ -78,34 +78,126 @@ async def test_protocol_reaching_completed_ends_the_turn():
     assert steps == 1                  # one turn, no follow-up chatter
 
 
-@pytest.mark.asyncio
-async def test_spent_protocol_resumes_free_form():
-    """A COMPLETED protocol from an earlier turn must not kill the next run.
-
-    Live repro: after the answer was submitted, every follow-up question came
-    back as ``session: 0 steps`` because the terminal check fired at the top of
-    the very first iteration.
-    """
+async def _spent_session(script):
+    """A session whose protocol finished an earlier round, ready for a follow-up."""
     server = MessageServer()
     server.register_agent("a1")
     protocol = CollaborationProtocol(server, participants=["a1"])
+    protocol.bind_gate(P5_SUBMIT, "submission", require_proposal=True,
+                       entry_prefix="FINAL:")
+    sub_tid = await server.create_thread("submission", participants=["a1"])
+    human_tid = await server.create_thread("human", participants=["a1"])
+    gate = protocol.gate_for(P5_SUBMIT)
+    gate.bind_to_thread(sub_tid)
+
+    # ...and it finished: gate opened, split recorded, phase terminal.
+    gate.approvals.add("a1")
+    gate.opened_at_seq = 99
+    protocol._assignments = {"a1": "괄호 계산 검증"}
+    protocol.submitter_id = "a1"
+    protocol._gate_open_fired.add(P5_SUBMIT)
     protocol.phase_manager._phase = COMPLETED
 
-    backend = ScriptBackend([Completion(text="sure, about that...")])
+    backend = ScriptBackend(script)
     agent = AgentLoop(agent_id="a1", backend=backend, server=server)
-    session = Session(server=server, agents=[agent], max_steps=50)
+    session = Session(server=server, agents=[agent], max_steps=30)
     session.protocol = protocol
     session._setup_done = True
+    protocol.on_gate_open(lambda ph: _on_protocol_gate_open(session, ph))
     session._output_task = asyncio.create_task(session._output_consumer())
+    return session, protocol, gate, backend, human_tid, sub_tid
+
+
+def _say(tid, text):
+    return Completion(tool_calls=[ToolCall(
+        id="t", name="send_message",
+        arguments={"thread": tid, "content": text})])
+
+
+@pytest.mark.asyncio
+async def test_followup_question_opens_a_new_light_round():
+    """A COMPLETED protocol from an earlier turn must not kill the next run.
+
+    Live repro (`694182e`): every follow-up came back as ``session: 0 steps``.
+    Since FOLLOWUP_TURN_PROTOCOL_DESIGN it does more than run -- the follow-up
+    opens a fresh ``light`` round (P1 -> P5) so the answer gets reviewed
+    instead of landing as N unread drafts.
+    """
+    session, protocol, gate, backend, human_tid, sub_tid = await _spent_session([])
+    backend.script = [
+        _say(human_tid, "READY: done"),
+        _say(sub_tid, "FINAL: the follow-up answer"),
+    ]
 
     steps = await session._run_impl(initial_prompt="why did you skip that?")
     await session.close()
 
-    assert protocol.phase == COMPLETED      # not restarted
     assert backend.calls >= 1, "follow-up never reached the agents"
     assert steps >= 1
-    # D' still closes the free-form turn instead of looping forever
-    assert steps <= 2
+    assert protocol.mode == "light"
+    # P1 -> P5 -> COMPLETED: one participant, so FINAL: is already unanimous.
+    assert protocol.phase == COMPLETED
+    assert gate.is_open
+    finals = [m for m in session.server.snapshot()["messages"]
+              if m["content"].startswith("FINAL:")]
+    assert len(finals) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_bare_resume_does_not_open_a_round():
+    """No new question, no new round -- only a real prompt starts one."""
+    session, protocol, _gate, _backend, _h, _s = await _spent_session(
+        [Completion(text=None)]
+    )
+    steps = await session._run_impl(initial_prompt=None)
+    await session.close()
+
+    assert protocol.phase == COMPLETED      # untouched -- no round opened
+    assert protocol.mode == "full"          # and the mode was not switched
+    assert steps <= 2                       # free-form, closed by D-prime
+
+
+def test_begin_round_clears_last_rounds_state():
+    """Gates reset in place: MessageServer has no unsubscribe (§4.3)."""
+    server = MessageServer()
+    for a in ("a1", "a2"):
+        server.register_agent(a)
+    protocol = CollaborationProtocol(server, participants=["a1", "a2"])
+    gate = protocol.bind_gate(P5_SUBMIT, "submission", require_proposal=True,
+                              entry_prefix="FINAL:")
+    gate.approvals.update(["a1", "a2"])
+    gate.draft_author = "a1"
+    gate.opened_at_seq = 42
+    gate._proposal_received = True
+    protocol._assignments = {"a1": "old share"}
+    protocol.submitter_id = "a1"
+    protocol._ready_states.update(["a1", "a2"])
+    protocol._gate_open_fired.add(P5_SUBMIT)
+    protocol.phase_manager._phase = COMPLETED
+
+    subscribers_before = len(server._subscribers)
+    protocol.begin_round(mode="light")
+
+    assert protocol.phase == P1_EXPLORE
+    assert protocol.mode == "light"
+    assert gate.approvals == set()
+    assert gate.draft_author is None
+    assert gate.opened_at_seq is None
+    assert not gate.has_proposal
+    assert protocol._assignments == {}
+    assert protocol.submitter_id is None
+    assert protocol.ready_states == frozenset()
+    # Without this the gate reopens but the phase never advances.
+    assert P5_SUBMIT not in protocol._gate_open_fired
+    assert len(server._subscribers) == subscribers_before, "gate re-subscribed"
+
+
+def test_begin_round_refuses_a_live_protocol():
+    server = MessageServer()
+    server.register_agent("a1")
+    protocol = CollaborationProtocol(server, participants=["a1"])
+    with pytest.raises(ValueError, match="finished protocol"):
+        protocol.begin_round(mode="light")
 
 
 @pytest.mark.asyncio

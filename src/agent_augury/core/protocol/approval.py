@@ -174,6 +174,15 @@ class ConsensusGate:
         self._proposal_received = False
         self.draft_author = None
 
+    def reset_for_round(self) -> None:
+        """Clear the gate so it can collect votes again on a new round.
+
+        ``_reset_for_redo`` already drops the votes and the draft; an opened
+        gate additionally has to forget that it opened.
+        """
+        self._reset_for_redo()
+        self.opened_at_seq = None
+
     def _maybe_open(self, message: dict[str, Any]) -> None:
         """Open (or park for human) once every participant has approved."""
         if not self.participants:

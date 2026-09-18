@@ -121,6 +121,39 @@ class CollaborationProtocol:
         """Begin the protocol at P1_EXPLORE."""
         self.phase_manager.advance(P1_EXPLORE)
 
+    def begin_round(self, *, mode: str | None = None) -> None:
+        """Open a new round on a finished protocol.
+
+        FOLLOWUP_TURN_PROTOCOL_DESIGN: a follow-up question already produces a
+        P1 (every agent answers independently); this gives it the P5 that
+        merges and reviews those answers.
+
+        Gates are reset **in place**. ``MessageServer`` has no ``unsubscribe``,
+        so rebuilding them would leave the old gates subscribed and counting
+        every vote twice.
+        """
+        if self.phase not in (COMPLETED, REJECTED):
+            raise ValueError(
+                f"begin_round() needs a finished protocol, not {self.phase}"
+            )
+        if mode is not None:
+            self.mode = mode
+        for gate in self._gates.values():
+            if gate is not None:
+                gate.reset_for_round()
+        # Without this, _handle_gate_open returns early for a phase that fired
+        # last round and the gate opens without the phase ever advancing.
+        self._gate_open_fired.clear()
+        self._ready_states.clear()
+        # light has no P2, so nothing would ever overwrite last round's split.
+        self._assignments.clear()
+        self.submitter_id = None
+        self._current_gate = None
+        self._current_gate_phase = None
+        # advance() rejects COMPLETED -> P1 (terminal). Go through the phase
+        # manager so surfaces still see the transition on the wire.
+        self.phase_manager.advance(P1_EXPLORE)
+
     def snapshot(self) -> dict[str, Any]:
         """Checkpoint payload for protocol + gates."""
         gates: dict[str, Any] = {}

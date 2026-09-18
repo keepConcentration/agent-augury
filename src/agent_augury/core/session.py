@@ -176,6 +176,10 @@ class Session:
         self._ready_nudged: set[str] = set()
         # Gated phases (P2+): one reminder of the bound gate thread id per agent/phase
         self._gate_thread_nudged: set[tuple[str, str]] = set()
+        # D12: agents currently inside _wait_for_gate_wakeup (headless deadlock detect)
+        self._parked_agents: set[str] = set()
+        # Set when D12 ends the turn (no interact surface + all parked).
+        self._gate_deadlock: bool = False
         # Checkpoint / resume (SESSION_RESUME_DESIGN)
         self.session_id: str | None = None
         self._checkpoint_store: Any = None
@@ -1181,6 +1185,8 @@ class Session:
     async def _run_impl(self, initial_prompt: str | None = None) -> int:
         """Core run logic (separated so start/stop wraps it cleanly)."""
         self._interrupt.clear()
+        self._gate_deadlock = False
+        self._parked_agents.clear()
 
         # Broadcast the initial task to ALL agents (not just agents[0]), so
         # every worker gets the same user prompt and acts on it per its role.
@@ -1479,10 +1485,13 @@ class Session:
         *,
         steps_done: Callable[[], int] | None = None,
     ) -> bool:
-        """Park until inbox, phase/gate change, interrupt, or step budget.
+        """Park until inbox, phase/gate change, interrupt, step budget, or D12.
 
         Returns True to step again; False to exit the agent loop.
-        Does **not** end the turn merely because every agent is idle.
+
+        D12 (PHASE_MACHINE_ROUTING §4): when **every** agent is parked here and
+        no interact surface is attached, end the turn (``gate_deadlock``).
+        With Ink/Discord interact attached, keep waiting — a human can poke.
         """
         protocol = self.protocol
         phase0 = protocol.phase if protocol is not None else None
@@ -1491,30 +1500,56 @@ class Session:
             gate = protocol.gate_for(protocol.phase)
             gate0_open = bool(gate and gate.is_open)
 
-        while True:
-            if self._interrupt.is_set() or self._closed:
-                return False
-            if (
-                self.max_steps
-                and steps_done is not None
-                and steps_done() >= self.max_steps
-            ):
-                return False
-            if self.server.inbox_size(agent.agent_id) > 0:
-                return True
-            if protocol is not None:
-                if protocol.phase != phase0:
+        self._parked_agents.add(agent.agent_id)
+        try:
+            while True:
+                if self._interrupt.is_set() or self._closed:
+                    return False
+                # Another agent already tripped D12 — exit with it.
+                if self._gate_deadlock:
+                    return False
+                if (
+                    self.max_steps
+                    and steps_done is not None
+                    and steps_done() >= self.max_steps
+                ):
+                    return False
+                if self.server.inbox_size(agent.agent_id) > 0:
                     return True
-                gate = protocol.gate_for(protocol.phase)
-                now_open = bool(gate and gate.is_open)
-                if now_open and not gate0_open:
-                    return True
-                if not self._is_gate_waiting():
-                    return True
-            try:
-                await asyncio.sleep(0.05)
-            except asyncio.CancelledError:
-                return False
+                if protocol is not None:
+                    if protocol.phase != phase0:
+                        return True
+                    gate = protocol.gate_for(protocol.phase)
+                    now_open = bool(gate and gate.is_open)
+                    if now_open and not gate0_open:
+                        return True
+                    if not self._is_gate_waiting():
+                        return True
+                # D12: all agents parked, nothing left to wake them (headless).
+                # Counting self.agents would miss the real case: an agent that
+                # already broke out (backend error, script end) is neither
+                # parked nor able to move the gate, so `parked` would stay
+                # below the total forever and the turn would hang anyway.
+                live = sum(
+                    1 for t in (self._agent_tasks or []) if not t.done()
+                )
+                if (
+                    not self.has_interact_surface()
+                    and live
+                    and len(self._parked_agents) >= live
+                    and all(
+                        self.server.inbox_size(a.agent_id) == 0
+                        for a in self.agents
+                    )
+                ):
+                    self._gate_deadlock = True
+                    return False
+                try:
+                    await asyncio.sleep(0.05)
+                except asyncio.CancelledError:
+                    return False
+        finally:
+            self._parked_agents.discard(agent.agent_id)
 
     async def close(self) -> None:
         """Release resources: stop bots, close mirror, close backends.

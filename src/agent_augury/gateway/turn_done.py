@@ -28,6 +28,8 @@ def derive_turn_done_reason(
             return "protocol_rejected"
         if phase == COMPLETED:
             return "protocol_completed"
+    if getattr(session, "_gate_deadlock", False):
+        return "gate_deadlock"
     if session.max_steps and steps >= session.max_steps:
         return "max_steps"
     return "idle"

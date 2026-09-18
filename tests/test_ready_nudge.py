@@ -13,6 +13,7 @@ from agent_augury.core.protocol.phases import P1_EXPLORE, P2_SPLIT
 from agent_augury.core.protocol.signals import is_ready_message
 from agent_augury.core.server import MessageServer
 from agent_augury.core.session import Session
+from agent_augury.gateway import SurfaceSubscription
 
 
 @pytest.mark.parametrize(
@@ -68,6 +69,9 @@ async def test_p1_nudge_once_then_park_until_ready():
     session.protocol = CollaborationProtocol(server, participants=["a1", "a2"])
     session.protocol.start = lambda: None  # type: ignore[method-assign]
     session.protocol.phase_manager._phase = P1_EXPLORE
+    session.gateway.attach(
+        SurfaceSubscription(name="test-ui", mode="interact")
+    )
 
     async def _setup() -> None:
         session._setup_done = True

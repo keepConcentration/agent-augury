@@ -12,6 +12,14 @@ from agent_augury.core.protocol.collaboration import CollaborationProtocol
 from agent_augury.core.protocol.phases import P1_EXPLORE, P2_SPLIT
 from agent_augury.core.server import MessageServer
 from agent_augury.core.session import Session
+from agent_augury.gateway import SurfaceSubscription
+
+
+def _keep_park_alive(session: Session) -> None:
+    """Attach a fake interact surface so D12 does not end a headless park."""
+    session.gateway.attach(
+        SurfaceSubscription(name="test-ui", mode="interact")
+    )
 
 
 class CountingBackend(ModelBackend):
@@ -53,6 +61,7 @@ async def test_gate_wait_parks_without_spam_then_wakes_on_inbox():
     gate.bind_to_thread(tid)
     session.protocol.phase_manager._phase = P2_SPLIT
     session.protocol.start = lambda: None  # type: ignore[method-assign]
+    _keep_park_alive(session)
 
     async def _setup() -> None:
         session._setup_done = True

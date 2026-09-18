@@ -17,6 +17,7 @@ from agent_augury.core.protocol.collaboration import CollaborationProtocol
 from agent_augury.core.protocol.phases import P1_EXPLORE, P2_SPLIT
 from agent_augury.core.server import MessageServer
 from agent_augury.core.session import Session
+from agent_augury.gateway import SurfaceSubscription
 
 
 class CountingBackend(ModelBackend):
@@ -306,6 +307,10 @@ async def _run_session(server, agents, protocol, *, inject, timeout=5.0):
     session = Session(server=server, agents=agents, max_steps=0)
     session.protocol = protocol
     protocol.start = lambda: None  # type: ignore[method-assign]
+    # Park-and-poke tests need an interact surface so D12 does not end the turn.
+    session.gateway.attach(
+        SurfaceSubscription(name="test-ui", mode="interact")
+    )
 
     async def _setup() -> None:
         session._setup_done = True

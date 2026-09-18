@@ -166,6 +166,8 @@ Current phase: **P2 SPLIT**
       SUBMITTER: <agent-id>        (who will post the P5 FINAL: draft)
   One ASSIGN line per agent. If a position/side must be argued, assign it
   explicitly - an unassigned side never gets argued.
+- If the team judges that no split is needed, write `SPLIT: none` instead
+  of ASSIGN lines (still name a SUBMITTER).
 - The phase advances only when ALL agents approve.
 - After you have posted your PROPOSE/APPROVE (or you are waiting on others),
   stay silent — do not keep saying that you are waiting.""",

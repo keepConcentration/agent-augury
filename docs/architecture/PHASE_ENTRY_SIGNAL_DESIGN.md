@@ -542,9 +542,25 @@ SUBMITTER: agent-3
 
 `SUBMITTER:` 가 없으면 기존 문구("Anyone may compose...") 그대로.
 
+### 6b.4c `SPLIT: none` (PHASE_MACHINE_ROUTING §2.2)
+
+분할이 불필요할 때 팀이 **선언**한다. 빈 `_assignments` 추론은 쓰지 않는다.
+
+```text
+PROPOSE:
+SPLIT: none
+SUBMITTER: agent-3
+```
+
+- 파싱: `assignments.parse_split` — 값 토큰이 `none` 일 때만 True.
+- 시점: P2 게이트 open 시 `_commit_p2_draft` 1회 (D7 과 동일 — 서버 재읽기).
+- 라우팅: `split_none` 이고 ASSIGN 이 없으면 P2 → P5 (E2: ASSIGN 이 있으면 P3).
+- 프롬프트: P2 블록에 한 줄 안내.
+
 ### 6b.4b M4b 구현 — `ASSIGN` 까지 확장 (세션 `d24695b5`)
 
 설계는 M4b 를 `SUBMITTER:` 하나로 잡았다. 실행에서 더 큰 구멍이 드러났다.
+
 
 **관측:** P2 가 "agent-3 이 O 입장을 맡는다"로 합의했는데 agent-3 은 **끝까지
 O 논거를 한 번도 내지 않았다.** agent-2 는 "@agent-3 O 입장 기다립니다"를 네 번
@@ -1067,7 +1083,7 @@ E1~E4는 한 PR로 묶어도 된다(같은 축). E5는 독립.
 | D4 | P2도 `FINAL:`처럼 본문 강제? | 아니오 — `PROPOSE:` 가 이미 그 역할 |
 | D5 | 어셈블러 삭제 vs 보존 | **삭제** (§6) |
 | D6 | 중복 초안: 차단 vs 방치 | **차단** (M4a) |
-| D7 | `SUBMITTER:` 파싱 시점 | P2 게이트 open 시 **1회** |
+| D7 | `SUBMITTER:` / `ASSIGN` / `SPLIT:` 파싱 시점 | P2 게이트 open 시 **1회** (서버 재읽기) |
 | D8 | 선출자 침묵 시 타임아웃? | **없음** — M4a 폴백으로 충분 |
 | D9 | `REJECT:` 가 초안 리셋 — P2 에도? | **예** (의미상 일관) |
 | D10 | 초안 갱신 시 `approvals` 리셋? | **예 (확정)** + 초안 없을 때의 표는 애초에 안 셈 (§6b.3b) |

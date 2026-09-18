@@ -34,7 +34,7 @@ from typing import Any
 
 from ..server import MessageServer
 from .approval import ConsensusGate
-from .assignments import parse_assignments, parse_submitter
+from .assignments import parse_assignments, parse_split, parse_submitter
 from .phases import (
     COMPLETED,
     P1_EXPLORE,
@@ -98,9 +98,12 @@ class CollaborationProtocol:
         # v0.2: READY-based P1 finish policy
         self._ready_states: set[str] = set()
         # What P2 agreed each agent would do, and who posts the P5 draft.
-        # Advisory only: surfaced in prompts, never a gate condition.
+        # Committed once when the P2 gate opens (server re-read) — never from
+        # every PROPOSE: mid-phase (PHASE_MACHINE_ROUTING §2.3).
         self._assignments: dict[str, str] = {}
         self.submitter_id: str | None = None
+        # True when the winning P2 draft declared SPLIT: none (R1).
+        self.split_none: bool = False
         # Subscribe once at construction (not only on checkpoint restore).
         self._server.subscribe(self._on_message)
 
@@ -148,6 +151,7 @@ class CollaborationProtocol:
         # light has no P2, so nothing would ever overwrite last round's split.
         self._assignments.clear()
         self.submitter_id = None
+        self.split_none = False
         self._current_gate = None
         self._current_gate_phase = None
         # advance() rejects COMPLETED -> P1 (terminal). Go through the phase
@@ -168,6 +172,7 @@ class CollaborationProtocol:
             "ready_states": sorted(self._ready_states),
             "assignments": dict(self._assignments),
             "submitter_id": self.submitter_id,
+            "split_none": self.split_none,
             "gates": gates,
         }
 
@@ -184,6 +189,7 @@ class CollaborationProtocol:
             self._assignments = {str(k): str(v) for k, v in assigned.items()}
         sub = data.get("submitter_id")
         self.submitter_id = str(sub) if sub else None
+        self.split_none = bool(data.get("split_none", False))
         gates_data = data.get("gates") or {}
         for phase_name, snap in gates_data.items():
             if not isinstance(snap, dict):
@@ -209,25 +215,41 @@ class CollaborationProtocol:
         ``READY:`` with optional trailing text is recognized (case/whitespace
         tolerant). ``READYFOO`` / bare ``READY`` are ignored.
         When all participants have sent READY, automatically finish P1.
+
+        P2 ``PROPOSE:`` ASSIGN/SUBMITTER/SPLIT lines are **not** parsed here —
+        they are committed once from the server when the P2 gate opens
+        (:meth:`_commit_p2_draft`). Mid-phase parsing would take a losing
+        rival draft (PHASE_MACHINE_ROUTING §2.3).
         """
-        content = message.get("content", "")
-        if self.phase == P2_SPLIT and has_signal(content, "PROPOSE:"):
-            # The agreed split, so P3+ can remind each agent of its own share.
-            # A redone proposal (after REJECT:) replaces the previous one.
-            found = parse_assignments(content, self.participants)
-            if found:
-                self._assignments = found
-            submitter = parse_submitter(content, self.participants)
-            if submitter:
-                self.submitter_id = submitter
-            return
         if self.phase != P1_EXPLORE:
             return
+        content = message.get("content", "")
         author = message.get("author", "")
         if author in self.participants and is_ready_message(content):
             self._ready_states.add(author)
             if self.all_ready:
                 self.finish_p1()
+
+    def _commit_p2_draft(self) -> None:
+        """Read the winning P2 draft from MessageServer and commit split fields.
+
+        Called once when the P2 gate opens — before ``next_phase_after_gate``
+        so R1 routing sees the committed ``split_none`` / assignments.
+        """
+        gate = self._gates.get(P2_SPLIT)
+        if gate is None or gate.draft_author is None or gate.thread_id is None:
+            return
+        content = ""
+        for m in self._server.snapshot()["messages"]:
+            if (
+                m["thread_id"] == gate.thread_id
+                and m["author"] == gate.draft_author
+                and has_signal(m["content"], gate.entry_prefix)
+            ):
+                content = m["content"]  # last match = latest draft
+        self._assignments = parse_assignments(content, self.participants) or {}
+        self.submitter_id = parse_submitter(content, self.participants)
+        self.split_none = parse_split(content)
 
     @property
     def all_ready(self) -> bool:
@@ -322,6 +344,14 @@ class CollaborationProtocol:
         """The phase a freshly opened gate advances to (None = stay put)."""
         if self.mode == "light":
             return COMPLETED if phase == P5_SUBMIT else None
+        # R1b: team declared no split and named no ASSIGN → skip empty P3/P4.
+        # E2: ASSIGN wins over SPLIT: none when both appear.
+        if (
+            phase == P2_SPLIT
+            and self.split_none
+            and not self._assignments
+        ):
+            return P5_SUBMIT
         return {
             P2_SPLIT: P3_EXECUTE,
             P3_EXECUTE: P4_REVIEW,
@@ -341,7 +371,7 @@ class CollaborationProtocol:
             return transitions.get(frm, set())
         transitions = {
             P1_EXPLORE: {P2_SPLIT, REJECTED},
-            P2_SPLIT: {P3_EXECUTE, REJECTED},
+            P2_SPLIT: {P3_EXECUTE, P5_SUBMIT, REJECTED},
             P3_EXECUTE: {P4_REVIEW, REJECTED},
             P4_REVIEW: {P5_SUBMIT, REJECTED},
             P5_SUBMIT: {COMPLETED, REJECTED},
@@ -364,6 +394,10 @@ class CollaborationProtocol:
         if phase in self._gate_open_fired:
             return
         self._gate_open_fired.add(phase)
+        # Commit winning P2 draft *before* the session callback reads
+        # next_phase_after_gate (which needs split_none / assignments).
+        if phase == P2_SPLIT:
+            self._commit_p2_draft()
         if self._on_gate_open:
             self._on_gate_open(phase)
 

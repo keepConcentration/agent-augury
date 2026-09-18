@@ -13,6 +13,11 @@ proposal carries explicit lines:
     ASSIGN agent-3: O 입장 옹호   <- the side nobody took
     SUBMITTER: agent-2
 
+    # Or, when no split is needed (PHASE_MACHINE_ROUTING §2.2):
+    PROPOSE:
+    SPLIT: none
+    SUBMITTER: agent-3
+
 Parsing is deliberately strict: an agent id that is not a participant is
 dropped rather than guessed at.
 """
@@ -31,6 +36,14 @@ _ASSIGN_RE = re.compile(_LEAD + r"ASSIGN[ \t]+" + _ID + r"[ \t]*[:=][ \t]*(.+?)[
 # was the first real one seen, and anchoring to end-of-line dropped it.
 _SUBMITTER_RE = re.compile(_LEAD + r"SUBMITTER[ 	]*[:=][ 	]*(.+)$",
                            re.IGNORECASE | re.MULTILINE)
+# `SPLIT: none` is short enough that models write it ON the PROPOSE: line
+# ("PROPOSE: SPLIT: none"), unlike ASSIGN/SUBMITTER which they put on their
+# own lines. Line-anchoring alone missed the winning draft in the first
+# live run (session log 2026-09-18).
+_SPLIT_RE = re.compile(
+    _LEAD + r"(?:PROPOSE[ \t]*[:=][ \t]*)?SPLIT[ \t]*[:=][ \t]*(.+?)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 # Strip the decoration models wrap a share in (**bold**, `code`, trailing dots).
 _TRIM = " \t*_`\"'.,;"
@@ -62,3 +75,15 @@ def parse_submitter(content: str, participants: list[str]) -> str | None:
         if best:
             return best[1]
     return None
+
+
+def parse_split(content: str) -> bool:
+    """True when the proposal declares ``SPLIT: none`` (any decoration/case).
+
+    Only the literal token ``none`` counts — other values are ignored so a
+    free-text ``SPLIT: into three parts`` cannot skip P3/P4.
+    """
+    for value in _SPLIT_RE.findall(content or ""):
+        if value.strip(_TRIM).lower() == "none":
+            return True
+    return False

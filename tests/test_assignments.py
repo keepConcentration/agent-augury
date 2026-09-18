@@ -59,8 +59,16 @@ async def test_protocol_captures_the_split_from_p2():
     tid = await server.create_thread("plan", participants=AGENTS)
     protocol.gate_for(P2_SPLIT).bind_to_thread(tid)
     protocol.phase_manager._phase = P2_SPLIT
+    protocol._setup_gate_for_phase(P2_SPLIT)
 
     await server.send_message(tid, author="agent-1", content=PROPOSAL)
+    # §2.3: not committed until the gate opens
+    assert protocol.assignment_for("agent-3") is None
+
+    for a in AGENTS:
+        if a == "agent-1":
+            continue
+        await server.send_message(tid, author=a, content="APPROVE: ok")
 
     assert protocol.assignment_for("agent-3") == "O 입장 옹호"
     assert protocol.submitter_id == "agent-2"
@@ -75,15 +83,23 @@ async def test_split_survives_checkpoint_and_a_redo():
     protocol = CollaborationProtocol(server, participants=AGENTS)
     protocol.bind_gate(P2_SPLIT, "plan", require_proposal=True)
     tid = await server.create_thread("plan", participants=AGENTS)
-    protocol.gate_for(P2_SPLIT).bind_to_thread(tid)
+    gate = protocol.gate_for(P2_SPLIT)
+    gate.bind_to_thread(tid)
     protocol.phase_manager._phase = P2_SPLIT
+    protocol._setup_gate_for_phase(P2_SPLIT)
     await server.send_message(tid, author="agent-1", content=PROPOSAL)
 
-    # a redone plan replaces the old split
+    # REJECT clears the draft; a redone plan replaces it on the next open.
+    await server.send_message(tid, author="agent-2", content="REJECT: redo")
     await server.send_message(
         tid, author="agent-1",
         content="PROPOSE: v2\nASSIGN agent-3: X 입장 옹호\nSUBMITTER: agent-4\n",
     )
+    for a in AGENTS:
+        if a == "agent-1":
+            continue
+        await server.send_message(tid, author=a, content="APPROVE: ok")
+
     assert protocol.assignment_for("agent-3") == "X 입장 옹호"
     assert protocol.submitter_id == "agent-4"
 
@@ -155,3 +171,27 @@ def test_real_proposal_from_a_live_session():
 )
 def test_submitter_line_shapes(line, expected):
     assert parse_submitter(line, AGENTS) == expected
+
+
+def test_split_none_on_the_propose_line():
+    """Live 2026-09-18: the winning draft wrote both on ONE line.
+
+    `SPLIT: none` is short, so models inline it with the entry signal instead
+    of giving it its own line the way they do for ASSIGN/SUBMITTER. A purely
+    line-anchored regex read the draft as "no declaration" and R1b never fired
+    -- the run went P2 -> P3 -> P4 and a human had to unstick P3.
+    """
+    from agent_augury.core.protocol.assignments import parse_split
+
+    inline = "PROPOSE: SPLIT: none" + chr(10) + "SUBMITTER: agent-2"
+    assert parse_split(inline) is True
+    assert parse_submitter(inline, ["agent-1", "agent-2"]) == "agent-2"
+    assert parse_assignments(inline, ["agent-1", "agent-2"]) == {}
+
+
+def test_split_only_none_counts():
+    from agent_augury.core.protocol.assignments import parse_split
+
+    assert parse_split("PROPOSE: SPLIT: 세 갈래로") is False
+    assert parse_split("분할이 필요합니다. SPLIT: none 아님") is False
+    assert parse_split("**PROPOSE: SPLIT: none**") is True

@@ -1,19 +1,20 @@
 # 페이즈 기계 — 난이도 라우팅과 모델 체킹
 
-> **Status:** draft **rev.5** (리뷰 4차 반영 · 구상 · **착수 미정**)
+> **Status:** draft **rev.5** (리뷰 4차 반영 · **구현 착수**)
 > **Date:** 2026-09-18
 > **Priority:** R1 = P2 (비용 38~44% 절감) · R2 = P1 (교착을 실행 전에 잡는다)
 > **Parent:** `PHASE_ENTRY_SIGNAL_DESIGN.md`, `FOLLOWUP_TURN_PROTOCOL_DESIGN.md`
 > **인접:** `PROTOCOL_CHATTER_REDUCTION_DESIGN.md` (D12), `SESSION_TURN_TERMINATION_DESIGN.md`
 > **출처:** arXiv 2609.13890 (난이도별 토폴로지 선택) · arXiv 2609.17527 §L4 (형식 검증)
-> **Code touch (예정):** `protocol/collaboration.py`, `protocol/phases.py`,
->   `core/session.py`, `tests/`
+> **Code touch:** `protocol/collaboration.py`, `protocol/assignments.py`,
+>   `core/session.py`, `gateway/turn_done.py`, `agent/system_prompt.py`, `tests/`
 > **결정:** 학습된 예측기 **안 씀** (§2.6) · 라우팅 신호는 **선언(계약)** — 빈 `_assignments` 추론 **폐기** (§2.2)
 > **rev.2:** 측정으로 R1 의 원래 신호가 **6세션 중 3에서만 맞는다**는 것이 드러나 신호를 바꿨다 (§2.2)
 > **rev.3:** `SPLIT:` 도 `ASSIGN` 과 같은 소유권 병을 앓는다 → **게이트 open 때 소유자 것만 커밋** (§2.3).
 >   §4 의 `_human_approval_needs_interact` 를 `has_interact_surface()` 로 교정. BFS 범위에서 S1 분리 (§3.4)
 > **rev.4:** 스테이징을 **버렸다** — 게이트 open 때 서버에서 소유자 초안을 **다시 읽는다** (§2.3).
 >   체크포인트 질문이 사라지고 `MessageServer` SSOT 와도 맞는다
+> **구현:** R2 BFS · §2.3 `_commit_p2_draft` · D12(`gate_deadlock`) · R1a `parse_split`+프롬프트 · R1b 라우팅
 
 ---
 

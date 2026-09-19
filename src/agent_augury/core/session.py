@@ -513,6 +513,11 @@ class Session:
             )
 
             participant_ids = [a.agent_id for a in agents]
+            pool = list(protocol_spec.get("participants") or participant_ids)
+            roster_spec = protocol_spec.get("roster") or {}
+            roster_start = int(roster_spec.get("start", -1))
+            roster_max = roster_spec.get("max")
+            roster_max_i = int(roster_max) if roster_max is not None else None
             ha_map = normalize_human_approval(
                 protocol_spec, config_error=ConfigError
             )
@@ -536,8 +541,10 @@ class Session:
 
             session.protocol = CollaborationProtocol(
                 server=server,
-                participants=protocol_spec.get("participants", participant_ids),
+                pool=pool,
                 mode=str(protocol_spec.get("mode", "full")),
+                roster_start=roster_start,
+                roster_max=roster_max_i,
             )
             # Wire up gates for each phase
             for phase_name, thread_name in protocol_spec.get("gates", {}).items():
@@ -735,6 +742,8 @@ class Session:
                             bootstrap=True,
                         )
                         gate.bind_to_thread(tid)
+                # R0: re-assert roster after threads exist (gates + threads sync).
+                self.protocol.set_roster(self.protocol.initial_roster())
                 self.protocol.start()
                 for agent in self.agents:
                     agent.current_phase = self.protocol.phase
@@ -1061,8 +1070,15 @@ class Session:
     # -- lifecycle (run) -----------------------------------------------------
 
     async def ensure_human_thread(self) -> str:
-        """Create or reuse the ``human`` collaboration thread (all agents)."""
-        participants = [a.agent_id for a in self.agents]
+        """Create or reuse the ``human`` collaboration thread (pool agents).
+
+        DYNAMIC_ROSTER_DESIGN §2.2: keep the whole pool on the human thread so
+        a user can still poke benched agents; do not use agents outside pool.
+        """
+        if self.protocol is not None:
+            participants = list(self.protocol.pool)
+        else:
+            participants = [a.agent_id for a in self.agents]
         return await self.server.create_thread(
             HUMAN_CHAT_THREAD_NAME,
             participants=participants,
@@ -1390,11 +1406,49 @@ class Session:
                     break
                 await asyncio.sleep(0)
 
-        # Launch all agents as parallel asyncio tasks.
-        tasks = [asyncio.create_task(run_agent(agent)) for agent in self.agents]
-        self._agent_tasks = tasks
+        # Launch roster agents; bench stays without a task (DYNAMIC_ROSTER).
+        self._agent_tasks = []
+        agent_by_id = {a.agent_id: a for a in self.agents}
+        running_ids: set[str] = set()
+
+        def _is_running(agent_id: str) -> bool:
+            return agent_id in running_ids
+
+        def _spawn(agent: AgentLoop) -> None:
+            if agent.agent_id in running_ids:
+                return
+
+            async def _tracked() -> None:
+                try:
+                    await run_agent(agent)
+                finally:
+                    running_ids.discard(agent.agent_id)
+
+            running_ids.add(agent.agent_id)
+            self._agent_tasks.append(asyncio.create_task(_tracked()))
+
+        if self.protocol is not None:
+            self.protocol.on_roster_change(
+                lambda ids: [
+                    _spawn(agent_by_id[aid])
+                    for aid in ids
+                    if aid in agent_by_id and not _is_running(aid)
+                ]
+            )
+            for agent in self.agents:
+                if agent.agent_id in self.protocol.participants:
+                    _spawn(agent)
+        else:
+            for agent in self.agents:
+                _spawn(agent)
+
         try:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # Tasks can be appended mid-run (bench spawn on R1).
+            while True:
+                pending = [t for t in self._agent_tasks if not t.done()]
+                if not pending:
+                    break
+                await asyncio.gather(*pending, return_exceptions=True)
         finally:
             self._agent_tasks = []
 

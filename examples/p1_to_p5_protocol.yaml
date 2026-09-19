@@ -12,6 +12,8 @@ protocol:
   - agent-1
   - agent-2
   - agent-3
+  roster:
+    start: -1   # full pool — scripted E2E expects all three agents
   gates:
     P2_SPLIT: plan
     P3_EXECUTE: execution

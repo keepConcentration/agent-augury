@@ -222,6 +222,71 @@ class MessageServer:
         if human_id not in self._inboxes:
             self._inboxes[human_id] = asyncio.Queue()
 
+    def current_seq(self) -> int:
+        """Seq that the next appended message would receive (= len(_messages))."""
+        return len(self._messages)
+
+    def drop_inbox_from(self, agent_id: str, thread_ids: set[str]) -> None:
+        """Drop unread ids whose message came from *thread_ids*; keep the rest.
+
+        Inbox is one queue per agent (not per thread). A full clear would wipe
+        human-thread pokes that DYNAMIC_ROSTER keeps deliverable after demotion.
+        """
+        self._require_participant(agent_id)
+        if not thread_ids:
+            return
+        q = self._inboxes[agent_id]
+        kept: list[str] = []
+        while True:
+            try:
+                mid = q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            msg = self._message_index.get(mid)
+            if msg is None or msg.get("thread_id") not in thread_ids:
+                kept.append(mid)
+        for mid in kept:
+            q.put_nowait(mid)
+
+    def set_thread_participants(self, thread_id: str, agent_ids: list[str]) -> None:
+        """Replace thread participants (grow or shrink). Memory sync; DB async.
+
+        New ids are registered (inbox) before being listed. Removed ids drop
+        only unread that originated on this thread (``drop_inbox_from``).
+        """
+        thread = self._threads.get(thread_id)
+        if thread is None:
+            raise KeyError(f"no such thread: {thread_id}")
+        new_ids = list(agent_ids)
+        new_set = set(new_ids)
+        old_set = set(thread["participants"])
+        for p in sorted(new_set - old_set):
+            self.register_agent(p)
+        removed = old_set - new_set
+        for p in removed:
+            self.drop_inbox_from(p, {thread_id})
+        thread["participants"] = list(new_ids)
+        self._schedule_persist_thread(thread_id, thread["name"], list(new_ids))
+
+    def _schedule_persist_thread(
+        self, thread_id: str, name: str, participants: list[str]
+    ) -> None:
+        """Persist when a loop is running; otherwise memory-only (unit tests)."""
+        if self._db is None and self._db_path is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._persist_thread_safe(thread_id, name, participants))
+
+    async def _persist_thread_safe(
+        self, thread_id: str, name: str, participants: list[str]
+    ) -> None:
+        await self._ensure_db()
+        if self._db is not None:
+            await self._persist_thread(thread_id, name, participants)
+
     # -- primitives ---------------------------------------------------------
 
     async def create_thread(

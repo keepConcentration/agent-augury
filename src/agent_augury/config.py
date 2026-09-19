@@ -420,6 +420,55 @@ def normalize_protocol_mode(data: dict[str, Any], *, config_error: type) -> Any:
     return protocol
 
 
+def normalize_protocol_roster(
+    protocol: dict[str, Any],
+    *,
+    pool_size: int,
+    config_error: type,
+) -> None:
+    """Fill ``protocol.roster`` defaults (DYNAMIC_ROSTER_DESIGN §4.7).
+
+    Missing ``roster`` → ``start=min(2, pool)``, ``max=pool`` (intentional
+    behaviour change vs pre-roster full participation). ``start: -1`` keeps
+    the whole pool active from R0.
+    """
+    raw = protocol.get("roster")
+    if raw is None:
+        roster: dict[str, Any] = {}
+    elif isinstance(raw, dict):
+        roster = dict(raw)
+    else:
+        raise config_error("protocol.roster must be a mapping")
+
+    if "start" not in roster:
+        roster["start"] = min(2, pool_size) if pool_size else 0
+    else:
+        try:
+            roster["start"] = int(roster["start"])
+        except (TypeError, ValueError) as exc:
+            raise config_error(
+                f"protocol.roster.start must be an int (got {roster['start']!r})"
+            ) from exc
+        if roster["start"] < -1 or roster["start"] == 0:
+            raise config_error(
+                "protocol.roster.start must be -1 (all) or a positive int"
+            )
+
+    if "max" not in roster:
+        roster["max"] = pool_size
+    else:
+        try:
+            roster["max"] = int(roster["max"])
+        except (TypeError, ValueError) as exc:
+            raise config_error(
+                f"protocol.roster.max must be an int (got {roster['max']!r})"
+            ) from exc
+        if roster["max"] < 1:
+            raise config_error("protocol.roster.max must be >= 1")
+
+    protocol["roster"] = roster
+
+
 def _validate_tools_section(tools: Any, *, where: str) -> None:
     """Validate a ``tools:`` mapping (global or per-agent).
 
@@ -828,6 +877,14 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
         # Normalize onto protocol for Session consumers (defaults all false).
         protocol["human_approval"] = normalize_human_approval(
             protocol, config_error=ConfigError
+        )
+        raw_pool = protocol.get("participants")
+        if isinstance(raw_pool, list) and raw_pool:
+            pool_size = len(raw_pool)
+        else:
+            pool_size = len(agents)
+        normalize_protocol_roster(
+            protocol, pool_size=pool_size, config_error=ConfigError
         )
 
     from .channels.display import validate_display_config

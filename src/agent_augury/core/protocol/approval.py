@@ -120,7 +120,7 @@ class ConsensusGate:
                 self._reset_for_redo()
                 return
             if author == "human" and has_signal(content, "APPROVE:"):
-                self._open_gate(message)
+                self._open_gate(int(message["seq"]))
             return
 
         if has_signal(content, self.entry_prefix):
@@ -147,7 +147,7 @@ class ConsensusGate:
             # this re-check the gate would never open, and duplicate-vote
             # soft-blocking removes the accidental re-APPROVE that used to
             # rescue it.
-            self._maybe_open(message)
+            self._maybe_open(int(message["seq"]))
         elif has_signal(content, "REJECT:"):
             self._reset_for_redo()
         elif has_signal(content, "APPROVE:"):
@@ -165,7 +165,7 @@ class ConsensusGate:
                 return
             if author in self.participants:
                 self.approvals.add(author)
-                self._maybe_open(message)
+                self._maybe_open(int(message["seq"]))
 
     def _reset_for_redo(self) -> None:
         """``REJECT:`` — votes AND the draft go; someone must propose again."""
@@ -183,7 +183,18 @@ class ConsensusGate:
         self._reset_for_redo()
         self.opened_at_seq = None
 
-    def _maybe_open(self, message: dict[str, Any]) -> None:
+    def set_participants(self, participant_ids: list[str], *, seq: int) -> None:
+        """Replace the quorum. Drop ghost votes; re-open if remaining are unanimous.
+
+        DYNAMIC_ROSTER_DESIGN: roster shrink must not leave a gate stuck when
+        everyone still on the list has already approved.
+        """
+        self.participants = list(participant_ids)
+        self.approvals &= set(self.participants)
+        if not self.is_open:
+            self._maybe_open(seq)
+
+    def _maybe_open(self, seq: int) -> None:
         """Open (or park for human) once every participant has approved."""
         if not self.participants:
             return
@@ -197,11 +208,11 @@ class ConsensusGate:
                 if self._on_human_pending:
                     self._on_human_pending()
         else:
-            self._open_gate(message)
+            self._open_gate(seq)
 
-    def _open_gate(self, message: dict[str, Any]) -> None:
+    def _open_gate(self, seq: int) -> None:
         self.human_pending = False
-        self.opened_at_seq = message["seq"]
+        self.opened_at_seq = seq
         if self._on_open:
             self._on_open()
 

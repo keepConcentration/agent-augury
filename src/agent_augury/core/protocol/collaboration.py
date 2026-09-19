@@ -50,13 +50,23 @@ from .signals import has_signal, is_ready_message
 
 # Callback fired on any phase change
 PhaseCallback = Callable[[Phase, Phase], None]
+RosterCallback = Callable[[set[str]], None]
+
+
+def _roster_from_pool(pool: list[str], start: int) -> list[str]:
+    """R0 initial roster: ``start == -1`` means the whole pool."""
+    if not pool:
+        return []
+    if start < 0 or start >= len(pool):
+        return list(pool)
+    return list(pool[:start])
 
 
 class CollaborationProtocol:
     """Drives the full P1~P5 collaboration protocol.
 
     Usage:
-        protocol = CollaborationProtocol(server, participants=["a1","a2","a3"])
+        protocol = CollaborationProtocol(server, pool=["a1","a2","a3"])
         protocol.start()  # → P1_EXPLORE
 
         # The orchestrator drives phase transitions:
@@ -74,14 +84,30 @@ class CollaborationProtocol:
     def __init__(
         self,
         server: MessageServer,
-        participants: list[str],
+        participants: list[str] | None = None,
         *,
+        pool: list[str] | None = None,
         mode: str = "full",
+        roster_start: int = -1,
+        roster_max: int | None = None,
     ) -> None:
         self._server = server
         # "light" skips P2-P4: explore, then one final consensus gate.
         self.mode = mode
-        self.participants = list(participants)
+        # DYNAMIC_ROSTER: pool is the parse known-set; participants is roster.
+        # Constructor default start=-1 keeps programmatic callers on the full
+        # pool; YAML config applies start=2 via normalize_protocol_roster.
+        if pool is not None:
+            self.pool = list(pool)
+        elif participants is not None:
+            self.pool = list(participants)
+        else:
+            raise TypeError("CollaborationProtocol requires pool or participants")
+        self.roster_start = int(roster_start)
+        self.roster_max = (
+            len(self.pool) if roster_max is None else max(1, int(roster_max))
+        )
+        self.participants = _roster_from_pool(self.pool, self.roster_start)
 
         self.phase_manager = PhaseManager(initial=P1_EXPLORE)
         self._gates: dict[Phase, ConsensusGate | None] = {
@@ -94,6 +120,7 @@ class CollaborationProtocol:
         self._current_gate_phase: Phase | None = None
         self._on_phase_change: PhaseCallback | None = None
         self._on_gate_open: Callable[[Phase], None] | None = None
+        self._on_roster_change: RosterCallback | None = None
         self._gate_open_fired: set[Phase] = set()
         # v0.2: READY-based P1 finish policy
         self._ready_states: set[str] = set()
@@ -117,6 +144,45 @@ class CollaborationProtocol:
     def on_gate_open(self, callback: Callable[[Phase], None]) -> None:
         """Register a callback fired when any gate opens (receives phase)."""
         self._on_gate_open = callback
+
+    def on_roster_change(self, callback: RosterCallback) -> None:
+        """Register a callback when the active roster changes (Session spawn)."""
+        self._on_roster_change = callback
+
+    def initial_roster(self) -> list[str]:
+        """R0 roster: ``pool[:roster_start]`` (or whole pool when start < 0)."""
+        return _roster_from_pool(self.pool, self.roster_start)
+
+    def set_roster(self, participant_ids: list[str]) -> None:
+        """Replace active roster; sync gates + phase threads; notify Session.
+
+        Empty input is refused (invariant: len(roster) >= 1). Ids outside the
+        pool are dropped. DYNAMIC_ROSTER_DESIGN §4.3.
+        """
+        if not participant_ids:
+            return
+        known = set(self.pool)
+        cleaned = [p for p in participant_ids if p in known]
+        if not cleaned:
+            return
+        # De-dupe preserving order.
+        seen: set[str] = set()
+        roster: list[str] = []
+        for p in cleaned:
+            if p not in seen:
+                seen.add(p)
+                roster.append(p)
+        seq = self._server.current_seq()
+        self.participants = roster
+        self._ready_states &= set(roster)
+        for gate in self._gates.values():
+            if gate is None:
+                continue
+            gate.set_participants(roster, seq=seq)
+            if gate.thread_id:
+                self._server.set_thread_participants(gate.thread_id, roster)
+        if self._on_roster_change:
+            self._on_roster_change(set(roster))
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -157,6 +223,8 @@ class CollaborationProtocol:
         # advance() rejects COMPLETED -> P1 (terminal). Go through the phase
         # manager so surfaces still see the transition on the wire.
         self.phase_manager.advance(P1_EXPLORE)
+        # DYNAMIC_ROSTER R0: each follow-up turn restarts exploration size.
+        self.set_roster(self.initial_roster())
 
     def snapshot(self) -> dict[str, Any]:
         """Checkpoint payload for protocol + gates."""
@@ -181,6 +249,10 @@ class CollaborationProtocol:
         phase = data.get("phase") or P1_EXPLORE
         self.phase_manager.restore(str(phase))
         self._gate_open_fired = {str(x) for x in (data.get("gate_open_fired") or [])}
+        # Roster SSOT (DYNAMIC_ROSTER): restore before gates read threads.
+        parts = data.get("participants")
+        if isinstance(parts, list) and parts:
+            self.participants = [str(p) for p in parts]
         # In-place: agents hold a reference to this set (see Session inject).
         self._ready_states.clear()
         self._ready_states.update(str(a) for a in (data.get("ready_states") or []))
@@ -247,9 +319,21 @@ class CollaborationProtocol:
                 and has_signal(m["content"], gate.entry_prefix)
             ):
                 content = m["content"]  # last match = latest draft
-        self._assignments = parse_assignments(content, self.participants) or {}
-        self.submitter_id = parse_submitter(content, self.participants)
+        self._assignments = parse_assignments(content, self.pool) or {}
+        self.submitter_id = parse_submitter(content, self.pool)
         self.split_none = parse_split(content)
+        # R1: commit roster from the winning draft (DYNAMIC_ROSTER_DESIGN §4.4).
+        if self.submitter_id is None:
+            return
+        if self._assignments:
+            new_roster = [self.submitter_id] + [
+                a for a in self._assignments if a != self.submitter_id
+            ]
+        elif self.split_none:
+            new_roster = [self.submitter_id]
+        else:
+            return
+        self.set_roster(new_roster[: self.roster_max])
 
     @property
     def all_ready(self) -> bool:
@@ -274,7 +358,12 @@ class CollaborationProtocol:
 
         Reads the existing sources of truth only (READY set / gate approvals) —
         no parallel bookkeeping to keep in sync across checkpoints.
+
+        Agents outside the active roster (demoted / never assigned) are done:
+        DYNAMIC_ROSTER_DESIGN §4.5 so they take the no-model park path.
         """
+        if agent_id not in self.participants:
+            return True
         if self.phase == P1_EXPLORE:
             return agent_id in self._ready_states
         gate = self._gates.get(self.phase)

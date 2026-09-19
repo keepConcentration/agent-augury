@@ -1,6 +1,6 @@
 [project]
 name = "agent-augury"
-version = "0.7.0"
+version = "0.7.2"
 description = "Local multi-agent collaboration runtime — shared threads, roles, HITL, model-agnostic backends."
 readme = "README.md"
 requires-python = ">=3.11"

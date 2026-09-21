@@ -150,6 +150,20 @@ protocol:
 
 Flow: agents `APPROVE:` among themselves → Wire `session.human_approval_pending` → you reply `APPROVE:` / `REJECT:` (Ink or Discord inbound). Separate from tool-approval buttons. See `docs/architecture/HUMAN_APPROVAL_GATE_DESIGN.md`.
 
+**Dynamic roster** (0.7.2+) — the agents you configure are a *pool*; how many actually run is decided per turn:
+
+```yaml
+protocol:
+  participants: [agent-1, agent-2, agent-3, agent-4]   # the pool
+  roster:
+    start: 2     # how many explore in P1 (default min(2, pool)). -1 = all
+    max: 8       # cap per phase (default: pool size)
+```
+
+P1 starts with `start` agents; P2's `ASSIGN` / `SPLIT: none` lines then set who runs P3–P5 — naming a pooled agent that is not yet active wakes it. Benched agents get no task and cost nothing.
+
+> **Behaviour change in 0.7.2:** with a `protocol:` section and no `roster:`, `start` defaults to 2 — previously every configured agent ran every turn. Set `start: -1` to keep the old behaviour. Research backing and design: [`docs/architecture/DYNAMIC_ROSTER_DESIGN.md`](docs/architecture/DYNAMIC_ROSTER_DESIGN.md).
+
 ---
 
 ## Model agnostic

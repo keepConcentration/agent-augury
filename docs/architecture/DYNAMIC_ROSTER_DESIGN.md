@@ -5,8 +5,8 @@
 > **Rev:** v1.4 — 구현 리뷰 반영: `run()` 종료 시 roster 콜백 해제(후속 턴 중복 spawn), 강등 중 전송에 `not_a_participant` 안내, pool 밖 에이전트 비활성 명시.
 > **Rev:** v1.3 — 3차 리뷰 반영. inbox 는 에이전트당 1개이므로 drain 을 **페이즈 스레드 유래로 한정**, spawn SSOT 단일화(`Session.roster` 제거), `ensure_human_thread` 를 pool 기준으로
 > **구현됨:** `ConsensusGate.set_participants` + seq 인자, `MessageServer.current_seq` / `set_thread_participants` / `drop_inbox_from`, `CollaborationProtocol.pool`·`set_roster`·R1 `_commit_p2_draft`·강등 `is_agent_done`·`begin_round` R0, Session roster spawn + config `protocol.roster`, `tests/test_dynamic_roster.py`
-> **Code (현재):** `core/session.py` `run()` / `from_config`, `core/protocol/collaboration.py`, `core/protocol/approval.py` `ConsensusGate`, `core/protocol/assignments.py`, `core/server.py`
-> **Tests:** `tests/test_dynamic_roster.py` (22)
+> **Code (현재):** `core/session.py` `run()` / `from_config`, `core/protocol/collaboration.py`, `core/protocol/approval.py` `ConsensusGate`, `core/protocol/assignments.py`, `core/server.py`, `core/agent/loop.py` `_not_on_thread_denied`
+> **Tests:** `tests/test_dynamic_roster.py` (20)
 > **관련:** `PHASE_MACHINE_ROUTING_AND_CHECKING_DESIGN.md` (R1 `SPLIT: none`), `PROTOCOL_GATE_WAIT_PARK_DESIGN.md` (park/D12), `FOLLOWUP_TURN_PROTOCOL_DESIGN.md` (`begin_round`), `AGENT_RELEVANCE_BUDGET_DESIGN.md`
 
 ---
@@ -19,17 +19,17 @@
 
 | 위치 | 현재 동작 | 100명 설정 시 결과 |
 |------|-----------|--------------------|
-| `session.py:1394` | `tasks = [create_task(run_agent(a)) for a in self.agents]` | 100개 asyncio task, 100개 모델 호출 루프 |
-| `session.py:539` | `participants=protocol_spec.get("participants", participant_ids)` | 프로토콜 참가자 = 전원 (설정 고정) |
-| `approval.py:81` | `self.participants = list(thread["participants"])` (bind 시 1회) | 게이트가 **100표**를 기다림 |
-| `collaboration.py:257` | `set(self.participants) <= self._ready_states` | P1 진입에 100개 `READY:` 필요 |
-| `collaboration.py:250` | `parse_assignments(...)` → `self._assignments` | 명단을 **뽑아만 두고 정족수엔 반영 안 함** |
+| `session.py` spawn 블록 | `tasks = [create_task(run_agent(a)) for a in self.agents]` | 100개 asyncio task, 100개 모델 호출 루프 |
+| `session.py` `from_config` | `participants=protocol_spec.get("participants", participant_ids)` | 프로토콜 참가자 = 전원 (설정 고정) |
+| `approval.py` `bind_to_thread` | `self.participants = list(thread["participants"])` (bind 시 1회) | 게이트가 **100표**를 기다림 |
+| `collaboration.py` `all_ready` | `set(self.participants) <= self._ready_states` | P1 진입에 100개 `READY:` 필요 |
+| `collaboration.py` `_commit_p2_draft` | `parse_assignments(...)` → `self._assignments` | 명단을 **뽑아만 두고 정족수엔 반영 안 함** |
 
 마지막 줄이 핵심 갭이다. P2 는 이미 "누가 무엇을 한다"를 `ASSIGN` 줄로 선언하고 런타임이 파싱까지 하는데, 그 결과가 정족수에 반영되지 않는다. 3명이 할 일을 결정해도 P3·P4 게이트는 여전히 전원의 승인을 기다린다.
 
-두 번째 갭: **명단에서 빠진 에이전트는 park 도 못 한다.** `is_agent_done()`(`collaboration.py:272`)은 READY 집합 / 게이트 approvals 로만 판정하므로 비참가자는 영영 `protocol_done == False` → `session.py:1274` 의 무모델 park 경로에 못 들어가고 계속 `step()` 한다.
+두 번째 갭: **명단에서 빠진 에이전트는 park 도 못 한다.** `collaboration.py` 의 `is_agent_done()`은 READY 집합 / 게이트 approvals 로만 판정하므로 비참가자는 영영 `protocol_done == False` → `session.py` 의 C2 무모델 park 경로에 못 들어가고 계속 `step()` 한다.
 
-세 번째 갭: **메시지 전달은 스레드 참가자 기준**이다(`server.py:311-320`). 스레드에 남겨둔 에이전트는 읽는 task 가 없어도 inbox 가 쌓이고, D12 의 `all(inbox_size == 0 for a in self.agents)`(`session.py:1576`) 가 영영 False 가 되어 교착이 감지되지 않는다.
+세 번째 갭: **메시지 전달은 스레드 참가자 기준**이다(`server.py` `send_message` 전달 규칙). 스레드에 남겨둔 에이전트는 읽는 task 가 없어도 inbox 가 쌓이고, D12 의 `all(inbox_size == 0 for a in self.agents)`(`session.py` D12 검사) 가 영영 False 가 되어 교착이 감지되지 않는다.
 
 즉 **참가자 리스트만 줄이면 토큰은 그대로 나가고 교착 탐지만 망가진다.**
 
@@ -68,7 +68,7 @@
 - **파싱은 pool 기준, 정족수는 roster 기준.**
 - **pool 밖 에이전트는 완전히 비활성이다.** `agents:` 에 있지만 `protocol.participants` 에 없는 에이전트는 task 도 안 뜨고(`session.py` spawn), 사람 스레드에도 안 들어간다(§2.2). 이전에는 전원 spawn 이었으므로 **동작 변경**이다 — 곁다리 작업용으로 pool 밖 에이전트를 두던 설정은 pool 에 넣어야 한다.
 
-이게 v1.0 설계의 치명적 구멍이었다. `parse_assignments(content, self.participants)`(`collaboration.py:250`)는 known set 에 없는 id 를 **버린다**. roster 를 2명으로 줄여둔 상태에서 P2 가 `ASSIGN a7` 을 쓰면 a7 은 `set_roster` 가 호출되기도 전에 파싱 단계에서 사라진다 → 벤치 기동이 구조적으로 불가능.
+이게 v1.0 설계의 치명적 구멍이었다. `parse_assignments(content, self.participants)`(`collaboration.py` `_commit_p2_draft`)는 known set 에 없는 id 를 **버린다**. roster 를 2명으로 줄여둔 상태에서 P2 가 `ASSIGN a7` 을 쓰면 a7 은 `set_roster` 가 호출되기도 전에 파싱 단계에서 사라진다 → 벤치 기동이 구조적으로 불가능.
 
 ### 2.2 roster 는 한 곳이 아니라 세 곳을 동시에 정의한다
 
@@ -76,13 +76,13 @@
 
 하나의 명단이 정족수·전달·spawn 을 모두 결정한다. 이렇게 묶으면 따로 풀어야 할 문제 하나가 **저절로 사라진다**:
 
-- **체크포인트** — `ConsensusGate.restore_state`(`approval.py:229-232`)는 재개 시 participants 를 **스레드에서 다시 읽는다**. 스레드 참가자가 곧 roster 면 이 코드가 그대로 정답이다. 게이트 snapshot 에 필드를 추가할 필요 없음.
+- **체크포인트** — `ConsensusGate.restore_state`(`approval.py` `ConsensusGate.restore_state`)는 재개 시 participants 를 **스레드에서 다시 읽는다**. 스레드 참가자가 곧 roster 면 이 코드가 그대로 정답이다. 게이트 snapshot 에 필드를 추가할 필요 없음.
 
-**D12 는 "무수정"이 아니다** — never-spawned 벤치는 스레드 참가자가 아니라 전달 대상에서 빠지므로(`server.py:320`) inbox 가 비어 있지만, **강등된 에이전트는 탈락 직전에 받은 메시지가 inbox 에 남아 있다.** §2.3 에서 drain 으로 처리한다.
+**D12 는 "무수정"이 아니다** — never-spawned 벤치는 스레드 참가자가 아니라 전달 대상에서 빠지므로(`server.py` broadcast 대상) inbox 가 비어 있지만, **강등된 에이전트는 탈락 직전에 받은 메시지가 inbox 에 남아 있다.** §2.3 에서 drain 으로 처리한다.
 
 예외 하나: **사람 스레드(`HUMAN_CHAT_THREAD_NAME`)는 pool 전체를 유지한다.** 사람 메시지는 interact surface 가 붙어 있을 때만 흐르고, 그때 D12 는 애초에 비활성(`not self.has_interact_surface()`)이다. 사용자가 벤치 에이전트를 직접 부를 길을 남겨두는 값이 더 크다. 이 전제가 깨지면(interact 없이 사람 스레드로 메시지가 들어오는 경로가 생기면) 사람 스레드도 roster 로 좁힌다.
 
-현재 `ensure_human_thread`(`session.py:1065`)는 `self.agents` 전원을 넣는다. pool 이 `protocol.participants` 로 좁혀진 설정에서는 **pool 기준으로 맞춘다**(pool ⊆ agents).
+현재 `session.py` 의 `ensure_human_thread` 는 `self.agents` 전원을 넣는다. pool 이 `protocol.participants` 로 좁혀진 설정에서는 **pool 기준으로 맞춘다**(pool ⊆ agents).
 
 ### 2.3 "안 돌린다"의 두 가지 경로
 
@@ -91,15 +91,15 @@
 | **never-spawned bench** | R0 에서 한 번도 뽑히지 않음 | asyncio task 자체를 만들지 않음 | 애초에 전달 안 됨 | 0 |
 | **demoted** | R0 에서 돌다가 R1 에서 탈락 | `is_agent_done → True` → 무모델 park | **페이즈 스레드 유래만 drain** | 0 (현재 step 종료 후) |
 
-park 조건은 `agent.protocol_done and inbox_size == 0`(`session.py:1274`) **둘 다**다. `is_agent_done` 만 고쳐서는 잔여 inbox 가 있는 강등 에이전트가 park 하지 못하고 모델을 호출한다. 그래서 강등 시 **inbox 를 비운다.**
+park 조건은 `agent.protocol_done and inbox_size == 0`(`session.py` C2 무모델 park) **둘 다**다. `is_agent_done` 만 고쳐서는 잔여 inbox 가 있는 강등 에이전트가 park 하지 못하고 모델을 호출한다. 그래서 강등 시 **inbox 를 비운다.**
 
-버려도 되는 근거: inbox 는 `asyncio.Queue[str]` — 메시지 **id 큐**일 뿐이고(`server.py:71`, `:339`), 본문은 `_messages`(SSOT)에 남는다. 즉 drain 은 "안 읽음 표시"만 지우는 것이고, 재승격 시 스레드를 읽으면 전부 그대로 있다. DESIGN.md §3.3 "SSOT 는 내부 서버, 나머지는 뷰" 와 같은 논리.
+버려도 되는 근거: inbox 는 `asyncio.Queue[str]` — 메시지 **id 큐**일 뿐이고(`server.py` `_inboxes` / 전달 시 push), 본문은 `_messages`(SSOT)에 남는다. 즉 drain 은 "안 읽음 표시"만 지우는 것이고, 재승격 시 스레드를 읽으면 전부 그대로 있다. DESIGN.md §3.3 "SSOT 는 내부 서버, 나머지는 뷰" 와 같은 논리.
 
-**단, inbox 는 스레드별이 아니라 에이전트당 큐 하나다**(`server.py:71` `_inboxes[agent_id]`). 통째로 비우면 같은 큐에 있던 **사람 스레드 미읽음까지 사라진다** — §2.2 가 "사용자는 벤치를 부를 수 있다"고 남겨둔 경로가 R1 타이밍의 poke 하나로 무효가 된다. 본문이 `_messages` 에 남아도 재전달이 없으면 그 poke 로는 깨어나지 않는다. 따라서 drain 은 **페이즈 스레드에서 온 id 만** 버린다(§4.2 `drop_inbox_from`).
+**단, inbox 는 스레드별이 아니라 에이전트당 큐 하나다**(`server.py` `_inboxes`). 통째로 비우면 같은 큐에 있던 **사람 스레드 미읽음까지 사라진다** — §2.2 가 "사용자는 벤치를 부를 수 있다"고 남겨둔 경로가 R1 타이밍의 poke 하나로 무효가 된다. 본문이 `_messages` 에 남아도 재전달이 없으면 그 poke 로는 깨어나지 않는다. 따라서 drain 은 **페이즈 스레드에서 온 id 만** 버린다(§4.2 `drop_inbox_from`).
 
 > 검토했다 버린 대안: **B. drain-only park**(inbox 있어도 모델 없이 비우기) — session 루프에 분기가 하나 더 생긴다. **C. D12 검사를 roster 한정** — 강등 에이전트의 모델 호출 자체는 그대로 남는다. A 만이 두 문제를 한 번에 없앤다.
 
-강등 에이전트가 park 에 들어가는 조건 `_is_gate_waiting()`(`session.py:1403`)은 P1 에서 항상 True, 그 외엔 현재 페이즈 게이트가 닫혀 있으면 True 다. 게이트가 열려 깨어나도 다시 `is_agent_done → True` + 빈 inbox 로 park 한다. 모델 호출 0.
+강등 에이전트가 park 에 들어가는 조건 `_is_gate_waiting()`(`session.py` `_is_gate_waiting`)은 P1 에서 항상 True, 그 외엔 현재 페이즈 게이트가 닫혀 있으면 True 다. 게이트가 열려 깨어나도 다시 `is_agent_done → True` + 빈 inbox 로 park 한다. 모델 호출 0.
 
 **task cancel 은 쓰지 않는다.** step 도중 취소는 메시지·체크포인트 정합을 흔들고, 재승격 시 재spawn 이 필요하다. 이미 있는 park 경로를 쓰는 게 한 줄이고, parked 로 집계되니 D12 의 `live` 계산도 그대로 맞는다.
 
@@ -131,9 +131,9 @@ pool (protocol.participants 또는 agents: 전원 — 100명)
 ```
 
 - **R0** 는 탐색 인원이다. 연구상 탐색은 병렬 이득 구간이므로 1이 아니라 **2~3 권장**. `pool[:start]` 이므로 **pool 의 나열 순서가 곧 탐색 우선순위**다.
-- **R0 는 spawn 제한만이 아니라 `set_roster` 호출이다.** 이게 빠지면 스레드가 `protocol.participants` 전체로 생성되고(`session.py:734`) P1 은 여전히 100개 `READY:` 를 기다린다.
-- **후속 턴**: `begin_round()`(`collaboration.py:127`)는 `_ready_states` / `_assignments` 는 지우지만 `participants` 는 되돌리지 않는다. 그대로 두면 R1 로 1명이 된 roster 가 다음 턴 탐색까지 1명으로 굳는다 → **`begin_round` 에서 R0 로 리셋한다.** 턴마다 크기를 다시 정하는 것이 이 기능의 취지.
-- **R1** 이 실질적 결정점. 파싱은 `assignments.py` 에 이미 있고 커밋 지점도 `_commit_p2_draft`(`collaboration.py:233`)로 이미 존재한다. **반영만 추가한다.**
+- **R0 는 spawn 제한만이 아니라 `set_roster` 호출이다.** 이게 빠지면 스레드가 `protocol.participants` 전체로 생성되고(`session.py` 게이트 스레드 생성) P1 은 여전히 100개 `READY:` 를 기다린다.
+- **후속 턴**: `begin_round()`(`collaboration.py` `begin_round`)는 `_ready_states` / `_assignments` 는 지우지만 `participants` 는 되돌리지 않는다. 그대로 두면 R1 로 1명이 된 roster 가 다음 턴 탐색까지 1명으로 굳는다 → **`begin_round` 에서 R0 로 리셋한다.** 턴마다 크기를 다시 정하는 것이 이 기능의 취지.
+- **R1** 이 실질적 결정점. 파싱은 `assignments.py` 에 이미 있고 커밋 지점도 `_commit_p2_draft`(`collaboration.py` `_commit_p2_draft`)로 이미 존재한다. **반영만 추가한다.**
 - `mode: light` 는 P2 가 없다 → **R0 만 적용, roster 는 턴 내내 고정.**
 - 실행 중 증원(`RECRUIT:`)은 **v2**.
 
@@ -141,13 +141,13 @@ pool (protocol.participants 또는 agents: 전원 — 100명)
 
 ## 4. 컴포넌트별 변경
 
-> **모든 경로는 sync 다.** `_handle_gate_open`(`collaboration.py:392`) → `_commit_p2_draft` 는 게이트 구독 콜백이라 sync 이고, 이걸 async 로 바꾸면 `on_open` 체인 전체가 오염된다. 상태 변경은 메모리에서 sync 로 끝내고, DB 영속화만 `asyncio.create_task` 로 뒤에 붙인다. `register_agent` 는 이미 sync(`server.py:198`, "no IO involved")라 신규 참가자 등록도 sync 로 가능하다.
+> **모든 경로는 sync 다.** `collaboration.py` 의 `_handle_gate_open` → `_commit_p2_draft` 는 게이트 구독 콜백이라 sync 이고, 이걸 async 로 바꾸면 `on_open` 체인 전체가 오염된다. 상태 변경은 메모리에서 sync 로 끝내고, DB 영속화만 `asyncio.create_task` 로 뒤에 붙인다. `register_agent` 는 이미 sync(`server.py`, "no IO involved")라 신규 참가자 등록도 sync 로 가능하다.
 
 ### 4.1 `ConsensusGate.set_participants()` (`protocol/approval.py`)
 
-게이트 참가자는 `bind_to_thread()` 에서 1회 확정된다(:81). 명단 교체 API 가 필요하다.
+게이트 참가자는 `bind_to_thread()` 에서 1회 확정된다. 명단 교체 API 가 필요하다.
 
-현 `_maybe_open(self, message)` / `_open_gate(self, message)` 는 `message["seq"]` 만 쓴다(:204). 합성 dict 를 넘기는 대신 **seq 를 인자로 받도록 바꾼다** — 호출부 2곳(:150, :168)에서 `message["seq"]` 를 넘기면 끝.
+현 `_maybe_open(self, message)` / `_open_gate(self, message)` 는 `message["seq"]` 만 쓴다. 합성 dict 를 넘기는 대신 **seq 를 인자로 받도록 바꾼다** — 호출부 2곳에서 `message["seq"]` 를 넘기면 끝.
 
 ```python
 def _maybe_open(self, seq: int) -> None: ...
@@ -163,11 +163,11 @@ def set_participants(self, participant_ids: list[str], *, seq: int) -> None:
         self._maybe_open(seq)                  # 남은 전원이 이미 찬성했으면 즉시 open
 ```
 
-`seq` 는 현재 메시지 순번(`server.py:330` = `len(self._messages)`). 재평가가 없으면 축소 직후 "이미 다 찬성했는데 안 열리는" 상태가 생긴다.
+`seq` 는 현재 메시지 순번(`server.py` seq 부여 = `len(self._messages)`). 재평가가 없으면 축소 직후 "이미 다 찬성했는데 안 열리는" 상태가 생긴다.
 
 ### 4.2 `MessageServer` 확장 (`core/server.py`)
 
-`create_thread` 는 기존 스레드에 참가자를 **합집합으로만** 더한다(:238-250). 축소 경로가 없다.
+`create_thread` 는 기존 스레드에 참가자를 **합집합으로만** 더한다. 축소 경로가 없다.
 
 ```python
 def current_seq(self) -> int:
@@ -186,8 +186,16 @@ def drop_inbox_from(self, agent_id: str, thread_ids: set[str]) -> None:
     날아간다(§2.3). id → _messages[id]["thread_id"] 로 걸러낸다.
     """
     q = self._inboxes[agent_id]
-    keep = [mid for mid in _drain(q) if self._messages_by_id[mid]["thread_id"] not in thread_ids]
-    for mid in keep:
+    kept = []
+    while True:
+        try:
+            mid = q.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        msg = self._message_index.get(mid)
+        if msg is None or msg.get("thread_id") not in thread_ids:
+            kept.append(mid)      # 모르는 id 는 버리지 말고 되돌린다
+    for mid in kept:
         q.put_nowait(mid)
 ```
 
@@ -195,22 +203,27 @@ def drop_inbox_from(self, agent_id: str, thread_ids: set[str]) -> None:
 
 ```python
 def set_roster(self, participant_ids: list[str]) -> None:
+    # 불변식 1·2 가 사는 자리: pool 밖은 버리고, 남는 게 없으면 no-op.
+    cleaned = [p for p in participant_ids if p in set(self.pool)]
+    if not cleaned:
+        return
+    roster = list(dict.fromkeys(cleaned))   # 중복 제거, 순서 유지
     seq = self._server.current_seq()
-    self.participants = list(participant_ids)
-    self._ready_states &= set(participant_ids)        # P1 정족수도 축소
+    self.participants = roster
+    self._ready_states &= set(roster)       # P1 정족수도 축소
     for gate in self._gates.values():
         if gate is not None:
-            gate.set_participants(participant_ids, seq=seq)
+            gate.set_participants(roster, seq=seq)
             if gate.thread_id:
                 # 탈락자는 여기서 스레드에서 빠지고, 그 스레드 유래 미읽음만 버려진다
-                self._server.set_thread_participants(gate.thread_id, participant_ids)
-    if self._on_roster_change:                        # 세션에 spawn 을 맡긴다
-        self._on_roster_change(set(participant_ids))
+                self._server.set_thread_participants(gate.thread_id, roster)
+    if self._on_roster_change:              # 세션에 spawn 을 맡긴다
+        self._on_roster_change(set(roster))
 ```
 
 호출 지점 셋: **R0**(세션 시작, 스레드 생성 직후) / **R1**(`_commit_p2_draft` 끝) / **`begin_round()` 끝**(§3).
 
-### 4.4 `_commit_p2_draft` 의 R1 규칙 (`protocol/collaboration.py:233`)
+### 4.4 `_commit_p2_draft` 의 R1 규칙 (`protocol/collaboration.py`)
 
 ```python
 # 파싱 known set = pool (roster 아님 — §2.1)
@@ -235,7 +248,7 @@ self.set_roster(new_roster[:self.roster_max])          # max 절삭
 - **절삭 순서**: submitter 가 항상 첫 번째, 그다음 `ASSIGN` 이 쓰인 순서. 뒤에서 자른다.
 - `self.pool` 은 `CollaborationProtocol.__init__` 에 새로 받는다(현 `participants` 인자와 별개, 기본값 = participants).
 
-### 4.5 강등 처리 (`protocol/collaboration.py:272`)
+### 4.5 강등 처리 (`protocol/collaboration.py` `is_agent_done`)
 
 ```python
 def is_agent_done(self, agent_id: str) -> bool:
@@ -248,23 +261,30 @@ def is_agent_done(self, agent_id: str) -> bool:
 
 ### 4.6 spawn / 지연 기동 (`core/session.py`)
 
-`run_agent` 은 `run()` 내부 클로저다(:1231). 나중에 기동하려면 spawn 함수를 세션에 보관한다.
+`run_agent` 은 `run()` 내부 클로저다(`run_agent`). 나중에 기동하려면 spawn 함수를 세션에 보관한다.
 
 ```python
-# run() 안, tasks 생성부(:1394) 교체
-def _spawn(agent):
-    t = asyncio.create_task(run_agent(agent))
-    self._agent_tasks.append(t)
+# run() 안, tasks 생성부 교체
+def _spawn(agent):                       # 이미 돌고 있으면 no-op
+    ...
+
+def _spawn_roster(agent_ids):            # §4.3 콜백이자 최초 기동
+    for agent_id in agent_ids:
+        agent = agent_by_id.get(agent_id)
+        if agent is not None:
+            _spawn(agent)
 
 self._agent_tasks = []
-self.protocol.on_roster_change(lambda ids: [          # §4.3 콜백
-    _spawn(a) for a in self.agents
-    if a.agent_id in ids and not self._is_running(a.agent_id)
-])
-for agent in self.agents:
-    if agent.agent_id in self.protocol.participants:
-        _spawn(agent)
+self.protocol.on_roster_change(_spawn_roster)
+_spawn_roster(self.protocol.participants)   # 순서 있는 리스트 → 기동 순서 결정적
+
+# ... 그리고 턴이 끝나면 반드시:
+finally:
+    self._agent_tasks = []
+    self.protocol.on_roster_change(None)     # v1.4 — 아래 설명
 ```
+
+**콜백은 `run()` 이 끝날 때 반드시 뗀다.** 콜백은 그 run 의 `_spawn` 을 클로저로 물고 있는데, 후속 턴은 `begin_round()` → `set_roster()` 를 **다음 run 이 재등록하기 전에** 부른다. 떼지 않으면 지난 run 의 `_spawn` 이 되살아나 `run()` 밖에서 task 를 띄운다 — 추적도 await 도 취소도 안 되는 중복 루프가 에이전트마다 하나씩 생긴다. (구현 중 실제로 발생, `test_followup_turn_does_not_double_spawn`)
 
 기존 `tasks` 지역 변수를 쓰는 대기/취소 코드는 `self._agent_tasks` 를 보도록 바꾼다 — **도중에 늘어나는 리스트**이므로 `asyncio.gather(*tasks)` 한 방으로는 부족하고, 완료 대기는 "남은 task 가 없을 때까지" 루프여야 한다.
 
@@ -285,14 +305,16 @@ protocol:
 
 기본값 `start = min(2, len(pool))`, `max = len(pool)`. 설정을 안 쓰면 **현재와 동일 동작이 아니다**(의도된 기본값 변경). 기존 동작이 필요하면 `start: -1`.
 
+**기본값이 두 겹이다** — 이 `start=2` 는 `load_config` 의 `normalize_protocol_roster` 가 채운다. `CollaborationProtocol` 생성자를 직접 부르는 코드(테스트·임베딩)의 기본값은 `roster_start=-1`(전원)이라 기존 동작 그대로다. YAML 을 거치는 세션만 좁아진다.
+
 ---
 
 ## 5. 상태와 체크포인트
 
 **새 체크포인트 필드는 없다.**
 
-- 게이트 정족수 — `restore_state` 가 스레드에서 읽고(`approval.py:229-232`), 스레드 참가자는 `set_thread_participants` 가 영속화했다(§2.2).
-- roster — `protocol.participants` 가 이미 직렬화된다(`collaboration.py:169` / `:192`). 재개 시 세션은 여기 있는 id 만 spawn 한다(§4.6, SSOT 단일).
+- 게이트 정족수 — `restore_state` 가 스레드에서 읽고(`approval.py` `ConsensusGate.restore_state`), 스레드 참가자는 `set_thread_participants` 가 영속화했다(§2.2).
+- roster — `protocol.participants` 가 이미 직렬화된다(`collaboration.py` `snapshot` / `restore`). 재개 시 세션은 여기 있는 id 만 spawn 한다(§4.6, SSOT 단일).
 - `pool` 은 config 에서 다시 읽으므로 저장 불필요.
 
 ---
@@ -306,7 +328,7 @@ protocol:
 5. `roster == gate.participants == 페이즈 스레드 참가자` — 사람 스레드만 예외(§2.2).
 6. **never-spawned bench**: asyncio task 없음 · 페이즈 스레드 참가자 아님 · 전달 대상 아님 → **페이즈 스레드 유래 inbox 0**.
 7. **demoted**: 강등 직후 `is_agent_done == True` **이고 페이즈 스레드 유래 inbox 0** → 모델 호출 0, parked 로 집계. 사람 스레드 미읽음은 **남는다**(§2.3).
-8. 6 + 7 ⇒ interact surface 가 없는 세션(= D12 가 켜지는 유일한 경우)에서는 사람 스레드 메시지 자체가 없으므로 `all(inbox_size == 0 for a in self.agents)`(`session.py:1576`)가 성립 — D12 코드 자체는 무수정.
+8. 6 + 7 ⇒ interact surface 가 없는 세션(= D12 가 켜지는 유일한 경우)에서는 사람 스레드 메시지 자체가 없으므로 `all(inbox_size == 0 for a in self.agents)`(`session.py` D12 검사)가 성립 — D12 코드 자체는 무수정.
 9. 축소 직후 남은 전원이 이미 승인 상태면 게이트는 **즉시** open.
 10. `begin_round()` 후 `roster == pool[:start]`.
 

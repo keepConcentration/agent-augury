@@ -93,6 +93,7 @@ r ∈ [0,1]
 | T2MAC (AAAI’24) | targeted / selective engagement | 송신 topology 중심 |
 | Agent-Radar (2026) | LLM context relevance | 주로 context/attention; 지속 agent–agent 거리 + budget 묶음은 약함 |
 | Graph Diffusion topologies (ACL’26) | sparse task-adaptive graph | 생성 모델; V1 휴리스틱과 거리 |
+| Proxifield (arXiv:2609.20889) | 라운드별 sparse 송신 그래프 (직접지목/필요-매칭/계획정렬/정보상보 4레인) | 임베딩 의존 + 제안→평가 왕복으로 라운드당 LLM 콜 증가. 목표가 확장성·내결함성이라 토큰 절약과 반대. 이득이 N≥25에서 나온다(N=5는 +5.4%) — Augury pool은 2~8 |
 
 **주장하는 새로움(제품 관점):**  
 \(r\) 하나를 **routing 확률만이 아니라 reasoning/tool budget allocator** 로 쓴다.  
@@ -464,7 +465,7 @@ class RelevancePolicy:
 | **V1e** | 테스트 + step/`complete` 호출·chars fixture | `tests/test_attention_budget.py` |
 | **V1f** | 갭 문서 링크 · 벤치 노트 | docs / `examples/benchmark` |
 | **V1.1** | `ModelBackend.complete(..., max_tokens=)` + tools allowlist | backend + BudgetDecision |
-| **V2** | 송신 sparse: 비멘션 broadcast를 digest-only로 제안; F5 role graph | server 또는 prompt 힌트 |
+| **V2** | 송신 sparse: 비멘션 broadcast를 digest-only로 제안; F5 role graph; **커버리지 패스** — 라우팅 확정 후 수신 엣지 0개인 에이전트가 없도록 한 번 훑는 불변식 (§3 Proxifield, §10 “조용한 에이전트”) | server 또는 prompt 힌트 |
 | **V2b** | `read_resource` soft truncate by tier | tools |
 | **V3** | 옵션: Wire `log.attention` / 학습형 score (연구) | schema · 별도 플래그 |
 
@@ -498,7 +499,7 @@ class RelevancePolicy:
 | 합의 누락 (못 듣고 APPROVE 안 함) | phase floor; gate 창 T0 금지 |
 | T0 skip + compact → conversation에 없는 메시지가 영구 소실 (G7) | compact은 conversation만 요약 (이미 설계 의도). SSOT 기반 재주입이 필요하면 V2에서 `read_resource` tier별 제한으로 처리 (§8 V2b) |
 | T0을 step 생략으로 구현 → park 스핀 | §4.3: drain 필수 + complete만 스킵 |
-| “조용한 에이전트”가 영구 소외 | 주기적 refresh tick / 역할 로테이션 floor |
+| “조용한 에이전트”가 영구 소외 | 주기적 refresh tick / 역할 로테이션 floor. V2 송신 sparse 도입 시엔 커버리지 패스(수신 엣지 ≥ 1) 필수 (§8 V2) |
 | 휴리스틱 오탐 | `enabled` 옵트인; 경계값 YAML |
 | 디버그 불가 | decision 로그; Ink는 여전히 full wire 가능 |
 | compact와 이중 삭제 | compact은 history; attention은 주입 슬라이스 — 원본 SSOT 유지 |

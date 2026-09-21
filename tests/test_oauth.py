@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -92,7 +92,11 @@ class TestTokenExpiry:
     def test_compute_expires_at_valid(self) -> None:
         result = compute_expires_at(3600)
         assert result is not None
-        assert "2099" not in result  # Should be ~1hr from now
+        # Compare instants, not substrings: the old `"2099" not in result`
+        # check failed whenever the microseconds happened to spell 2099
+        # (e.g. 2026-09-21T03:26:08.322099+00:00).
+        delta = datetime.fromisoformat(result) - datetime.now(UTC)
+        assert timedelta(minutes=55) < delta <= timedelta(hours=1)
 
     def test_compute_expires_at_invalid(self) -> None:
         assert compute_expires_at(0) is None

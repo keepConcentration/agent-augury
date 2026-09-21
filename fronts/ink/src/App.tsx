@@ -30,22 +30,36 @@ type PendingApproval = {
   ttlSeconds?: number;
 };
 
+const APPROVAL_VALUE_MAX = 300;
+
+// Loopjacking (arXiv:2609.21081) representation variant: a card showing only
+// command/path hides the rest of what the approval digest binds — e.g.
+// write_file's content. Show every field; clip long values with a marker.
 function previewApprovalArgs(args?: Record<string, unknown>): string {
   if (!args || typeof args !== "object") {
     return "";
   }
-  if (typeof args.command === "string") {
-    return String(args.command);
-  }
-  if (typeof args.path === "string") {
-    return String(args.path);
-  }
-  try {
-    const raw = JSON.stringify(args);
-    return raw.length > 120 ? `${raw.slice(0, 120)}...` : raw;
-  } catch {
-    return "";
-  }
+  return Object.keys(args)
+    .sort()
+    .map((key) => {
+      const value = args[key];
+      let text: string;
+      if (typeof value === "string") {
+        text = value;
+      } else {
+        try {
+          text = JSON.stringify(value) ?? String(value);
+        } catch {
+          text = String(value);
+        }
+      }
+      if (text.length > APPROVAL_VALUE_MAX) {
+        const hidden = text.length - APPROVAL_VALUE_MAX;
+        text = `${text.slice(0, APPROVAL_VALUE_MAX)}… (+${hidden} chars)`;
+      }
+      return `${key}: ${text}`;
+    })
+    .join("\n");
 }
 
 function parseApprovalDecision(line: string): "granted" | "denied" | null {

@@ -10,6 +10,7 @@ redundant ``agent_id`` prefixes; prose is sent as the body only.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from agent_augury.gateway.types import WireEvent
@@ -32,6 +33,32 @@ def _label(name: str, *, recipient_agent_id: str | None) -> bool:
     if recipient_agent_id is None:
         return True
     return name != recipient_agent_id
+
+
+# Per-value clip inside an approval card. Every key is still listed.
+_APPROVAL_VALUE_MAX = 300
+
+
+def format_approval_args(args: dict[str, Any]) -> str:
+    """Render every arg the approval digest binds, one ``key: value`` per line.
+
+    Loopjacking (arXiv:2609.21081) representation variant: a card showing only
+    ``command``/``path`` hides the rest of what ``args_digest()`` binds — e.g.
+    ``write_file``'s ``content``. The human must see every field, so long values
+    are clipped with an explicit "+N chars" marker rather than dropped.
+    """
+    lines: list[str] = []
+    for key in sorted(args):
+        value = args[key]
+        if isinstance(value, str):
+            text = value
+        else:
+            text = json.dumps(value, ensure_ascii=False, default=str)
+        if len(text) > _APPROVAL_VALUE_MAX:
+            hidden = len(text) - _APPROVAL_VALUE_MAX
+            text = f"{text[:_APPROVAL_VALUE_MAX]}… (+{hidden} chars)"
+        lines.append(f"{key}: {text}")
+    return "\n".join(lines)
 
 
 def format_wire_for_chat_surface(
@@ -113,11 +140,8 @@ def format_wire_for_chat_surface(
         aid = str(event.get("approval_id") or "?")
         preview = event.get("args_preview") or {}
         detail = ""
-        if isinstance(preview, dict):
-            if preview.get("command"):
-                detail = f"\n`{preview['command']}`"
-            elif preview.get("path"):
-                detail = f"\n`{preview['path']}`"
+        if isinstance(preview, dict) and preview:
+            detail = "\n```\n" + format_approval_args(preview) + "\n```"
         who = f"[{agent}] " if _label(agent, recipient_agent_id=recipient_agent_id) else ""
         return (
             f"🔐 Approval needed {who}{tool} ({aid}){detail}\n"

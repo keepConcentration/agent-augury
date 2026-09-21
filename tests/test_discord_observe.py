@@ -135,6 +135,40 @@ def test_format_wire_approval_request():
     assert "1/approve" in text or "Reply" in text or "approve" in text.lower()
 
 
+def test_format_wire_approval_request_shows_every_arg():
+    """Loopjacking (arXiv:2609.21081): the card must show every field the
+    digest binds — a hidden ``content`` is an unseen approval."""
+    text = format_wire_for_bot(
+        make_event(
+            "approval.request",
+            approval_id="ap-2",
+            agent_id="coder",
+            tool="write_file",
+            args_preview={"path": "/etc/passwd", "content": "root::0:0::/:/bin/sh"},
+            ttl_seconds=60,
+        )
+    )
+    assert text is not None
+    assert "/etc/passwd" in text
+    assert "root::0:0::/:/bin/sh" in text
+    assert "content:" in text
+
+
+def test_format_wire_approval_request_clips_long_value():
+    text = format_wire_for_bot(
+        make_event(
+            "approval.request",
+            approval_id="ap-3",
+            agent_id="coder",
+            tool="write_file",
+            args_preview={"path": "/tmp/x", "content": "A" * 500},
+        )
+    )
+    assert text is not None
+    assert "content:" in text          # key still named
+    assert "(+200 chars)" in text      # and the clip is explicit
+
+
 def test_session_attaches_mirror_to_gateway(tmp_path, monkeypatch):
     """M4: mirror is a Gateway observe surface, not server.subscribe."""
     import yaml

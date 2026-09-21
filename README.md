@@ -317,12 +317,15 @@ Design notes: [`docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`](docs/architect
 | `--reconfigure` | Re-run wizard (with `--headless`: then boot Core without Ink) |
 | `--output <path>` | Wizard output path (only without `--config`) |
 | `--quiet` | Suppress live event noise |
-| `--ink` | Ink Surface (default when available) |
 | `--ink-hello` | Ink hello against the Gateway (no full session) |
 | `--headless` | Boot Core without Ink (default: wizard session YAML) |
 | `--no-auto-start` | With `--headless`: wait for `human.send` before first run |
 | `--new-session` | Ignore LATEST checkpoint; start fresh |
 | `--session <id>` | Resume or bind to this session id |
+
+> **Removed in 0.7.4:** `--ink`. It never changed anything — Ink is the default
+> whenever a TTY and Node are available; use `--headless` to opt out. Drop it
+> from scripts: the CLI now rejects unknown flags instead of abbreviating them.
 
 ---
 

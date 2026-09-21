@@ -90,10 +90,20 @@ def test_cli_headless_reconfigure_rejects_config(capsys):
     assert "--config" in capsys.readouterr().err
 
 
-def test_cli_headless_rejects_ink_combo(capsys):
+def test_cli_rejects_removed_ink_flag(capsys):
+    """`--ink` was removed in 0.7.4; it must fail loudly, not abbreviate
+    to `--ink-hello` and silently run the demo instead of --config."""
     from agent_augury.cli import main
 
-    assert main(["--headless", "--ink", "--config", "x.yaml"]) == 1
+    with pytest.raises(SystemExit):
+        main(["--ink", "--config", "x.yaml"])
+    assert "--ink" in capsys.readouterr().err
+
+
+def test_cli_headless_rejects_ink_hello_combo(capsys):
+    from agent_augury.cli import main
+
+    assert main(["--headless", "--ink-hello", "--config", "x.yaml"]) == 1
     assert "cannot be combined" in capsys.readouterr().err
 
 

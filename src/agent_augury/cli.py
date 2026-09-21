@@ -119,14 +119,12 @@ def _launch_session(
     *,
     quiet: bool = False,
     allow_fake: bool = False,
-    force_ink: bool = False,
     headless: bool = False,
     auto_start: bool = True,
     new_session: bool = False,
     session_id: str | None = None,
 ) -> int:
     """Start Ink or headless Core for a session config."""
-    del force_ink  # Ink is the default non-headless path
     if session_id:
         os.environ["AGENT_AUGURY_SESSION"] = session_id
     else:
@@ -244,7 +242,6 @@ def _run_wizard_flow(
     force_reconfigure: bool = False,
     quiet: bool = False,
     *,
-    force_ink: bool = False,
     allow_fake: bool = False,
     headless: bool = False,
     auto_start: bool = True,
@@ -252,7 +249,6 @@ def _run_wizard_flow(
     session_id: str | None = None,
 ) -> int:
     """Run the interactive wizard, save the YAML, then start Ink or headless."""
-    del force_ink  # Ink is the default non-headless path
     if not check_tty():
         print(
             "error: interactive wizard requires a TTY. "
@@ -435,7 +431,9 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_sessions_cli(argv[1:])
 
-    parser = argparse.ArgumentParser(prog="agent-augury")
+    # allow_abbrev=False: without it `--ink` (removed in 0.7.4) silently
+    # abbreviates to `--ink-hello` and runs the demo instead of the config.
+    parser = argparse.ArgumentParser(prog="agent-augury", allow_abbrev=False)
     parser.add_argument(
         "--config",
         required=False,
@@ -475,12 +473,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Ink hello against the Gateway (no full Core session)",
     )
     parser.add_argument(
-        "--ink",
-        action="store_true",
-        default=False,
-        help="Ink Surface (default; kept for explicit scripts)",
-    )
-    parser.add_argument(
         "--headless",
         action="store_true",
         default=False,
@@ -505,9 +497,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.headless and args.ink:
-        print("error: --headless cannot be combined with --ink", file=sys.stderr)
-        return 1
     if args.headless and args.ink_hello:
         print(
             "error: --headless cannot be combined with --ink-hello",
@@ -525,10 +514,6 @@ def main(argv: list[str] | None = None) -> int:
             "error: --new-session cannot be combined with --session",
             file=sys.stderr,
         )
-        return 1
-
-    if args.ink_hello and args.ink:
-        print("error: --ink-hello cannot be combined with --ink", file=sys.stderr)
         return 1
 
     if args.ink_hello:
@@ -587,7 +572,6 @@ def main(argv: list[str] | None = None) -> int:
             args.config,
             quiet=args.quiet,
             allow_fake=args.demo,
-            force_ink=args.ink,
             headless=args.headless,
             auto_start=not args.no_auto_start,
             new_session=bool(args.new_session),
@@ -600,7 +584,6 @@ def main(argv: list[str] | None = None) -> int:
             output_path,
             force_reconfigure=args.reconfigure,
             quiet=args.quiet,
-            force_ink=args.ink,
             allow_fake=args.demo,
             headless=False,
             new_session=bool(args.new_session),

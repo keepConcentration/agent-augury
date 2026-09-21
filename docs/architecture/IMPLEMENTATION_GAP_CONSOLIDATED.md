@@ -36,7 +36,7 @@
 | M4 | Discord adapter → Gateway 구독 | ✅ | `channels/discord/observe.py` |
 | M5 | Discord inbound(HITL) | ✅ | `channels/discord/inbound.py` `bots[].inbound` |
 | M6 | Slack observe 스파이크 | ✅ | `channels/slack/observe.py` |
-| M7 | CLI Ink 실세션 연결 | ✅ | `gateway/session_stdio.py`, `cli.py` `--ink --config` |
+| M7 | CLI Ink 실세션 연결 | ✅ | `gateway/session_stdio.py`, `cli.py` `--config` |
 | M8 | Desktop 또는 Web 스파이크 | ❌ | `fronts/`에 `ink/`만 존재, `desktop/`·`web/` 없음 |
 
 > 별도 설계 `PROTOCOL_GATE_WAIT_PARK_DESIGN.md`(gate-wait idle park)는 **구현 완료** 상태로

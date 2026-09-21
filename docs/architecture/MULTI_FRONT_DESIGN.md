@@ -351,7 +351,7 @@ Do **not** stringify events once in Core for all fronts. Channel adapters call
 | **M4** | Discord adapter를 Gateway 구독으로 이전 (동작 동등) — **done** |
 | **M5** | Discord inbound (HITL) — **done** (`bots[].inbound: true` → `human.*`) |
 | **M6** | Slack observe 스파이크 — **done** (`slack.url_env` Incoming Webhook) |
-| **M7** | CLI Ink 실세션 연결 — **done** (`--ink --config`, `gateway.session_stdio`) |
+| **M7** | CLI Ink 실세션 연결 — **done** (`--config`, `gateway.session_stdio`) |
 | **M8** | Desktop 또는 Web 스파이크 |
 
 ~~pt TUI / plain REPL~~ — **removed**; Interactive Surface is **Ink only**.

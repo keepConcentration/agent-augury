@@ -7,7 +7,7 @@ Ink CLI that speaks **Augury Wire JSONL** with a Python Gateway child.
 ```text
 npm start  (this package, owns TTY)
   └─ python -m agent_augury.gateway.hello_demo          # M2/M3 (--ink-hello)
-  └─ python -m agent_augury.gateway.session_stdio ...   # M7 (--ink --config)
+  └─ python -m agent_augury.gateway.session_stdio ...   # M7 (--config)
        stdin  <- commands (JSONL)
        stdout -> events / results (JSONL)
 ```

@@ -110,11 +110,11 @@ def test_session_stdio_auto_start_demo_then_quit():
     assert proc.wait(timeout=10) == 0
 
 
-def test_cli_force_ink_with_config():
+def test_cli_config_launches_ink_session():
     from agent_augury.cli import main
 
     with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
-        result = main(["--ink", "--config", "examples/demo.yaml", "--demo"])
+        result = main(["--config", "examples/demo.yaml", "--demo"])
     assert result == 0
     ink.assert_called_once()
     kwargs = ink.call_args.kwargs

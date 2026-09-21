@@ -1,4 +1,4 @@
-"""Dynamic roster — R0/R1 (DYNAMIC_ROSTER_DESIGN v1.3)."""
+"""Dynamic roster — R0/R1 (DYNAMIC_ROSTER_DESIGN v1.4)."""
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ from agent_augury.core.protocol.phases import (
 from agent_augury.core.server import MessageServer
 from agent_augury.core.session import HUMAN_CHAT_THREAD_NAME, Session
 from agent_augury.gateway.turn_done import derive_turn_done_reason
-
 
 POOL = ["a1", "a2", "a3", "a4"]
 
@@ -270,13 +269,16 @@ async def test_demoted_agent_parks_without_model_call():
         aid: CountingBackend(
             [Completion(text="hi"), Completion(text=None), Completion(text=None)]
         )
-        for aid in ("a1", "a2", "a3")
+        for aid in ("a1", "a2")
     }
+    # a3 would step forever if demotion did not park it — with a script that
+    # runs out, "calls stopped" proves nothing (it just finished).
+    backends["a3"] = CountingBackend([Completion(text="working")] * 5000)
     agents = [
         AgentLoop(agent_id=aid, backend=backends[aid], server=server)
         for aid in ("a1", "a2", "a3")
     ]
-    session = Session(server=server, agents=agents, max_steps=20)
+    session = Session(server=server, agents=agents, max_steps=5000)
     protocol = CollaborationProtocol(
         server, pool=["a1", "a2", "a3"], roster_start=-1
     )
@@ -295,17 +297,82 @@ async def test_demoted_agent_parks_without_model_call():
 
     async def _run() -> None:
         task = asyncio.create_task(session.run(initial_prompt="go"))
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
         await server.send_message(tid, author="a1", content="noise for a3")
-        calls_before = backends["a3"].calls
+        assert backends["a3"].calls > 0  # it really was looping
+
         protocol.set_roster(["a1", "a2"])
+        # The two preconditions of the no-model park (session.py C2):
         assert protocol.is_agent_done("a3")
+        assert server.inbox_size("a3") == 0  # phase-thread unread was dropped
+
+        await asyncio.sleep(0.05)  # let the in-flight step finish
+        settled = backends["a3"].calls
+        await asyncio.sleep(0.2)  # a live loop would climb over this window
+        assert backends["a3"].calls == settled
         await asyncio.wait_for(task, timeout=3.0)
-        # After demotion a3 must not keep calling the model.
-        assert backends["a3"].calls == calls_before
 
     await _run()
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_followup_turn_does_not_double_spawn():
+    """run() must clear the roster callback on exit.
+
+    begin_round() (a follow-up turn) calls set_roster() BEFORE run()
+    re-registers, so a stale callback spawns duplicate agent loops that no
+    run tracks, awaits or cancels.
+    """
+    server = MessageServer()
+    for a in ("a1", "a2"):
+        server.register_agent(a)
+    backends = {
+        aid: CountingBackend([Completion(text="hi"), Completion(text=None)] * 20)
+        for aid in ("a1", "a2")
+    }
+    agents = [
+        AgentLoop(agent_id=aid, backend=backends[aid], server=server)
+        for aid in ("a1", "a2")
+    ]
+    session = Session(server=server, agents=agents, max_steps=100)
+    session.protocol = CollaborationProtocol(
+        server, pool=["a1", "a2"], roster_start=-1
+    )
+
+    async def _setup() -> None:
+        session._setup_done = True
+        session._output_task = asyncio.create_task(session._output_consumer())
+
+    session._setup = _setup  # type: ignore[method-assign]
+
+    await session.run(initial_prompt="go")
+    assert session.protocol._on_roster_change is None
+
+    before = {aid: backends[aid].calls for aid in backends}
+    session.protocol.set_roster(session.protocol.initial_roster())
+    await asyncio.sleep(0.1)
+    assert {aid: backends[aid].calls for aid in backends} == before
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_off_thread_send_gets_clear_message():
+    """A demoted agent sending mid-step gets an explanation, not a ValueError."""
+    server = MessageServer()
+    for a in ("a1", "a2"):
+        server.register_agent(a)
+    tid = await server.create_thread("plan", participants=["a1"])
+    agent = AgentLoop(agent_id="a2", backend=CountingBackend(), server=server)
+
+    denied = agent._not_on_thread_denied({"thread": tid, "content": "x"})
+    assert denied is not None
+    assert "not_a_participant" in denied
+
+    # On the thread, or an unknown id: not this guard's business.
+    on_thread = AgentLoop(agent_id="a1", backend=CountingBackend(), server=server)
+    assert on_thread._not_on_thread_denied({"thread": tid, "content": "x"}) is None
+    assert agent._not_on_thread_denied({"thread": "nope", "content": "x"}) is None
 
 
 @pytest.mark.asyncio
@@ -455,7 +522,11 @@ async def test_roster_survives_resume(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_large_pool_split_none_model_calls_bounded():
-    """Regression: 100-agent pool + SPLIT: none → calls ≤ start + 1."""
+    """Regression: 100-agent pool + SPLIT: none → only the roster ever runs.
+
+    Bound is per-agent steps x roster size, not "start + 1": a roster agent
+    steps again for each message that lands before it parks.
+    """
     n = 100
     pool = [f"a{i}" for i in range(n)]
     server = MessageServer()
@@ -503,7 +574,8 @@ async def test_large_pool_split_none_model_calls_bounded():
     # The point of R0: agents a2..a99 never get a task.
     assert all(backends[f"a{i}"].calls == 0 for i in range(2, n))
     assert total_calls > 0
-    assert total_calls < n  # sanity: not "everyone ran"
+    # roster is start=2, each steps at most twice here; the 98 benched add 0.
+    assert total_calls <= 4
 
 
 def test_config_roster_defaults(tmp_path: Path):
@@ -527,7 +599,7 @@ def test_config_roster_defaults(tmp_path: Path):
     assert cfg["protocol"]["roster"]["max"] == 3
 
 
-def test_start_k_limits_spawned_agents():
+def test_start_k_limits_initial_roster():
     server = MessageServer()
     for a in POOL:
         server.register_agent(a)

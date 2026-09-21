@@ -145,8 +145,13 @@ class CollaborationProtocol:
         """Register a callback fired when any gate opens (receives phase)."""
         self._on_gate_open = callback
 
-    def on_roster_change(self, callback: RosterCallback) -> None:
-        """Register a callback when the active roster changes (Session spawn)."""
+    def on_roster_change(self, callback: RosterCallback | None) -> None:
+        """Register (or clear) the roster-change callback.
+
+        ``Session.run()`` clears it on exit: the callback closes over that
+        run's spawn helpers, so a later ``begin_round()`` firing a stale one
+        would start agent tasks outside any run (untracked, never awaited).
+        """
         self._on_roster_change = callback
 
     def initial_roster(self) -> list[str]:
@@ -165,13 +170,7 @@ class CollaborationProtocol:
         cleaned = [p for p in participant_ids if p in known]
         if not cleaned:
             return
-        # De-dupe preserving order.
-        seen: set[str] = set()
-        roster: list[str] = []
-        for p in cleaned:
-            if p not in seen:
-                seen.add(p)
-                roster.append(p)
+        roster = list(dict.fromkeys(cleaned))  # de-dupe, order preserved
         seq = self._server.current_seq()
         self.participants = roster
         self._ready_states &= set(roster)

@@ -461,6 +461,12 @@ class AgentLoop:
             dup = self._duplicate_signal_denied(args)
             if dup is not None:
                 return dup
+            # DYNAMIC_ROSTER: a roster shrink can drop this agent from the
+            # thread mid-step. server.send_message would raise and the raw
+            # ValueError would reach the model verbatim.
+            off_thread = self._not_on_thread_denied(args)
+            if off_thread is not None:
+                return off_thread
         # gate-aware execution: block work-share on non-gate threads while gate is closed
         if name == "send_message" and not self.gate_open:
             thread_id = args.get("thread")
@@ -517,6 +523,35 @@ class AgentLoop:
         if not argv:
             return False
         return argv[0].rsplit("/", 1)[-1] in self._IDLE_COMMANDS
+
+    def _not_on_thread_denied(self, args: dict[str, Any]) -> str | None:
+        """Explain a send to a thread this agent is no longer a participant of.
+
+        DYNAMIC_ROSTER: P2 can shrink the roster while this agent is mid-step,
+        which drops it from the phase thread. Without this the server raises
+        and loop.py hands the model a bare ValueError to puzzle over.
+        """
+        thread_id = args.get("thread")
+        if not thread_id:
+            return None
+        try:
+            thread = self.server.get_thread(str(thread_id))
+        except KeyError:
+            return None  # unknown id — let the server report it
+        if self.agent_id in thread["participants"]:
+            return None
+        return json.dumps(
+            {
+                "error": "not_a_participant",
+                "thread": str(thread_id),
+                "message": (
+                    f"You are not on thread '{thread_id}' — the team reassigned "
+                    f"the work and you are off this phase. Do not retry; stop "
+                    f"and wait."
+                ),
+            },
+            ensure_ascii=False,
+        )
 
     def _duplicate_signal_denied(self, args: dict[str, Any]) -> str | None:
         """Soft-block a re-``APPROVE:``/``READY:`` from an agent already counted."""

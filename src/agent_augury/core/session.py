@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 # .env 자동 로딩 — 셸 export 최우선; 파일끼리는 ~/.agent-augury/.env 가 cwd/프로젝트보다 우선
@@ -1411,9 +1411,6 @@ class Session:
         agent_by_id = {a.agent_id: a for a in self.agents}
         running_ids: set[str] = set()
 
-        def _is_running(agent_id: str) -> bool:
-            return agent_id in running_ids
-
         def _spawn(agent: AgentLoop) -> None:
             if agent.agent_id in running_ids:
                 return
@@ -1427,17 +1424,16 @@ class Session:
             running_ids.add(agent.agent_id)
             self._agent_tasks.append(asyncio.create_task(_tracked()))
 
-        if self.protocol is not None:
-            self.protocol.on_roster_change(
-                lambda ids: [
-                    _spawn(agent_by_id[aid])
-                    for aid in ids
-                    if aid in agent_by_id and not _is_running(aid)
-                ]
-            )
-            for agent in self.agents:
-                if agent.agent_id in self.protocol.participants:
+        def _spawn_roster(agent_ids: Iterable[str]) -> None:
+            for agent_id in agent_ids:
+                agent = agent_by_id.get(agent_id)
+                if agent is not None:
                     _spawn(agent)
+
+        if self.protocol is not None:
+            self.protocol.on_roster_change(_spawn_roster)
+            # participants is an ordered list — keep spawn order deterministic.
+            _spawn_roster(self.protocol.participants)
         else:
             for agent in self.agents:
                 _spawn(agent)
@@ -1451,6 +1447,12 @@ class Session:
                 await asyncio.gather(*pending, return_exceptions=True)
         finally:
             self._agent_tasks = []
+            # The callback closes over this run's _spawn. A follow-up turn
+            # calls begin_round() -> set_roster() BEFORE the next run
+            # re-registers, so a stale callback would spawn duplicate,
+            # untracked agent loops (one extra model call per agent, forever).
+            if self.protocol is not None:
+                self.protocol.on_roster_change(None)
 
         return total_steps[0]
 

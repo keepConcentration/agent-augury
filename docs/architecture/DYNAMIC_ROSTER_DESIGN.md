@@ -1,11 +1,12 @@
 # Dynamic roster — 작업 크기에 맞춰 활성 에이전트 수를 정한다
 
-> **Status:** 구현 착수 (v1 R0+R1)
+> **Status:** 구현 완료 (v1 R0+R1), 리뷰 후속 수정 반영
 > **Date:** 2026-09-18
+> **Rev:** v1.4 — 구현 리뷰 반영: `run()` 종료 시 roster 콜백 해제(후속 턴 중복 spawn), 강등 중 전송에 `not_a_participant` 안내, pool 밖 에이전트 비활성 명시.
 > **Rev:** v1.3 — 3차 리뷰 반영. inbox 는 에이전트당 1개이므로 drain 을 **페이즈 스레드 유래로 한정**, spawn SSOT 단일화(`Session.roster` 제거), `ensure_human_thread` 를 pool 기준으로
 > **구현됨:** `ConsensusGate.set_participants` + seq 인자, `MessageServer.current_seq` / `set_thread_participants` / `drop_inbox_from`, `CollaborationProtocol.pool`·`set_roster`·R1 `_commit_p2_draft`·강등 `is_agent_done`·`begin_round` R0, Session roster spawn + config `protocol.roster`, `tests/test_dynamic_roster.py`
 > **Code (현재):** `core/session.py` `run()` / `from_config`, `core/protocol/collaboration.py`, `core/protocol/approval.py` `ConsensusGate`, `core/protocol/assignments.py`, `core/server.py`
-> **Tests (예정):** `tests/test_dynamic_roster.py`
+> **Tests:** `tests/test_dynamic_roster.py` (22)
 > **관련:** `PHASE_MACHINE_ROUTING_AND_CHECKING_DESIGN.md` (R1 `SPLIT: none`), `PROTOCOL_GATE_WAIT_PARK_DESIGN.md` (park/D12), `FOLLOWUP_TURN_PROTOCOL_DESIGN.md` (`begin_round`), `AGENT_RELEVANCE_BUDGET_DESIGN.md`
 
 ---
@@ -65,6 +66,7 @@
 
 - **pool 정의**: 기존 `protocol.participants`(예: `examples/p1_to_p5_protocol.yaml:11`, `attention_budget_demo.yaml:16`)는 "프로토콜에 참여할 수 있는 전체"라는 뜻을 그대로 유지한다. 없으면 `agents:` 전원. `roster.start` 는 **이 pool 리스트의 앞에서** 뽑는다.
 - **파싱은 pool 기준, 정족수는 roster 기준.**
+- **pool 밖 에이전트는 완전히 비활성이다.** `agents:` 에 있지만 `protocol.participants` 에 없는 에이전트는 task 도 안 뜨고(`session.py` spawn), 사람 스레드에도 안 들어간다(§2.2). 이전에는 전원 spawn 이었으므로 **동작 변경**이다 — 곁다리 작업용으로 pool 밖 에이전트를 두던 설정은 pool 에 넣어야 한다.
 
 이게 v1.0 설계의 치명적 구멍이었다. `parse_assignments(content, self.participants)`(`collaboration.py:250`)는 known set 에 없는 id 를 **버린다**. roster 를 2명으로 줄여둔 상태에서 P2 가 `ASSIGN a7` 을 쓰면 a7 은 `set_roster` 가 호출되기도 전에 파싱 단계에서 사라진다 → 벤치 기동이 구조적으로 불가능.
 
@@ -319,7 +321,7 @@ protocol:
 - [x] `MessageServer.set_thread_participants` / `drop_inbox_from` / `current_seq` — `test_thread_participants_shrink_and_persist`, `test_drop_inbox_keeps_human_messages`
 - [x] `CollaborationProtocol.set_roster` — `test_set_roster_shrinks_ready_quorum`
 - [x] **파싱 known set = pool** — `test_assign_can_name_bench_agent`
-- [x] R0 — `test_start_k_limits_spawned_agents`, `test_p1_quorum_is_start_not_pool`
+- [x] R0 — `test_start_k_limits_initial_roster`, `test_p1_quorum_is_start_not_pool`
 - [x] R1 — `test_assign_lines_become_roster`, `test_split_none_roster_is_submitter_only`, `test_no_submitter_is_noop`, `test_max_truncates_keeping_submitter`
 - [x] 벤치 기동 — `test_assigned_bench_agent_is_spawned`
 - [x] 강등 — `test_demoted_agent_parks_without_model_call` (**탈락 직전 브로드캐스트가 inbox 에 있는 상태에서** 시작할 것)
@@ -329,7 +331,13 @@ protocol:
 - [x] 체크포인트 — `test_roster_survives_resume` (재개 후 게이트 정족수 == roster, 새 필드 없이)
 - [x] 루프 없는 단위 테스트에서 `set_thread_participants` 가 메모리만으로 동작 — `test_set_participants_without_running_loop`
 - [x] 회귀: 100명 풀 + `SPLIT: none` 에서 **벤치 모델 호출 0** (`test_large_pool_split_none_model_calls_bounded`)
-- [x] 마이그레이션: 3인 이상 기존 예제에 명시적 `start` — `examples/attention_budget_demo.yaml`(4), `examples/p1_to_p5_protocol.yaml`(3)
+- [x] 마이그레이션: 3인 이상 기존 예제에 명시적 `start` — `examples/attention_budget_demo.yaml`(4), `examples/p1_to_p5_protocol.yaml`(3). `multi_bot_demo.yaml` 은 `protocol:` 섹션이 없어 대상 아님
+
+**리뷰 후속 (v1.4)**
+
+- [x] 후속 턴 중복 spawn — `run()` finally 에서 `on_roster_change(None)`, `test_followup_turn_does_not_double_spawn`
+- [x] 강등 중 전송 — `AgentLoop._not_on_thread_denied`, `test_off_thread_send_gets_clear_message`
+- [x] 강등 테스트에 이빨 — 무한 스크립트 + 정착 후 재측정 (`test_demoted_agent_parks_without_model_call`)
 
 **v2 (조건부)** — `RECRUIT:` 실행 중 증원. v1 운용 중 "명단이 모자라 실패한 턴"이 관측될 때만.
 
@@ -345,6 +353,7 @@ protocol:
 | 강등된 에이전트를 도중에 다시 부를 수 없음 | 사람 스레드는 pool 전체 유지(§2.2) → 사용자는 부를 수 있다. 에이전트끼리는 v2 |
 | 사람 스레드 예외가 D12 를 깨는 경로 | 불변식 8 을 테스트로 고정. interact 없이 사람 스레드로 메시지가 들어오는 경로가 생기면 예외 철회 |
 | 기본값 변경(`start=2`) | 릴리스 노트 + `start: -1` 탈출구 + §7 마이그레이션 항목 |
+| roster 콜백이 `run()` 밖까지 살아남음 | **실제로 발생했다.** `begin_round()` 가 다음 run 의 등록보다 먼저 `set_roster()` 를 호출해 추적되지 않는 중복 루프를 띄웠다. `finally` 에서 해제 + 회귀 테스트 |
 | `_agent_tasks` 가 도중에 증가 → 기존 gather 가정 붕괴 | §4.6 대기 루프 교체. 놓치면 기동한 에이전트를 기다리지 않고 턴이 끝난다 |
 | `set_thread_participants` 의 persist 가 create_task → 재개 직전 크래시 시 유실 | 최악의 경우 재개 후 정족수가 한 페이즈 넓어짐(진행 불가 아님). 필요하면 flush 지점에서 await |
 | 실행 루프 없는 단위 테스트에서 create_task 실패 | 루프 유무를 보고 없으면 메모리만 갱신(§4.2). 테스트로 고정 |

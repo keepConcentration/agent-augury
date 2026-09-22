@@ -23,6 +23,8 @@ import asyncio
 import json
 import os
 import shlex
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +49,7 @@ class ToolBox:
         # P9 배선 복구: allowed_roots가 주어지면 policy 기본값에 반영.
         # policy 미지정 시 기본값(전부 활성 + 안전장치) + allowed_roots.
         self.policy = policy or ToolPolicy.from_config(None, allowed_roots=allowed_roots)
+        self._agent_id: str | None = None  # set per execute(), for denial events
 
     # -- path security (P11) -------------------------------------------------
 
@@ -68,10 +71,29 @@ class ToolBox:
         return False
 
     def _check_root(self, path: str) -> str | None:
-        """Return error JSON when *path* is outside allowed roots, else None."""
-        if not self._path_within_roots(path):
-            return _json({"error": f"path outside allowed roots: {path}"})
-        return None
+        """Return error JSON when *path* is outside allowed roots, else None.
+
+        The denial is also published as a Wire ``log`` event. Without it the
+        refusal is only visible to the model, which may quietly retarget the
+        task somewhere it *can* read and bury that in prose (live session
+        2026-09-22: the sandbox was the Ink cache dir, so a review of the
+        user's project silently became a review of the cache).
+        """
+        if self._path_within_roots(path):
+            return None
+        roots = ", ".join(self.policy.allowed_roots) or "(unrestricted)"
+        try:
+            self.server._emit_event({
+                "type": "log",
+                "text": (
+                    f"denied {self._agent_id or 'agent'}: path outside allowed "
+                    f"roots: {path}  (allowed: {roots})"
+                ),
+                "timestamp": int(time.time()),
+            })
+        except Exception:  # noqa: BLE001, S110 — never break a tool on Wire
+            pass
+        return _json({"error": f"path outside allowed roots: {path}"})
 
     # -- tool specs ----------------------------------------------------------
 
@@ -271,6 +293,7 @@ class ToolBox:
     # -- execution -----------------------------------------------------------
 
     async def execute(self, agent_id: str, name: str, args: dict[str, Any]) -> str:
+        self._agent_id = agent_id
         if name == "create_thread":
             name_arg = str(args.get("name") or "")
             preexisting = self.server.resolve_thread_id(name_arg)
@@ -398,6 +421,40 @@ class ToolBox:
             return self.policy.allowed_roots[0]
         return None
 
+    # Bare interpreter names the agent may type; all mean "the project's python".
+    _PYTHON_NAMES = frozenset({"python", "python3", "python.exe", "python3.exe"})
+
+    def _shell_env(self) -> dict[str, str]:
+        """Env for ``run_command`` with our interpreter's dir first on PATH.
+
+        This is for console scripts (``pytest``, ``ruff``, ``pip``) — they are
+        real launchers that embed an absolute interpreter path, so finding them
+        is enough. Bare ``python`` needs :meth:`_resolve_argv` as well.
+        """
+        env = dict(os.environ)
+        bindir = str(Path(sys.executable).parent)
+        path = env.get("PATH", "")
+        if bindir and bindir not in path.split(os.pathsep):
+            env["PATH"] = bindir + os.pathsep + path if path else bindir
+        return env
+
+    def _resolve_argv(self, argv: list[str]) -> list[str]:
+        """Point a bare ``python`` at the interpreter running this session.
+
+        PATH alone is not enough. A uv-created venv can have ``Scripts/
+        python.exe`` as a symlink to the base interpreter, so resolving the
+        *name* yields the base prefix and the venv's site-packages disappear —
+        every ``import`` the agent tries fails. Launching ``sys.executable``
+        directly keeps the venv.
+
+        Live session 2026-09-22: the agent spent nine steps on ``python -V`` /
+        ``python -c "print('hi')"`` / ``python -m pytest`` trying to work out
+        why nothing imported, never sent ``READY:``, and stalled P1 at 1/2.
+        """
+        if argv and argv[0].lower() in self._PYTHON_NAMES:
+            return [sys.executable, *argv[1:]]
+        return argv
+
     async def _run_command(self, args: dict[str, Any]) -> str:
         """Shell 실행 — create_subprocess_exec + shlex.split (셸 인젝션 방지)."""
         if not self.policy.shell_enabled:
@@ -422,8 +479,9 @@ class ToolBox:
         try:
             cwd = self._resolve_shell_cwd()
             proc = await asyncio.create_subprocess_exec(
-                *argv,
+                *self._resolve_argv(argv),
                 cwd=cwd,
+                env=self._shell_env(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

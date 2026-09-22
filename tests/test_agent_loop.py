@@ -337,6 +337,70 @@ async def test_toolbox_rejects_path_outside_allowed_roots(tmp_path):
     assert "outside allowed roots" in payload["error"]
 
 
+async def test_run_command_python_sees_session_packages(tmp_path):
+    """The agent's bare `python` must reach the venv this session runs in.
+
+    Live session 2026-09-22: the agent got the global interpreter instead, so
+    every import failed. It spent nine steps probing the shell, never sent
+    READY:, and stalled P1 at 1/2.
+    """
+    from agent_augury.core.agent.tools import ToolBox
+
+    server = MessageServer()
+    server.register_agent("agent-1")
+    tb = ToolBox(server, allowed_roots=[str(tmp_path)])
+
+    result = await tb.execute(
+        "agent-1",
+        "run_command",
+        {"command": 'python -c "import pytest; print(pytest.__version__)"'},
+    )
+    payload = json.loads(result)
+    assert payload.get("exit_code") == 0, payload
+    assert payload["stdout"].strip()  # importing pytest at all means the venv
+
+
+async def test_run_command_leaves_other_argv0_alone(tmp_path):
+    """Only bare interpreter names are rewritten."""
+    import sys
+
+    from agent_augury.core.agent.tools import ToolBox
+
+    tb = ToolBox(MessageServer(), allowed_roots=[str(tmp_path)])
+    assert tb._resolve_argv(["python", "-V"]) == [sys.executable, "-V"]
+    assert tb._resolve_argv(["git", "status"]) == ["git", "status"]
+    assert tb._resolve_argv([]) == []
+
+
+async def test_toolbox_path_denial_emits_wire_log(tmp_path):
+    """A refused path must reach the human, not only the model.
+
+    Live session 2026-09-22: the sandbox was the Ink cache dir, the agents were
+    refused silently, and they reviewed the cache instead of the user's project.
+    """
+    from agent_augury.core.agent.tools import ToolBox
+
+    server = MessageServer()
+    server.register_agent("agent-1")
+    events: list[dict] = []
+    server.subscribe_events(events.append)
+
+    allowed_dir = tmp_path / "allowed"
+    allowed_dir.mkdir()
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("secret", encoding="utf-8")
+
+    tb = ToolBox(server, allowed_roots=[str(allowed_dir)])
+    await tb.execute("agent-1", "read_file", {"path": str(secret_file)})
+
+    logs = [e for e in events if e.get("type") == "log"]
+    assert len(logs) == 1
+    text = logs[0]["text"]
+    assert "agent-1" in text
+    assert "outside allowed roots" in text
+    assert str(allowed_dir) in text  # the human needs to see WHERE it may read
+
+
 async def test_toolbox_allows_path_within_allowed_roots(tmp_path):
     """ToolBox with allowed_roots permits paths within the root."""
     from agent_augury.core.agent.tools import ToolBox

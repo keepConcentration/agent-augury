@@ -289,18 +289,24 @@ Defaults (override under `tools.approval` in YAML):
 | Class | Tools | Default |
 |-------|--------|---------|
 | `shell` | `run_command` | `dangerous` (Hermes-like: only destructive patterns) |
-| `file_write` | `write_file` / `edit_file` / `append_file` | `off` (`allowed_roots` still applies) |
+| `file_write` | `write_file` / `edit_file` / `append_file` | `dangerous` (paths that arm later execution; `allowed_roots` still applies) |
 | `web` | `web_search` / `fetch_url` | `off` |
 
 ```yaml
 tools:
   approval:
     shell: dangerous        # require | dangerous | off
-    file_write: off         # require | off  (dangerous ≡ require for file_write)
+    file_write: dangerous   # require | dangerous | off
     web: off
     ttl_seconds: 600
     # bypass: true          # tests only — never in production
 ```
+
+`dangerous` for `file_write` gates writes that turn a later innocuous action
+into code execution — `.git/` internals (untracked, so `git diff` never shows
+them), CI configs, `.envrc`/`.env`, shell rc files — and lets ordinary project
+writes through unattended. Use `require` to gate every write.
+
 
 - **`require`**: every call in that class needs Approve/Deny
 - **`dangerous`** (shell): only patterns like `rm -rf /`, `curl|sh`, `dd of=/dev/…`, force-push, etc.

@@ -303,10 +303,20 @@ class ToolBox:
             payload: dict[str, Any] = {"thread_id": tid}
             if preexisting is not None and preexisting == tid:
                 payload["reused"] = True
-                payload["note"] = (
+                note = (
                     f"Thread named {name_arg!r} already exists — reuse this id; "
                     "do not assume a new gate thread was created."
                 )
+                # Reuse no longer joins you (server.create_thread only widens on
+                # bootstrap). Say so here, or the agent burns a step discovering
+                # it from send_message's participant error.
+                if agent_id not in self.server.thread_participants(tid):
+                    note += (
+                        " You are not a participant, so you cannot post to it; "
+                        "ask a participant to include you, or open a differently "
+                        "named thread."
+                    )
+                payload["note"] = note
             return _json(payload)
         if name == "send_message":
             mid = await self.server.send_message(

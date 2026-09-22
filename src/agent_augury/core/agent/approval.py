@@ -62,6 +62,43 @@ def detect_dangerous_shell_command(command: str) -> str | None:
     return None
 
 
+# Writes that arm a later, innocuous action to execute code, or that hold
+# secrets. ``allowed_roots`` already confines writes to the project and ``git
+# diff`` shows the rest — these are the writes git does not show (``.git/``
+# internals are untracked) or that run themselves the next time someone
+# commits, opens a shell, or pushes.
+#
+# ponytail: a hand-kept path list, not a taint analysis. It catches the
+# escalation class; widen it when a real session finds a gap, or set
+# ``approval.file_write: require`` to gate every write.
+_DANGEROUS_FILE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pat, re.IGNORECASE)
+    for pat in (
+        r"(^|/)\.git/",            # hooks + config: untracked, auto-run
+        r"(^|/)\.github/workflows/",
+        r"(^|/)\.gitlab-ci\.ya?ml$",
+        r"(^|/)\.circleci/",
+        r"(^|/)azure-pipelines\.ya?ml$",
+        r"(^|/)Jenkinsfile$",
+        r"(^|/)\.pre-commit-config\.ya?ml$",
+        r"(^|/)\.envrc$",          # direnv executes this on cd
+        r"(^|/)\.env($|\.)",
+        r"(^|/)\.(bashrc|bash_profile|zshrc|profile)$",
+    )
+)
+
+
+def detect_dangerous_file_write(path: str) -> str | None:
+    """Return a short reason if writing *path* arms later execution; else None."""
+    text = (path or "").strip().replace("\\", "/")
+    if not text:
+        return None
+    for pat in _DANGEROUS_FILE_PATTERNS:
+        if pat.search(text):
+            return f"matched dangerous path: {pat.pattern!r}"
+    return None
+
+
 def tool_approval_class(tool: str) -> ApprovalClass | None:
     """Map a tool name to an approval class, or None if ungated."""
     if tool in _SHELL_TOOLS:

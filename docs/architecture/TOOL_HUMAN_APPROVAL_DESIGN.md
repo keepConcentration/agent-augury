@@ -108,7 +108,7 @@ Hermes `smart` LLM 분류·orchestrator `gate.sh` 전면 워커 게이트는 P0�
 tools:
   approval:
     shell: dangerous        # require | dangerous | off  (기본: Hermes-like)
-    file_write: off         # require | off  (dangerous ≡ require; 경로는 allowed_roots)
+    file_write: dangerous   # require | dangerous | off  (경로는 allowed_roots)
     web: off
     bypass: false           # true 또는 --demo → 자동 GRANTED
     ttl_seconds: 600        # pending 만료
@@ -116,14 +116,17 @@ tools:
 
 - 글로벌 `tools.approval` + (선택) 에이전트별 deep-merge는 기존 `ToolPolicy` 병합 패턴을 따른다.
 - CLI `--demo`는 `bypass: true`와 동치로 취급한다.
-- **기본값 (현행):** `shell: dangerous` (파괴적 패턴만 승인), `file_write: off`, `web: off`.
-  엄격 모드는 YAML에서 `shell`/`file_write: require`로 되돌린다.
+- **기본값 (v0.7.5~):** `shell: dangerous`, `file_write: dangerous`, `web: off`.
+  T5(권장 = require)를 그대로 넣으면 에이전트가 파일을 쓸 때마다 카드가 떠서
+  사용자가 통째로 `off` 로 꺼버린다 — 꺼진 기본값은 아무것도 안 막는다. 그래서
+  `file_write` 에도 shell 과 같은 `dangerous` 판정기를 붙였다
+  (`detect_dangerous_file_write`). 엄격 모드는 `require`.
 
 `ToolPolicy` 확장 필드:
 
 ```text
 approval_shell: "require" | "dangerous" | "off"
-approval_file_write: "require" | "off"   # dangerous 허용 시 require와 동일
+approval_file_write: "require" | "dangerous" | "off"
 approval_web: "require" | "off"
 approval_bypass: bool
 approval_ttl_seconds: float
@@ -134,9 +137,16 @@ approval_ttl_seconds: float
 | 클래스 | 도구 | 현행 기본 |
 |--------|------|-----------|
 | `shell` | `run_command` | `dangerous` (패턴 게이트) |
-| `file_write` | `write_file`, `edit_file`, `append_file` | `off` (`allowed_roots` 유지) |
+| `file_write` | `write_file`, `edit_file`, `append_file` | `dangerous` (실행으로 이어지는 경로만; `allowed_roots` 유지) |
 | `web` | `web_search`, `fetch_url` | 기본 off |
 | (비대상) | `create_thread`, `send_message`, `read_resource`, `ask_user`, `read_file`, … | 승인 불필요 |
+
+> 비대상 도구는 승인이 아니라 **참가자 검사**로 막는다. `create_thread` 는 같은
+> 이름의 스레드를 재사용할 때 호출자가 넘긴 참가자를 더해줬는데, 이름은 산문에
+> 실려 다니므로 주입된 텍스트가 에이전트에게 `create_thread(name="gate-review",
+> participants=["me"])` 를 시키면 그대로 합류가 됐다. v0.7.5 부터 참가자 확장은
+> 런타임 부트스트랩(`bootstrap=True`)에서만 일어난다. 에이전트 경로는 id 만 돌려받고
+> 참가자가 아니면 `note` 로 그 사실을 듣는다.
 
 읽기 전용 파일/`read_resource`는 P0 게이트 밖 (기존 `allowed_roots`만).
 
@@ -370,6 +380,7 @@ Core 이벤트 또는 Wire:
 | T3 | Grant 시점에 스냅샷 args로 실행 (모델 재시도 계약 아님) | 2026-09-14 |
 | T4 | P0에 Hermes smart LLM 분류 제외 | 2026-09-14 |
 | T5 | 기본값 권장 = `shell`/`file_write` require (`--demo` bypass) | 2026-09-14 |
+| T6 | T5 를 `file_write: dangerous` 로 착지 — `require` 는 카드가 너무 잦아 사용자가 `off` 로 꺼버린다. 경로 판정기(`detect_dangerous_file_write`)로 `.git/`·CI·`.envrc`/`.env`·셸 rc 만 게이트 | 2026-09-22 |
 
 ---
 

@@ -248,6 +248,11 @@ class MessageServer:
         for mid in kept:
             q.put_nowait(mid)
 
+    def thread_participants(self, thread_id: str) -> list[str]:
+        """Participants of *thread_id*, or empty when there is no such thread."""
+        thread = self._threads.get(thread_id)
+        return list(thread["participants"]) if thread else []
+
     def set_thread_participants(self, thread_id: str, agent_ids: list[str]) -> None:
         """Replace thread participants (grow or shrink). Memory sync; DB async.
 
@@ -304,6 +309,13 @@ class MessageServer:
                 existing = set(thread["participants"])
                 new = set(participants)
                 added = new - existing
+                # Only the runtime's own bootstrap may widen an existing thread.
+                # Knowing the *name* must not be enough to join: names travel in
+                # prose, so ingested text can talk an agent into
+                # ``create_thread(name="gate-review", participants=["me"])`` and
+                # the ``send_message`` participant check below would then pass.
+                if added and not bootstrap:
+                    added = set()
                 if added:
                     # Register new participants FIRST (inbox) — otherwise
                     # a later send to them would KeyError on the missing inbox.

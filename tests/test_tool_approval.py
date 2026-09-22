@@ -11,6 +11,7 @@ from agent_augury.core.agent.approval import (
     ApprovalStore,
     args_digest,
     denied_result,
+    detect_dangerous_file_write,
     detect_dangerous_shell_command,
     gate_decision,
     pending_result,
@@ -44,12 +45,14 @@ def test_args_digest_stable_and_path_normalize():
 def test_policy_defaults_hermes_like():
     p = ToolPolicy.from_config({})
     assert p.approval_shell == "dangerous"
-    assert p.approval_file_write == "off"
+    assert p.approval_file_write == "dangerous"
     assert p.approval_web == "off"
     assert p.approval_bypass is False
     assert not p.requires_approval("run_command", args={"command": "ls -la"})
     assert p.requires_approval("run_command", args={"command": "rm -rf /tmp/x"})
-    assert not p.requires_approval("write_file")
+    # file_write: ordinary project writes stay unattended, escalation paths gate.
+    assert not p.requires_approval("write_file", args={"path": "src/app.py"})
+    assert p.requires_approval("write_file", args={"path": ".git/hooks/pre-commit"})
     assert not p.requires_approval("web_search")
     assert not p.requires_approval("send_message")
 
@@ -404,3 +407,38 @@ async def test_expire_approvals_pushes_denied_radio():
     ids = session.expire_approvals(now=200.0)
     assert rec.approval_id in ids
     assert session.server.inbox_size("a1") == 1
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".git/hooks/pre-commit",
+        "sub/.git/config",
+        ".github/workflows/ci.yml",
+        ".gitlab-ci.yml",
+        ".circleci/config.yml",
+        "Jenkinsfile",
+        ".pre-commit-config.yaml",
+        ".envrc",
+        ".env",
+        ".env.production",
+        "home/.bashrc",
+        r".git\hooks\pre-commit",  # Windows separators
+    ],
+)
+def test_detect_dangerous_file_write_flags_execution_paths(path):
+    assert detect_dangerous_file_write(path) is not None
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["src/app.py", "README.md", "docs/.gitignore", "tests/test_env.py", "", "environment.yml"],
+)
+def test_detect_dangerous_file_write_leaves_ordinary_writes_alone(path):
+    assert detect_dangerous_file_write(path) is None
+
+
+def test_file_write_require_still_gates_everything():
+    """``dangerous`` is the new default; ``require`` must stay the strict mode."""
+    p = ToolPolicy.from_config({"approval": {"file_write": "require"}})
+    assert p.requires_approval("write_file", args={"path": "src/app.py"})

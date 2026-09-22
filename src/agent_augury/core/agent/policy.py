@@ -71,7 +71,7 @@ class ToolPolicy:
     edit_enabled: bool = True  # edit_file / append_file
     # approval — Hermes-like defaults: shell only when dangerous; writes rely on allowed_roots
     approval_shell: str = "dangerous"  # require | dangerous | off
-    approval_file_write: str = "off"
+    approval_file_write: str = "dangerous"
     approval_web: str = "off"
     approval_bypass: bool = False
     approval_ttl_seconds: float = 600.0
@@ -116,7 +116,7 @@ class ToolPolicy:
             allowed_roots=roots,
             edit_enabled=_as_bool(file_cfg.get("edit_enabled"), True),
             approval_shell=_as_approval_mode(approval.get("shell"), "dangerous"),
-            approval_file_write=_as_approval_mode(approval.get("file_write"), "off"),
+            approval_file_write=_as_approval_mode(approval.get("file_write"), "dangerous"),
             approval_web=_as_approval_mode(approval.get("web"), "off"),
             approval_bypass=_as_bool(approval.get("bypass"), False),
             approval_ttl_seconds=_as_float(approval.get("ttl_seconds"), 600.0),
@@ -212,13 +212,20 @@ class ToolPolicy:
         if mode == "require":
             return True
         if mode == "dangerous":
-            from .approval import detect_dangerous_shell_command, tool_approval_class
+            from .approval import (
+                detect_dangerous_file_write,
+                detect_dangerous_shell_command,
+                tool_approval_class,
+            )
 
             kind = tool_approval_class(tool)
             if kind == "shell":
                 cmd = str((args or {}).get("command") or "")
                 return detect_dangerous_shell_command(cmd) is not None
-            # file_write/web: ``dangerous`` treated as ``require``
+            if kind == "file_write":
+                path = str((args or {}).get("path") or "")
+                return detect_dangerous_file_write(path) is not None
+            # web: ``dangerous`` treated as ``require``
             return True
         return False
 

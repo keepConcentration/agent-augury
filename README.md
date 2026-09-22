@@ -195,6 +195,9 @@ pip install agent-augury
    - `AUGURY_INK_DIR` — use a specific Ink front directory (e.g. a git checkout of `fronts/ink`)
    - `AUGURY_PROJECT_ROOT` — repo root when developing from a clone
    - `AUGURY_CACHE_DIR` — base directory for the Ink cache (default: platform cache)
+   - `AUGURY_FILE_ROOT` — directory the agents' file tools may read/write
+     (default: the directory you launched from). The session prints the
+     effective root on startup; a path outside it is refused and logged.
 
 Developers working from this repository can use an editable install (`uv sync` / `pip install -e .`); the checkout’s `fronts/ink` is picked up automatically.
 

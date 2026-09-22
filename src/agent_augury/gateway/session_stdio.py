@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import threading
 from pathlib import Path
@@ -30,8 +31,30 @@ from .stdio import JsonlStdioBridge
 from .turn_done import publish_turn_done
 from .types import WireCommand, WireResult, make_event
 
-# Checkout root when known; otherwise CWD (pip install has no repo tree).
-PROJECT_ROOT = resolve_project_root() or Path.cwd()
+FILE_ROOT_ENV = "AUGURY_FILE_ROOT"
+
+
+def _resolve_file_root() -> tuple[Path, str]:
+    """Directory the file tools are confined to, plus where it came from.
+
+    Our CWD is useless here: Ink spawns this process with ``cwd`` derived from
+    the Ink front's own location, which for a wheel install is the user cache —
+    not the directory the user typed ``agent-augury`` in. So the CLI passes its
+    launch directory down in ``AUGURY_FILE_ROOT``; without it the sandbox lands
+    on the cache and every read of the user's real project is refused.
+    """
+    raw = os.environ.get(FILE_ROOT_ENV, "").strip()
+    if raw:
+        path = Path(raw).expanduser().resolve()
+        if path.is_dir():
+            return path, "launch directory"
+    root = resolve_project_root()
+    if root is not None:
+        return root, "project checkout"
+    return Path.cwd(), "CWD guess"
+
+
+PROJECT_ROOT, FILE_ROOT_SOURCE = _resolve_file_root()
 
 
 class _WireAuthNoticeRelay:
@@ -181,6 +204,7 @@ class SessionStdioRunner:
                 agents=agent_ids,
             )
         )
+        self._announce_file_root()
         if self.session.task:
             self.gateway.publish(
                 make_event(
@@ -264,6 +288,33 @@ class SessionStdioRunner:
                 self.stdio.emit_result(err)
             if self._quit.is_set():
                 break
+
+    def _announce_file_root(self) -> None:
+        """Tell the human which directory the file tools are confined to.
+
+        Published after ``session.started`` — that event is the first line
+        on the wire and surfaces rely on it.
+        """
+        import agent_augury
+
+        # Version + package path make this line a one-shot diagnostic: a stale
+        # gateway child (wrong interpreter, non-editable install) shows up here
+        # instead of as an unexplained sandbox.
+        text = (
+            f"file tools sandboxed to {PROJECT_ROOT} ({FILE_ROOT_SOURCE}) · "
+            f"agent_augury {agent_augury.__version__} from "
+            f"{Path(agent_augury.__file__).parent}"
+        )
+        if FILE_ROOT_SOURCE == "CWD guess":
+            text += (
+                " — this is just where the gateway happens to run. Set "
+                f"{FILE_ROOT_ENV} (or tools.file.allowed_roots) to the project "
+                "you actually want read."
+            )
+        try:
+            self.gateway.publish(make_event("log", text=text))
+        except Exception:  # noqa: BLE001, S110 — never fail boot on Wire
+            pass
 
     async def run(self) -> int:
         self._loop = asyncio.get_running_loop()

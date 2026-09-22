@@ -110,6 +110,48 @@ def test_session_stdio_auto_start_demo_then_quit():
     assert proc.wait(timeout=10) == 0
 
 
+def test_file_root_prefers_launch_dir_over_cwd(tmp_path, monkeypatch):
+    """Wheel install: the gateway's own cwd is the Ink cache, so the sandbox
+    must come from the CLI's launch dir (live session 2026-09-22)."""
+    from agent_augury.gateway import session_stdio as m
+
+    launch = tmp_path / "my-project"
+    launch.mkdir()
+    cache = tmp_path / "ink-cache"
+    cache.mkdir()
+    monkeypatch.chdir(cache)
+    monkeypatch.setattr(m, "resolve_project_root", lambda: None)
+
+    monkeypatch.setenv(m.FILE_ROOT_ENV, str(launch))
+    assert m._resolve_file_root() == (launch.resolve(), "launch directory")
+
+    monkeypatch.delenv(m.FILE_ROOT_ENV)
+    root, source = m._resolve_file_root()
+    assert source == "CWD guess"
+    assert root == cache.resolve()
+
+
+def test_cli_passes_launch_dir_to_gateway(tmp_path, monkeypatch):
+    """cli.py must hand its cwd down; without it the child cannot know it."""
+    from pathlib import Path
+
+    from agent_augury import cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "ensure_ink_front", lambda: (tmp_path, None))
+    monkeypatch.setattr(cli, "_ink_tsx_command", lambda d: ["true"])
+    monkeypatch.setattr(cli, "_clear_tty", lambda: None)
+    captured: dict = {}
+
+    def fake_call(cmd, cwd=None, env=None):
+        captured.update(env or {})
+        return 0
+
+    monkeypatch.setattr("subprocess.call", fake_call)
+    cli._run_ink_surface(mode="hello")
+    assert captured["AUGURY_FILE_ROOT"] == str(Path(tmp_path).resolve())
+
+
 def test_cli_config_launches_ink_session():
     from agent_augury.cli import main
 

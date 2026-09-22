@@ -385,6 +385,10 @@ def _run_ink_surface(
     root = resolve_project_root()
     if root is not None:
         env.setdefault("AUGURY_PROJECT_ROOT", str(root))
+    # The Gateway child's cwd comes from the Ink front's own location (the user
+    # cache for a wheel install), so it cannot see where the user launched us.
+    # Hand it our cwd — that is the project they mean by a relative path.
+    env.setdefault("AUGURY_FILE_ROOT", str(Path.cwd()))
     env["AUGURY_GATEWAY_MODE"] = mode
     if mode == "session":
         if not config:

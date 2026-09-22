@@ -169,6 +169,24 @@ def test_format_wire_approval_request_clips_long_value():
     assert "(+200 chars)" in text      # and the clip is explicit
 
 
+def test_format_wire_approval_request_neutralises_control_chars():
+    """Loopjacking, painting half: a value must not be able to repaint the
+    card or forge an extra ``key: value`` row."""
+    text = format_wire_for_bot(
+        make_event(
+            "approval.request",
+            approval_id="ap-4",
+            agent_id="coder",
+            tool="run_command",
+            args_preview={"command": "ls\x1b[2Kcommand: rm -rf /"},
+        )
+    )
+    assert text is not None
+    assert "\x1b" not in text
+    # The forged row is inert: it stays on the one real "command:" line.
+    assert sum(1 for ln in text.splitlines() if ln.startswith("command:")) == 1
+
+
 def test_session_attaches_mirror_to_gateway(tmp_path, monkeypatch):
     """M4: mirror is a Gateway observe surface, not server.subscribe."""
     import yaml

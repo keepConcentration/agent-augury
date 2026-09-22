@@ -105,6 +105,45 @@ function short(text: string, max = 60): string {
  * One-line gate summary for the status bar: `P2_SPLIT · plan 2/3 · pending @a3`.
  * Returns null when the event carries no gate to show.
  */
+const APPROVAL_VALUE_MAX = 300;
+
+// Approval args come straight from the model and Ink prints them verbatim.
+// A raw ESC repaints the terminal and a raw newline forges another
+// "key: value" row — either one lets the real args hide behind a lie. This is
+// the painting half of the same Loopjacking representation attack.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
+
+// Loopjacking (arXiv:2609.21081) representation variant: a card showing only
+// command/path hides the rest of what the approval digest binds — e.g.
+// write_file's content. Show every field; clip long values with a marker.
+export function previewApprovalArgs(args?: Record<string, unknown>): string {
+  if (!args || typeof args !== "object") {
+    return "";
+  }
+  return Object.keys(args)
+    .sort()
+    .map((key) => {
+      const value = args[key];
+      let text: string;
+      if (typeof value === "string") {
+        text = value;
+      } else {
+        try {
+          text = JSON.stringify(value) ?? String(value);
+        } catch {
+          text = String(value);
+        }
+      }
+      text = text.replace(CONTROL_CHARS, "·");
+      if (text.length > APPROVAL_VALUE_MAX) {
+        const hidden = text.length - APPROVAL_VALUE_MAX;
+        text = `${text.slice(0, APPROVAL_VALUE_MAX)}… (+${hidden} chars)`;
+      }
+      return `${key}: ${text}`;
+    })
+    .join("\n");
+}
+
 export function formatGate(event: WireMessage): string | null {
   if (event.type !== "session.gate") return null;
   const phase = String(event.phase ?? "?");

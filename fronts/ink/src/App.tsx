@@ -1,10 +1,16 @@
 import React, {useEffect, useRef, useState} from "react";
 import {Box, Text, Static, useApp, useInput} from "ink";
 import TextInput from "ink-text-input";
-import {GatewayChild} from "./gateway.js";
+import {GatewayChild, debugLogPath} from "./gateway.js";
 import Markdown from "./markdown.js";
 import {parseHumanMentions} from "./mentions.js";
-import {formatEvent, formatGate, makeCommand, type WireMessage} from "./wire.js";
+import {
+  formatEvent,
+  formatGate,
+  makeCommand,
+  previewApprovalArgs,
+  type WireMessage,
+} from "./wire.js";
 
 type LogItem = {
   id: number;
@@ -29,38 +35,6 @@ type PendingApproval = {
   argsPreview?: Record<string, unknown>;
   ttlSeconds?: number;
 };
-
-const APPROVAL_VALUE_MAX = 300;
-
-// Loopjacking (arXiv:2609.21081) representation variant: a card showing only
-// command/path hides the rest of what the approval digest binds — e.g.
-// write_file's content. Show every field; clip long values with a marker.
-function previewApprovalArgs(args?: Record<string, unknown>): string {
-  if (!args || typeof args !== "object") {
-    return "";
-  }
-  return Object.keys(args)
-    .sort()
-    .map((key) => {
-      const value = args[key];
-      let text: string;
-      if (typeof value === "string") {
-        text = value;
-      } else {
-        try {
-          text = JSON.stringify(value) ?? String(value);
-        } catch {
-          text = String(value);
-        }
-      }
-      if (text.length > APPROVAL_VALUE_MAX) {
-        const hidden = text.length - APPROVAL_VALUE_MAX;
-        text = `${text.slice(0, APPROVAL_VALUE_MAX)}… (+${hidden} chars)`;
-      }
-      return `${key}: ${text}`;
-    })
-    .join("\n");
-}
 
 function parseApprovalDecision(line: string): "granted" | "denied" | null {
   const t = line.trim().toLowerCase();
@@ -209,6 +183,10 @@ export default function App() {
       },
     });
     gwRef.current = child;
+    const debugPath = debugLogPath();
+    if (debugPath) {
+      pushLog(`wire trace -> ${debugPath}`, false, true);
+    }
     setStatus("connected");
     return () => child.kill();
   }, [exit]);

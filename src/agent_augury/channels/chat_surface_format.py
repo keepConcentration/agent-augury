@@ -11,6 +11,7 @@ redundant ``agent_id`` prefixes; prose is sent as the body only.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from agent_augury.gateway.types import WireEvent
@@ -38,6 +39,11 @@ def _label(name: str, *, recipient_agent_id: str | None) -> bool:
 # Per-value clip inside an approval card. Every key is still listed.
 _APPROVAL_VALUE_MAX = 300
 
+# Approval args come straight from the model. A raw ESC repaints a terminal and
+# a raw newline forges another "key: value" row — either one lets the real args
+# hide behind a lie. Same Loopjacking representation attack, painting half.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
 
 def format_approval_args(args: dict[str, Any]) -> str:
     """Render every arg the approval digest binds, one ``key: value`` per line.
@@ -45,7 +51,8 @@ def format_approval_args(args: dict[str, Any]) -> str:
     Loopjacking (arXiv:2609.21081) representation variant: a card showing only
     ``command``/``path`` hides the rest of what ``args_digest()`` binds — e.g.
     ``write_file``'s ``content``. The human must see every field, so long values
-    are clipped with an explicit "+N chars" marker rather than dropped.
+    are clipped with an explicit "+N chars" marker rather than dropped, and
+    control characters are neutralised so a value cannot forge extra rows.
     """
     lines: list[str] = []
     for key in sorted(args):
@@ -54,6 +61,7 @@ def format_approval_args(args: dict[str, Any]) -> str:
             text = value
         else:
             text = json.dumps(value, ensure_ascii=False, default=str)
+        text = _CONTROL_CHARS.sub("·", text)
         if len(text) > _APPROVAL_VALUE_MAX:
             hidden = len(text) - _APPROVAL_VALUE_MAX
             text = f"{text[:_APPROVAL_VALUE_MAX]}… (+{hidden} chars)"

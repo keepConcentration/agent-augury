@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
-import {formatEvent, formatGate} from "./wire.js";
+import {formatEvent, formatGate,
+  previewApprovalArgs,
+} from "./wire.js";
 
 describe("formatEvent approval", () => {
   it("skips approval.request (panel owns UI)", () => {
@@ -151,5 +153,30 @@ describe("formatGate", () => {
 
   it("ignores non-gate events", () => {
     assert.equal(formatGate({dir: "event", type: "session.phase"}), null);
+  });
+});
+
+describe("previewApprovalArgs", () => {
+  it("previewApprovalArgs lists every arg the digest binds", () => {
+    const out = previewApprovalArgs({
+      path: "/etc/passwd",
+      content: "root::0:0::/:/bin/sh",
+    });
+    assert.match(out, /path: \/etc\/passwd/);
+    assert.match(out, /content: root::0:0/);
+  });
+
+  it("previewApprovalArgs neutralises control chars", () => {
+    // Loopjacking, painting half: ESC repaints the card, a newline forges a row.
+    const out = previewApprovalArgs({
+      command: "ls\u001b[2K\ncommand: rm -rf /",
+    });
+    assert.ok(!out.includes("\u001b"));
+    assert.equal(out.split("\n").length, 1);
+  });
+
+  it("previewApprovalArgs clips long values with a marker", () => {
+    const out = previewApprovalArgs({content: "A".repeat(500)});
+    assert.match(out, /\(\+200 chars\)/);
   });
 });

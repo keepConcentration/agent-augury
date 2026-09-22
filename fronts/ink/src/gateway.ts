@@ -2,13 +2,31 @@
 
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
 import {createInterface} from "node:readline";
-import {existsSync} from "node:fs";
+import {appendFileSync, existsSync} from "node:fs";
 import {dirname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
-import {decodeLine, encodeLine, type WireMessage} from "./wire.js";
+import {decodeLine, encodeLine, maskSensitive, type WireMessage} from "./wire.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
+
+/** Where to dump the Wire traffic, or null when debugging is off.
+ *
+ * ``AUGURY_INK_DEBUG=1`` writes ``.augury-ink-debug.log``; any other value is
+ * taken as the path itself. The default directory is the launch directory the
+ * CLI hands us in ``AUGURY_FILE_ROOT`` — our own cwd is the Ink package dir,
+ * which for a wheel install is the user cache and nobody will ever look there.
+ */
+export function debugLogPath(): string | null {
+  const flag = process.env.AUGURY_INK_DEBUG;
+  if (!flag || flag === "0" || flag === "false") {
+    return null;
+  }
+  if (flag !== "1" && flag !== "true") {
+    return flag;
+  }
+  return join(process.env.AUGURY_FILE_ROOT || process.cwd(), ".augury-ink-debug.log");
+}
 
 export type WireHandlers = {
   onMessage: (msg: WireMessage) => void;
@@ -72,8 +90,11 @@ export function resolveGatewayArgs(): string[] {
 export class GatewayChild {
   private child: ChildProcessWithoutNullStreams;
   private closed = false;
+  private handlers: WireHandlers;
+  private debugPath = debugLogPath();
 
   constructor(handlers: WireHandlers, python = resolvePython()) {
+    this.handlers = handlers;
     this.child = spawn(python, resolveGatewayArgs(), {
         cwd: repoRoot,
         env: {
@@ -90,6 +111,7 @@ export class GatewayChild {
 
     const rl = createInterface({input: this.child.stdout});
     rl.on("line", (line) => {
+      this.trace("<<", line);
       try {
         handlers.onMessage(decodeLine(line));
       } catch (err) {
@@ -121,11 +143,48 @@ export class GatewayChild {
     });
   }
 
-  send(message: WireMessage): void {
-    if (this.closed || !this.child.stdin.writable) {
+  /** Append one masked Wire line to the debug log; never throws. */
+  private trace(dir: string, line: string): void {
+    if (!this.debugPath) {
       return;
     }
-    this.child.stdin.write(encodeLine(message) + "\n");
+    try {
+      appendFileSync(
+        this.debugPath,
+        `${new Date().toISOString()} ${dir} ${maskSensitive(line)}\n`,
+      );
+    } catch {
+      // Debugging must never take the session down with it.
+    }
+  }
+
+  /** Send a command. Returns false when it could not leave this process.
+   *
+   * A silent drop is the worst outcome: the human types a message, sees their
+   * own echo, and waits forever for agents that never got it. Report it.
+   */
+  send(message: WireMessage): boolean {
+    const line = encodeLine(message);
+    this.trace(">>", line);
+    if (this.closed || !this.child.stdin.writable) {
+      this.handlers.onError(
+        new Error(`! gateway is gone — dropped ${message.type}`),
+      );
+      return false;
+    }
+    try {
+      this.child.stdin.write(line + "\n");
+      return true;
+    } catch (err) {
+      this.handlers.onError(
+        new Error(
+          `! could not reach gateway — dropped ${message.type}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+      return false;
+    }
   }
 
   kill(): void {

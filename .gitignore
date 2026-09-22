@@ -47,3 +47,6 @@ node_modules/
 /.omc/
 /.worktrees/
 /scripts/
+
+# AUGURY_INK_DEBUG=1 wire trace
+.augury-ink-debug.log

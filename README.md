@@ -198,6 +198,9 @@ pip install agent-augury
    - `AUGURY_FILE_ROOT` — directory the agents' file tools may read/write
      (default: the directory you launched from). The session prints the
      effective root on startup; a path outside it is refused and logged.
+   - `AUGURY_INK_DEBUG` — `1` dumps every Wire line (both directions, sensitive
+     values masked) to `.augury-ink-debug.log` under `AUGURY_FILE_ROOT`; set it
+     to a path to choose the file. Off by default.
 
 Developers working from this repository can use an editable install (`uv sync` / `pip install -e .`); the checkout’s `fronts/ink` is picked up automatically.
 

@@ -4,6 +4,7 @@ import TextInput from "ink-text-input";
 import {GatewayChild, debugLogPath} from "./gateway.js";
 import Markdown from "./markdown.js";
 import {parseHumanMentions} from "./mentions.js";
+import {emptyHistory, recall, remember} from "./history.js";
 import {
   formatEvent,
   formatGate,
@@ -59,6 +60,10 @@ export default function App() {
   );
   const [agents, setAgents] = useState<string[]>([]);
   const [gate, setGate] = useState<string | null>(null);
+  const [history, setHistory] = useState(emptyHistory);
+  // Bumping this remounts TextInput, which parks its cursor at the end of the
+  // recalled line. Its own clamp only fires when the value gets shorter.
+  const [inputKey, setInputKey] = useState(0);
   const gwRef = useRef<GatewayChild | null>(null);
   const lastCtrlC = useRef(0);
 
@@ -192,6 +197,15 @@ export default function App() {
   }, [exit]);
 
   useInput((input, key) => {
+    if (key.upArrow || key.downArrow) {
+      const moved = recall(history, key.upArrow ? -1 : 1, value);
+      if (moved) {
+        setHistory(moved.history);
+        setValue(moved.value);
+        setInputKey((k) => k + 1);
+      }
+      return;
+    }
     if (!(key.ctrl && input === "c")) {
       return;
     }
@@ -221,6 +235,7 @@ export default function App() {
   const onSubmit = (line: string) => {
     const trimmed = line.trim();
     setValue("");
+    setHistory((h) => remember(h, line));
     const gw = gwRef.current;
     if (!trimmed || !gw) {
       return;
@@ -356,7 +371,12 @@ export default function App() {
       <Box marginTop={gate ? 0 : 1}>
         <Text dimColor>[{status}] </Text>
         <Text color="cyan">ink&gt; </Text>
-        <TextInput value={value} onChange={setValue} onSubmit={onSubmit} />
+        <TextInput
+          key={inputKey}
+          value={value}
+          onChange={setValue}
+          onSubmit={onSubmit}
+        />
       </Box>
     </Box>
   );

@@ -53,6 +53,8 @@ Env (set by CLI, or manually for `npm start`):
 - `@agent-id …` → directed `human.send` / `human.answer` (`mentions`); no `@` → broadcast
 - `/skip` → dismiss question
 - Ctrl+C → `session.interrupt` (first); again within 1s → `session.quit`
+- ↑ / ↓ → walk the input history; ↓ past the newest entry restores the
+  half-typed line you had before you started browsing
 - `/quit` → `session.quit`
 
 Design: `docs/architecture/MULTI_FRONT_DESIGN.md` (M2/M3/M7).

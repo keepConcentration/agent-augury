@@ -497,6 +497,9 @@ async def test_roster_survives_resume(tmp_path: Path):
     protocol.set_roster(["a1", "a4"])
     snap = protocol.snapshot()
     assert snap["participants"] == ["a1", "a4"]
+    # A resume follows a shutdown. Without this the test raced the background
+    # participant write and lost on slow runners (CI macos-latest/py3.11).
+    await server.close()
 
     server2 = MessageServer(db_path=str(tmp_path / "msg.db"))
     await server2.load()
@@ -518,6 +521,28 @@ async def test_roster_survives_resume(tmp_path: Path):
     gate = protocol2.gate_for(P2_SPLIT)
     assert gate is not None
     assert list(gate.participants) == ["a1", "a4"]
+
+
+@pytest.mark.asyncio
+async def test_roster_change_survives_close(tmp_path: Path):
+    """``close()`` must flush the background participant write.
+
+    ``set_thread_participants`` persists via an un-awaited task. Closing
+    without draining let the task wake to a shut connection and die unobserved,
+    so a roster change made just before shutdown silently reverted to the
+    bootstrap roster on the next resume.
+    """
+    db = str(tmp_path / "msg.db")
+    server = MessageServer(db_path=db)
+    for a in POOL:
+        server.register_agent(a)
+    tid = await server.create_thread("plan", participants=["a1", "a2"])
+    server.set_thread_participants(tid, ["a1", "a4"])
+    await server.close()
+
+    resumed = MessageServer(db_path=db)
+    await resumed.load()
+    assert resumed.get_thread(tid)["participants"] == ["a1", "a4"]
 
 
 @pytest.mark.asyncio

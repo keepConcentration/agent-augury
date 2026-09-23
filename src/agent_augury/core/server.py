@@ -77,6 +77,10 @@ class MessageServer:
         # Persistence state (D5)
         self._db_path = db_path
         self._db: aiosqlite.Connection | None = None
+        # Background persists, held until done. asyncio keeps only a weak
+        # reference to a task, so an unheld one can be garbage-collected
+        # mid-write; and without the set ``close()`` has nothing to wait on.
+        self._pending_writes: set[asyncio.Task[None]] = set()
 
     # -- persistence ---------------------------------------------------------
 
@@ -179,7 +183,15 @@ class MessageServer:
         await self._db.commit()
 
     async def close(self) -> None:
-        """Close the DB connection (if any). Required for clean shutdown."""
+        """Flush background writes, then close the DB. Required for shutdown.
+
+        ``set_thread_participants`` persists in the background, so closing
+        without draining loses the write: the task wakes to a shut connection
+        and dies unobserved, and the next resume reads the pre-change row. A
+        roster change made just before shutdown would silently revert.
+        """
+        if self._pending_writes:
+            await asyncio.gather(*tuple(self._pending_writes), return_exceptions=True)
         if self._db is not None:
             await self._db.close()
             self._db = None
@@ -283,7 +295,11 @@ class MessageServer:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(self._persist_thread_safe(thread_id, name, participants))
+        task = loop.create_task(
+            self._persist_thread_safe(thread_id, name, participants)
+        )
+        self._pending_writes.add(task)
+        task.add_done_callback(self._pending_writes.discard)
 
     async def _persist_thread_safe(
         self, thread_id: str, name: str, participants: list[str]

@@ -65,6 +65,30 @@ async def test_create_thread_reuse_expands_participants_and_emits_event():
     assert ct_events[0]["participants"] == ["agent-1", "agent-2", "agent-3"]
 
 
+async def test_message_event_precedes_gate_subscribers():
+    """The message must reach surfaces before anything it triggers.
+
+    A gate subscriber can open a gate and advance the phase on this very call
+    stack, publishing ``session.phase``. Emitting the message afterwards put
+    every ``[phase]`` line ABOVE the message that caused it, so reading a
+    session log showed cause and effect inverted (observed live 2026-09-23:
+    four transitions, each printed one message early).
+    """
+    server = MessageServer()
+    server.register_agent("agent-1")
+    server.register_agent("agent-2")
+    tid = await server.create_thread("plan", participants=["agent-1", "agent-2"])
+
+    seen: list[str] = []
+    server.subscribe_events(lambda e: seen.append(e["type"]))
+    # Stand-in for a consensus gate: reacts to the message by emitting.
+    server.subscribe(lambda _m: server._emit_event({"type": "session.phase"}))
+
+    await server.send_message(tid, author="agent-1", content="PROPOSE: split")
+
+    assert seen == ["send_message", "session.phase"]
+
+
 async def test_create_thread_reuse_does_not_self_join_without_bootstrap():
     """Knowing a thread *name* must not be enough to join it.
 

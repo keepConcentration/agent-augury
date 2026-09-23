@@ -431,9 +431,11 @@ class MessageServer:
         for target in targets:
             self._inboxes[target].put_nowait(message["message_id"])
 
-        for subscriber in self._subscribers:
-            subscriber(message)
-
+        # Surfaces first, then the subscribers that act on the message.
+        # A gate subscriber can open a gate and advance the phase, which
+        # publishes ``session.phase`` on the same call stack — emitting after
+        # them printed every transition ABOVE the message that caused it, so
+        # a read of the log had the cause and effect inverted.
         self._emit_event({
             "type": "send_message",
             "message_id": message["message_id"],
@@ -444,6 +446,9 @@ class MessageServer:
             "delivered_to": targets,
             "timestamp": int(time.time()),
         })
+
+        for subscriber in self._subscribers:
+            subscriber(message)
         return message["message_id"]
 
     async def human_send(
@@ -501,9 +506,7 @@ class MessageServer:
         for target in targets:
             self._inboxes[target].put_nowait(message["message_id"])
 
-        for subscriber in self._subscribers:
-            subscriber(message)
-
+        # Surfaces first — same ordering as ``send_message`` above.
         event: dict[str, Any] = {
             "type": "send_message",
             "message_id": message["message_id"],
@@ -517,6 +520,9 @@ class MessageServer:
         if source:
             event["source"] = dict(source)
         self._emit_event(event)
+
+        for subscriber in self._subscribers:
+            subscriber(message)
         return message["message_id"]
 
     def inject_agent_notice(

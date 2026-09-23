@@ -789,6 +789,9 @@ class Session:
             self.server.restore_inbox_ids(boot.inbox)
         if boot.meta:
             self._checkpoint_created_at = boot.meta.get("created_at")
+            # Config ``task`` is a default; the checkpoint holds what was
+            # actually asked, so it wins on resume.
+            self.task = boot.meta.get("task") or self.task
 
         if getattr(boot, "approvals_corrupt", False):
             try:
@@ -994,6 +997,7 @@ class Session:
                 approvals=approvals,
                 compactions=compactions,
                 pending_approvals=len(approvals),
+                task=self.task,
             )
             write_latest(
                 self._checkpoint_store.session_dir.parent,
@@ -1207,6 +1211,14 @@ class Session:
         # Broadcast the initial task to ALL agents (not just agents[0]), so
         # every worker gets the same user prompt and acts on it per its role.
         user_text = initial_prompt or self.task or ""
+        # Keep it: P2 must split the whole request and P5 must check the draft
+        # against it. A follow-up turn replaces it; a bare resume keeps it.
+        if user_text:
+            self.task = user_text
+        # Set for every agent, not only when a prompt arrived: a bare resume
+        # keeps working on the request the checkpoint carried.
+        for agent in self.agents:
+            agent.task = self.task
 
         # FOLLOWUP_TURN_PROTOCOL_DESIGN: a new question on a finished protocol
         # opens a new `light` round (P1 -> P5). Without it the follow-up answer

@@ -182,6 +182,8 @@ class AgentLoop:
         self.gate_open: bool = True
         self.gate_thread_id: str | None = None
         self.gate_thread_name: str | None = None
+        # What the human asked for this turn (Session injects it each step).
+        self.task: str | None = None
         # Chatter reduction: live views injected by Session each iteration.
         # Sets (never None) so ``in`` is always safe.
         self.gate_approvals: AbstractSet[str] = frozenset()
@@ -262,6 +264,7 @@ class AgentLoop:
                 submitter_id=self.submitter_id,
                 session_threads=threads or None,
                 ready_thread_id=ready_tid,
+                task=self.task,
             )
 
     async def step(self) -> StepResult:

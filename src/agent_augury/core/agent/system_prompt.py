@@ -237,6 +237,41 @@ def format_session_threads_block(
     return "\n".join(lines) + "\n"
 
 
+# The request is re-stated in full to the agent's conversation at turn start,
+# so the prompt copy only has to be long enough to check a split/draft against.
+_TASK_ECHO_MAX = 1200
+
+# Phases where drifting off the request is unrecoverable: P2 fixes what gets
+# built, P5 declares it done. P1/P3/P4 inherit the drift rather than cause it.
+_TASK_REMINDERS = {
+    "P2_SPLIT": (
+        "- Your split must cover the WHOLE request below. Every deliverable it "
+        "names needs an `ASSIGN` line — an unassigned one never gets built.\n"
+        "  Before you `PROPOSE:`, list the request's items and check each has "
+        "an owner."
+    ),
+    "P5_SUBMIT": (
+        "- Check the draft against the request below before you post `FINAL:`. "
+        "Answering a different question well is still a miss: if an item is "
+        "unaddressed, that is a `REJECT:`, not a `FINAL:`."
+    ),
+}
+
+
+def _task_block(phase: str, task: str | None) -> str:
+    """Reminder + the human's own words, for phases that can lose the task."""
+    reminder = _TASK_REMINDERS.get(phase)
+    text = (task or "").strip()
+    if not reminder or not text:
+        return ""
+    if len(text) > _TASK_ECHO_MAX:
+        text = text[:_TASK_ECHO_MAX] + "…"
+    return (
+        f"\n{reminder}\n\n  What the human asked for:"
+        f"\n  ---\n{text}\n  ---"
+    )
+
+
 def _phase_instructions_with_gate(
     phase: str,
     *,
@@ -246,6 +281,7 @@ def _phase_instructions_with_gate(
     agent_id: str = "",
     assignment: str | None = None,
     submitter_id: str | None = None,
+    task: str | None = None,
 ) -> str:
     """Phase block plus concrete gate thread id when a consensus gate is bound."""
     base = _PHASE_INSTRUCTIONS.get(phase, "")
@@ -261,6 +297,7 @@ def _phase_instructions_with_gate(
         base = base.replace("{submitter_line}", line)
     if assignment:
         base = base + f"\n- Your assigned share (agreed in P2): {assignment}"
+    base = base + _task_block(phase, task)
     if not gate_thread_id:
         return base
     name = gate_thread_name or "gate"
@@ -289,6 +326,7 @@ def render_system_prompt(
     submitter_id: str | None = None,
     session_threads: list[dict] | None = None,
     ready_thread_id: str | None = None,
+    task: str | None = None,
 ) -> str:
     """Render the system prompt for an agent.
 
@@ -326,6 +364,7 @@ def render_system_prompt(
         agent_id=agent_id,
         assignment=assignment,
         submitter_id=submitter_id,
+        task=task,
     )
     language_instruction = ""
     if language:

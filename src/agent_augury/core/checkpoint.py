@@ -242,6 +242,7 @@ class CheckpointStore:
         approvals: list[dict[str, Any]] | None = None,
         compactions: list[dict[str, Any]] | None = None,
         pending_approvals: int | None = None,
+        task: str | None = None,
     ) -> dict[str, Any]:
         self.ensure_dir()
         now = time.time()
@@ -263,6 +264,9 @@ class CheckpointStore:
             "checkpoint_seq": int(prev.get("checkpoint_seq") or 0) + 1,
             "exit_reason": exit_reason,
             "phase": phase,
+            # The request the round is serving. P2/P5 hold the team to it, so
+            # losing it on resume would quietly disarm both checks.
+            "task": task or prev.get("task"),
             "agent_ids": sorted(conversations.keys()),
             "compactions": prev_compactions[-50:],
             "pending_approvals": (

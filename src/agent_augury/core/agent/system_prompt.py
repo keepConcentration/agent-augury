@@ -7,6 +7,7 @@ dynamically from the active tool specs (P6) — only enabled tools are described
 """
 
 import re
+from pathlib import PurePath
 
 # Hangul syllable block: U+AC00 ~ U+D7A3
 _HANGUL_SYLLABLES = re.compile(r"[가-힣]")
@@ -62,8 +63,10 @@ Communication rules:
 
 _FILESYSTEM_INSTRUCTIONS = """\
 Filesystem tools (for exploring code and files):
-- `read_file(path)` — read a file's content. Use this to examine source code,
-  configuration files, or any text file you need to understand.
+- `read_file(path, offset?, limit?)` — read a file one page (≤400 lines) at a
+  time. A result with `next_offset` has more; call again with that offset
+  only if you need the rest. Everything you read stays in your context, so
+  read the parts that matter rather than whole large files.
 - `list_directory(path)` — list files and directories. Use this to explore
   project structure before reading specific files.
 - `write_file(path, content)` — write content to a file. Use this to create
@@ -99,18 +102,28 @@ File edit tools:
 """
 
 
-def render_tool_instructions(tool_specs: list[dict]) -> str:
+def render_tool_instructions(tool_specs: list[dict], work_root: str | None = None) -> str:
     """Render the dynamic tool block (P6) from active tool specs.
 
     Only enabled tools are described; disabled tools are never mentioned
     (context economy + avoids model confusion). Returns "" when the specs
     list contains no known tools (defensive).
+
+    *work_root* (the launch directory — wherever the user ran agent-augury)
+    is named so agents do not prefix paths with the folder's own name.
     """
     names = {spec.get("name") for spec in tool_specs}
     sections: list[str] = []
 
     if {"read_file", "list_directory", "write_file"} & names:
         sections.append(_FILESYSTEM_INSTRUCTIONS)
+        if work_root:
+            name = PurePath(work_root).name
+            sections.append(
+                f"Working folder: `{work_root}` (folder '{name}'). Relative paths "
+                f"resolve against it and `.` is this folder itself — write "
+                f"`src/app.py`, not `{name}/src/app.py`.\n"
+            )
     if "run_command" in names:
         sections.append(_SHELL_INSTRUCTIONS)
     if {"fetch_url", "web_search"} & names:
@@ -148,6 +161,11 @@ _PHASE_INSTRUCTIONS = {
 Current phase: **P1 EXPLORE**
 - Independently explore the task and gather information.
 - Formulate sub-questions and draft initial findings.
+- Keep P1 LIGHT: a quick survey, just enough to propose a good split — list
+  directories, skim the README / entry points / the first page of a few key
+  files. Deep, file-by-file reading belongs to P3, and only for your own
+  assigned share. Teammates survey in parallel; you do not need to read
+  everything, and what you read now stays in your context all session.
 - Do NOT open new threads. Do NOT chat with teammates yet — exploration is silent.
 - When you are done exploring, send ``READY:`` (or ``READY: done``) on the
   **human** thread id listed above (must start with ``READY:``;
@@ -179,11 +197,17 @@ Current phase: **P2 SPLIT**
   teammate's result - the radio already delivered it to everyone.
 - When your share is done, say so with `APPROVE:` on the gate thread. The
   phase advances only when ALL agents have. Then stay silent.
+- `APPROVE:` states what you actually did, backed by your tool results. If
+  your tools failed or part of your share is not done, say so on that line —
+  `APPROVE: incomplete — <what is missing and why>` — so reviewers can act.
+  Never claim work (a file written, a module read) your tools did not do.
 - If blocked on a teammate, stay silent until new [radio] messages arrive.""",
     "P4_REVIEW": """\nCurrent phase: **P4 REVIEW**
 - Broadcast your results with supporting evidence on the results thread.
 - Review teammates' submissions for factual conflicts, insufficient evidence,
   or omissions. Flag issues explicitly.
+- Check claims yourself with your tools (open the files they cite). A claim
+  you could not confirm is an issue to flag, not something to approve.
 - Agreeing needs no message of its own: say `APPROVE:`, do not re-post the
   result you agree with.
 - When your review is done, send `APPROVE:` on the gate thread. The phase
@@ -195,8 +219,11 @@ Current phase: **P5 SUBMIT**
   until a `FINAL:` message exists; approving before that is rejected.
 - Only ONE draft exists: whoever posts `FINAL:` first owns it. If someone
   already posted one, do not write your own; read theirs.
-- Once a `FINAL:` draft is posted, everyone approves it with `APPROVE:`,
-  or asks for a redo with `REJECT:` (that clears the draft and the votes).""",
+- Once a `FINAL:` draft is posted, review it before you vote. If it points to
+  a file, open that file with your tools. `APPROVE:` only what you actually
+  checked. If the file is missing or unreadable, or the draft claims things
+  you could not confirm, send `REJECT:` with the reason (that clears the
+  draft and the votes). The protocol never requires you to approve.""",
     # Terminal phases still render: a follow-up question arrives with the
     # protocol spent, and with no block here the only thing steering the agent
     # is a conversation full of PROPOSE:/APPROVE:/FINAL: from the run that just

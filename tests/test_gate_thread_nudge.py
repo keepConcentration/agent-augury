@@ -185,6 +185,15 @@ def test_nudge_asks_for_the_entry_signal_when_no_draft_exists():
     fired, text = _nudge_for("a1", set(), has_proposal=False)
     assert fired
     assert "Send PROPOSE:" in text
+    assert "REJECT:" not in text  # nothing to reject before a draft exists
+
+
+def test_vote_nudge_leaves_room_to_reject():
+    """Live `c569c9dd`: "only one left, send APPROVE:" read as an order and
+    the last reviewer approved a FINAL: whose file it could not find."""
+    fired, text = _nudge_for("a3", {"a1", "a2"}, has_proposal=True)
+    assert fired
+    assert "REJECT: with the reason" in text
 
 
 def test_no_nudge_for_an_agent_already_counted():

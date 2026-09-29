@@ -29,6 +29,8 @@ def save_model_config(
     path: Path | None = None,
     *,
     bots: list[dict[str, Any]] | None = None,
+    providers: dict[str, dict[str, Any]] | None = None,
+    planner: dict[str, str] | None = None,
 ) -> Path:
     """Persist model settings (and optional Discord ``bots``) to disk.
 
@@ -37,6 +39,9 @@ def save_model_config(
 
     ``bots`` is always written (default ``[]``) so later wizard runs know
     messaging was already decided and can skip the prompt.
+
+    Team-planner mode (TEAM_PLANNER_DESIGN.md §3) passes ``providers`` +
+    ``planner`` with an empty ``agents`` list.
     """
     target = _resolve_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -45,6 +50,9 @@ def save_model_config(
         "agents": agents,
         "bots": list(bots) if bots is not None else [],
     }
+    if providers is not None and planner is not None:
+        data["providers"] = providers
+        data["planner"] = planner
     target.write_text(
         json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
     )
@@ -69,18 +77,34 @@ def load_model_config(path: Path | None = None) -> dict[str, Any] | None:
         data = json.loads(raw)
     except (json.JSONDecodeError, OSError):
         return None
-    # Validate minimum structure.
-    if not isinstance(data, dict) or "agents" not in data:
+    # Validate minimum structure: manual ``agents`` or planner mode.
+    if not isinstance(data, dict):
         return None
-    agents = data["agents"]
-    if not isinstance(agents, list) or not agents:
-        return None
+    if not is_planner_config(data):
+        agents = data.get("agents")
+        if not isinstance(agents, list) or not agents:
+            return None
     bots = data.get("bots", [])
     if not isinstance(bots, list):
         bots = []
     out = dict(data)
     out["bots"] = bots
     return out
+
+
+def is_planner_config(data: dict[str, Any] | None) -> bool:
+    """True when *data* holds team-planner settings (providers + planner)."""
+    if not isinstance(data, dict):
+        return False
+    providers = data.get("providers")
+    planner = data.get("planner")
+    return (
+        isinstance(providers, dict)
+        and bool(providers)
+        and isinstance(planner, dict)
+        and planner.get("provider") in providers
+        and bool(planner.get("model"))
+    )
 
 
 def model_config_exists(path: Path | None = None) -> bool:

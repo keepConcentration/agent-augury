@@ -114,7 +114,8 @@ export default function App() {
             setGate(null);
             const reason = String(msg.reason ?? "done");
             setStatus(reason === "interrupted" ? "interrupted" : "idle");
-            if (reason !== "interrupted") {
+            // "planning": team-planner pre-phase handed the prompt back — no agents ran.
+            if (reason !== "interrupted" && reason !== "planning") {
               pushResumeHint();
             }
           }

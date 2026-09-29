@@ -19,6 +19,7 @@ import asyncio
 import os
 import sys
 import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -27,9 +28,9 @@ from agent_augury.core.session import Session
 from agent_augury.ink_front import resolve_project_root
 
 from .bridge import SessionBridge
-from .stdio import JsonlStdioBridge
+from .stdio import JsonlStdioBridge, decode_line, encode_line
 from .turn_done import publish_turn_done
-from .types import WireCommand, WireResult, make_event
+from .types import WireCommand, WireResult, make_event, make_result
 
 FILE_ROOT_ENV = "AUGURY_FILE_ROOT"
 
@@ -85,6 +86,126 @@ class _WireAuthNoticeRelay:
                 pass
         for line in lines:
             print(line, file=sys.stderr, flush=True)
+
+
+class _PlanQuit(Exception):
+    """Human quit (or stdin EOF) during the team-planner pre-phase."""
+
+
+def plan_first(
+    cfg_path: str,
+    lines: Iterator[str] | None = None,
+    write: Callable[[str], None] | None = None,
+) -> bool:
+    """Team-planner pre-phase (TEAM_PLANNER_DESIGN.md §2.1), before Core exists.
+
+    Reads the task from the first ``human.send``, plans the team, confirms via
+    ``human.question`` (yes / no / free-text feedback → re-plan), then rewrites
+    *cfg_path* as a plain session YAML (``agents`` + ``task``). Returns False
+    on quit/EOF. Speaks raw JSONL because the Session-owned gateway does not
+    exist yet; stdin is handed to the runner's reader afterwards.
+    """
+    import yaml
+
+    from agent_augury.planner import CONFIRM_HINT, plan_loop
+
+    src = iter(sys.stdin) if lines is None else lines
+
+    def _write(text: str) -> None:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+    out = write or _write
+
+    def emit(msg: dict[str, Any]) -> None:
+        out(encode_line(msg) + "\n")
+
+    def log(text: str) -> None:
+        emit(make_event("log", text=text))
+
+    def next_content() -> str:
+        """Next human text (send / answer; ``/skip`` counts as "no")."""
+        for line in src:
+            if not line.strip():
+                continue
+            try:
+                cmd = decode_line(line)
+            except Exception as exc:  # noqa: BLE001 — keep surface alive
+                emit({"dir": "result", "id": "?", "ok": False, "error": str(exc)})
+                continue
+            typ, cid = cmd.get("type"), str(cmd.get("id") or "?")
+            if typ == "session.quit":
+                emit(make_result(cid, ok=True))
+                emit(make_event("session.ended", reason="quit"))
+                raise _PlanQuit
+            content = str(cmd.get("content", "")).strip()
+            if typ in ("human.send", "human.answer") and content:
+                emit(make_result(cid, ok=True))
+                return content
+            if typ == "human.skip":
+                emit(make_result(cid, ok=True))
+                return "no"
+            emit(make_result(cid, ok=False, error=f"{typ} is not available while planning"))
+        emit(make_event("session.ended", reason="eof"))
+        raise _PlanQuit
+
+    questions = 0
+
+    def ask(table: str) -> str:
+        nonlocal questions
+        questions += 1
+        # Table goes to the log (printed once). Ink redraws the ask_user panel
+        # every frame; a wide, wrapping table there left stacked copies behind.
+        log(table)
+        emit(
+            make_event(
+                "human.question",
+                question_id=f"plan-{questions}",
+                agent_id="planner",
+                question=f"Start with this team? {CONFIRM_HINT}",
+                options=["yes", "no"],
+            )
+        )
+        answer = next_content()
+        return {"1": "yes", "2": "no"}.get(answer, answer)
+
+    def idle() -> None:
+        # Ink marked itself running on human.send; hand the prompt back.
+        emit(make_event("session.turn_done", reason="planning"))
+
+    path = Path(cfg_path)
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    providers, planner = raw.pop("providers"), raw.pop("planner")
+    emit(make_event("session.started", surface="ink", note="team planner", agents=[]))
+    log(
+        f"team planner ({planner['provider']}/{planner['model']}) — "
+        "describe the task and a team will be built for it, or /quit"
+    )
+    try:
+        while True:
+            task = next_content()
+            try:
+                # Sign-in (browser device code) notices arrive via notify=log.
+                agents = asyncio.run(plan_loop(task, providers, planner, ask=ask, notify=log))
+            except _PlanQuit:
+                raise
+            except Exception as exc:  # noqa: BLE001 — let the human retry
+                emit(make_event("error", message=f"planning failed: {exc}"))
+                log("describe the task again, or /quit")
+                idle()
+                continue
+            if agents is None:
+                log("team not accepted — describe a new task, or /quit")
+                idle()
+                continue
+            raw.update(agents=agents, task=task, bots=[])
+            path.write_text(
+                yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+            )
+            log(f"team ready: {', '.join('@' + a['id'] for a in agents)}")
+            return True
+    except _PlanQuit:
+        return False
 
 
 def _summary_line(session: Session, steps: int) -> str:
@@ -390,6 +511,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="resume or create the given session id",
     )
+    p.add_argument(
+        "--plan-first",
+        action="store_true",
+        default=False,
+        help="config holds providers/planner: ask for the task and plan the team first",
+    )
     return p
 
 
@@ -402,6 +529,13 @@ def main(argv: list[str] | None = None) -> int:
     if not Path(cfg_path).is_file():
         print(f"error: config not found: {cfg_path}", file=sys.stderr)
         return 1
+
+    if args.plan_first:
+        if not plan_first(cfg_path):
+            return 0
+        # New roster — never resume the previous team's checkpoint.
+        args.new_session = True
+        args.session = None
 
     cfg = load_config(cfg_path, allow_fake=args.demo)
     auth_relay = _WireAuthNoticeRelay()

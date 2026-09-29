@@ -30,6 +30,7 @@ from .bot_token_env import (
 from .core.protocol.defaults import DEFAULT_PROTOCOL
 from .core.server import RESERVED_NAMES
 from .model_config import (
+    is_planner_config,
     save_model_config,
 )
 from .model_listing import ModelInfo, format_aligned_labels
@@ -379,6 +380,71 @@ def _collect_model_for_backend(
     return model
 
 
+def _collect_provider(
+    backend_type: str,
+    existing: dict[str, Any] | None = None,
+    force_reconfigure: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    """Collect provider settings (no model) and authenticate.
+
+    Returns ``(backend_spec_without_model, authenticated)``.  Only OAuth can
+    come back unauthenticated; key-based providers defer the key check to
+    launch (``_missing_api_key_envs``).
+    """
+    # OpenRouter is a wizard preset; runtime still uses openai-compat.
+    emit_type = "openai" if backend_type == "openrouter" else backend_type
+    backend: dict[str, Any] = {"type": emit_type}
+
+    if backend_type == "openrouter":
+        # Fixed URL + env *name* — actual secret stays in the process env only.
+        base_url = OPENROUTER_DEFAULT_BASE_URL
+        backend["base_url"] = base_url
+        backend["api_key_env"] = OPENROUTER_DEFAULT_API_KEY_ENV
+        print(f"  (OpenRouter — {base_url})")
+        print(
+            f"  (config will reference env var name {OPENROUTER_DEFAULT_API_KEY_ENV}; "
+            "the secret is never written to YAML)"
+        )
+        if not os.environ.get(OPENROUTER_DEFAULT_API_KEY_ENV):
+            print(
+                f"  (note: {OPENROUTER_DEFAULT_API_KEY_ENV} is not set yet — "
+                "you will be prompted for the key after setup)"
+            )
+        return backend, True
+    if backend_type == "nous_oauth":
+        # OAuth — use default Base URL internally, no prompt.
+        # Authentication starts immediately (or reuses valid token).
+        backend["base_url"] = NOUS_DEFAULT_BASE_URL
+        print("  (authentication via browser — device code flow)")
+        # Check for valid token first (unless force_reconfigure)
+        if not force_reconfigure and _has_valid_oauth_token():
+            print("  (existing credentials detected — reusing authentication)")
+            return backend, True
+        token = _run_nous_oauth_device_code(force_reconfigure=force_reconfigure)
+        return backend, bool(token)
+
+    # Real backends (openai, nous) — reuse existing env var if available.
+    default_url = (
+        NOUS_DEFAULT_BASE_URL if backend_type == "nous" else OPENAI_DEFAULT_BASE_URL
+    )
+    if existing:
+        default_url = existing.get("base_url", default_url)
+    backend["base_url"] = _input("Base URL", default_url)
+
+    if existing and existing.get("api_key_env"):
+        existing_env = existing["api_key_env"]
+        reuse = _input(
+            f"Re-use existing API key env var '{existing_env}'? (y/n)", "y"
+        )
+        if reuse.lower() in ("y", "yes"):
+            backend["api_key_env"] = existing_env
+        else:
+            backend["api_key_env"] = _input_required("API key env var name")
+    else:
+        backend["api_key_env"] = _input_required("API key env var name")
+    return backend, True
+
+
 def _build_agent(
     agent_index: int,
     existing_agents: list[dict[str, Any]] | None = None,
@@ -414,80 +480,20 @@ def _build_agent(
         break
 
     backend_type = _select_backend()
-
     existing = (
         _find_existing_provider_config(existing_agents, backend_type)
         if existing_agents
         else None
     )
-
-    # OpenRouter is a wizard preset; runtime still uses openai-compat.
-    emit_type = "openai" if backend_type == "openrouter" else backend_type
-    backend: dict[str, Any] = {"type": emit_type}
-
-    if backend_type == "openrouter":
-        # Fixed URL + env *name* — actual secret stays in the process env only.
-        base_url = OPENROUTER_DEFAULT_BASE_URL
-        backend["base_url"] = base_url
-        backend["api_key_env"] = OPENROUTER_DEFAULT_API_KEY_ENV
-        print(f"  (OpenRouter — {base_url})")
-        print(
-            f"  (config will reference env var name {OPENROUTER_DEFAULT_API_KEY_ENV}; "
-            "the secret is never written to YAML)"
-        )
-        if not os.environ.get(OPENROUTER_DEFAULT_API_KEY_ENV):
-            print(
-                f"  (note: {OPENROUTER_DEFAULT_API_KEY_ENV} is not set yet — "
-                "you will be prompted for the key after setup)"
-            )
+    backend, authed = _collect_provider(backend_type, existing, force_reconfigure)
+    if authed:
         backend["model"] = _collect_model_for_backend(
-            backend_type, base_url, OPENROUTER_DEFAULT_API_KEY_ENV
+            backend_type, backend["base_url"], backend.get("api_key_env")
         )
-    elif backend_type == "nous_oauth":
-        # OAuth — use default Base URL internally, no prompt.
-        # Authentication starts immediately (or reuses valid token).
-        base_url = NOUS_DEFAULT_BASE_URL
-        backend["base_url"] = base_url
-        print("  (authentication via browser — device code flow)")
-        # Check for valid token first (unless force_reconfigure)
-        if not force_reconfigure and _has_valid_oauth_token():
-            print("  (existing credentials detected — reusing authentication)")
-            token = "existing"
-        else:
-            token = _run_nous_oauth_device_code(force_reconfigure=force_reconfigure)
-        if token:
-            backend["model"] = _collect_model_for_backend(
-                backend_type, base_url, None
-            )
-        else:
-            # Auth failed or cancelled — fall back to manual entry.
-            print("  (authentication cancelled — manual model entry)")
-            backend["model"] = _input("Model name")
     else:
-        # Real backends (openai, nous) — reuse existing env var if available.
-        default_url = (
-            NOUS_DEFAULT_BASE_URL if backend_type == "nous" else OPENAI_DEFAULT_BASE_URL
-        )
-        if existing:
-            default_url = existing.get("base_url", default_url)
-        base_url = _input("Base URL", default_url)
-        backend["base_url"] = base_url
-
-        if existing and existing.get("api_key_env"):
-            existing_env = existing["api_key_env"]
-            reuse = _input(
-                f"Re-use existing API key env var '{existing_env}'? (y/n)", "y"
-            )
-            if reuse.lower() in ("y", "yes"):
-                backend["api_key_env"] = existing_env
-            else:
-                backend["api_key_env"] = _input_required("API key env var name")
-        else:
-            backend["api_key_env"] = _input_required("API key env var name")
-
-        backend["model"] = _collect_model_for_backend(
-            backend_type, base_url, backend["api_key_env"]
-        )
+        # Auth failed or cancelled — fall back to manual entry.
+        print("  (authentication cancelled — manual model entry)")
+        backend["model"] = _input("Model name")
 
     return {"id": agent_id, "backend": backend}
 
@@ -514,6 +520,62 @@ def _collect_model_settings(force_reconfigure: bool = False) -> tuple[int, list[
             break
 
     return max_steps, agents
+
+
+def _collect_planner_settings(
+    force_reconfigure: bool = False,
+) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    """Team-planner mode: register providers, then pick the planner model.
+
+    Returns ``(providers, planner)`` (TEAM_PLANNER_DESIGN.md §3).  Agents are
+    planned per task at launch, so no agent ids / models are asked here.
+    """
+    print("\n--- Providers ---")
+    print("Register every provider the team may use; the planner picks from all of them.")
+    providers: dict[str, dict[str, Any]] = {}
+    while True:
+        backend_type = _select_backend()
+        backend, authed = _collect_provider(
+            backend_type,
+            providers.get(backend_type),
+            force_reconfigure=force_reconfigure and not providers,
+        )
+        if authed:
+            providers[backend_type] = backend
+        else:
+            print(f"  (authentication failed — {backend_type} not registered)")
+        if not providers:
+            continue
+        more = _input("\nAdd another provider? (y/n)", "n")
+        if more.lower() not in ("y", "yes"):
+            break
+
+    names = list(providers)
+    name = names[0]
+    print("\n--- Planner model ---")
+    if len(names) > 1:
+        print("Which provider hosts the planner model?")
+        for i, n in enumerate(names, 1):
+            print(f"  {i}) {n}")
+        choice = _input_int("Choice", 1)
+        name = names[choice - 1] if 1 <= choice <= len(names) else names[0]
+    spec = providers[name]
+    model = _collect_model_for_backend(name, spec["base_url"], spec.get("api_key_env"))
+    while not model:
+        model = _input_required("Planner model name")
+    return providers, {"provider": name, "model": model}
+
+
+def _select_setup_mode() -> str:
+    """Return ``"planner"`` (default) or ``"manual"``."""
+    print("\nSetup mode:")
+    print("  1) Team planner — register providers; a planner model builds the team per task")
+    print("  2) Manual agents — pick each agent's provider and model yourself")
+    while True:
+        choice = _input("Choice", "1")
+        if choice in ("1", "2"):
+            return "planner" if choice == "1" else "manual"
+        print(f"  (invalid choice: {choice!r} — enter 1 or 2)")
 
 
 def _default_bot_token_env(agent_id: str) -> str:
@@ -655,11 +717,18 @@ def run_wizard(
         force_reconfigure: If True, always run OAuth authentication even
             if a valid token exists.
     """
+    providers: dict[str, dict[str, Any]] | None = None
+    planner: dict[str, str] | None = None
     if existing_model_config is not None:
         # Reuse saved model + messaging — skip prompts and banner noise
         # (Ink clears the TTY right after; chatter only slows startup).
         max_steps = existing_model_config.get("max_steps", 0)
-        agents = existing_model_config["agents"]
+        if is_planner_config(existing_model_config):
+            providers = existing_model_config["providers"]
+            planner = existing_model_config["planner"]
+            agents = []
+        else:
+            agents = existing_model_config["agents"]
         bots = list(existing_model_config.get("bots") or [])
     else:
         print("=" * 50)
@@ -670,11 +739,20 @@ def run_wizard(
         print(
             "No API keys or bot tokens are stored — only environment variable names."
         )
-        # Phase 1: collect model settings from user.
-        max_steps, agents = _collect_model_settings(force_reconfigure=force_reconfigure)
-        # Phase 2: optional messaging apps (asked once, then persisted).
-        bots = _collect_messaging_apps(agents)
-        save_model_config(max_steps, agents, bots=bots)
+        if _select_setup_mode() == "planner":
+            # Planner teams change per task, so per-agent bot bindings are
+            # not asked (TEAM_PLANNER_DESIGN.md §4.4).
+            max_steps, agents, bots = 0, [], []
+            providers, planner = _collect_planner_settings(force_reconfigure)
+            save_model_config(
+                max_steps, agents, bots=bots, providers=providers, planner=planner
+            )
+        else:
+            # Phase 1: collect model settings from user.
+            max_steps, agents = _collect_model_settings(force_reconfigure=force_reconfigure)
+            # Phase 2: optional messaging apps (asked once, then persisted).
+            bots = _collect_messaging_apps(agents)
+            save_model_config(max_steps, agents, bots=bots)
 
     cfg: dict[str, Any] = {
         "max_steps": max_steps,
@@ -684,4 +762,8 @@ def run_wizard(
     }
     if bots:
         cfg["bots"] = bots
+    if providers is not None and planner is not None:
+        # Consumed by cli (planner.run_planner) before the YAML is written.
+        cfg["providers"] = providers
+        cfg["planner"] = planner
     return cfg

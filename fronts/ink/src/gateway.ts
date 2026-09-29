@@ -72,6 +72,10 @@ export function resolveGatewayArgs(): string[] {
     ) {
       args.push("--no-auto-start");
     }
+    // Team planner: child asks for the task and builds the roster before Core boots.
+    if (process.env.AUGURY_PLAN_FIRST === "1") {
+      args.push("--plan-first");
+    }
     if (
       process.env.AGENT_AUGURY_NEW_SESSION === "1" ||
       process.env.AGENT_AUGURY_NEW_SESSION === "true"

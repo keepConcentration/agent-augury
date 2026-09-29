@@ -19,7 +19,14 @@ from ..auth.oauth import (
 from ..auth.token_store import TokenStore, compute_expires_at, is_token_expiring
 from ..model_listing import extract_model_ids
 from .base import Completion, Message, OAuthModelBackend, ToolCall, ToolSpec
-from .errors import auth_error, classify_http, network_error
+from .errors import (
+    CHAT_CONNECT_TIMEOUT_S,
+    CHAT_READ_TIMEOUT_S,
+    auth_error,
+    classify_http,
+    describe_request_error,
+    network_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +45,7 @@ class NousPortalOAuthBackend(OAuthModelBackend):
         config: OAuthProviderConfig | None = None,
         token_store: TokenStore | None = None,
         client: httpx.Client | httpx.AsyncClient | None = None,
-        timeout: float = 120.0,
+        timeout: float = CHAT_READ_TIMEOUT_S,
         on_user_code: Callable[[str, str], None] | None = None,
     ) -> None:
         self.model = model
@@ -225,8 +232,8 @@ class NousPortalOAuthBackend(OAuthModelBackend):
                     error=classify_http(code, body, model=self.model)
                 )
             except httpx.RequestError as exc:
+                last_error = describe_request_error(exc)
                 if attempt < 2:
-                    last_error = str(exc)
                     await asyncio.sleep(2 ** attempt)
                     continue
                 return Completion(
@@ -262,7 +269,10 @@ class NousPortalOAuthBackend(OAuthModelBackend):
             return self._client
         if self._client is not None:
             return self._client  # type: ignore[return-value]
-        self._client = httpx.AsyncClient(timeout=self._timeout, headers={"Accept": "application/json"})
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self._timeout, connect=CHAT_CONNECT_TIMEOUT_S),
+            headers={"Accept": "application/json"},
+        )
         self._owns_client = True
         return self._client  # type: ignore[return-value]
 

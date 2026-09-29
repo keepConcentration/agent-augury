@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import httpx
 
+from .errors import CHAT_READ_TIMEOUT_S
 from .openai_compat import OpenAICompatBackend
 
 
@@ -20,7 +21,7 @@ class NousPortalBackend(OpenAICompatBackend):
         model: str,
         base_url: str | None = None,
         client: httpx.Client | httpx.AsyncClient | None = None,
-        timeout: float = 120.0,
+        timeout: float = CHAT_READ_TIMEOUT_S,
     ) -> None:
         if not base_url:
             raise ValueError(

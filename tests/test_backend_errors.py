@@ -185,3 +185,54 @@ async def test_fatal_error_does_not_retry(monkeypatch):
 
     await _run(session)
     assert backend.calls == 1, "auth failures repeat identically — do not burn retries"
+
+
+def test_bad_request_surfaces_provider_reason():
+    from agent_augury.backend.errors import classify_http
+
+    body = '{"error": {"message": "tool_result block(s) without a preceding tool_use"}}'
+    err = classify_http(400, body)
+    assert err.kind == "bad_request"
+    assert "Provider says:" in err.message and "without a preceding tool_use" in err.message
+    assert classify_http(400, "").message == "Malformed request (HTTP 400)."
+
+
+def test_request_error_keeps_the_exception_type():
+    """Live 2026-09-29: str(httpx.ReadTimeout) is empty → bare 'Network error:'."""
+    import httpx
+
+    from agent_augury.backend.errors import describe_request_error
+
+    assert describe_request_error(httpx.ReadTimeout("")) == "ReadTimeout"
+    assert describe_request_error(httpx.ConnectError("refused")) == "ConnectError: refused"
+
+
+async def test_backend_timeout_error_names_readtimeout(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    from agent_augury.backend.openai_compat import OpenAICompatBackend
+
+    def handler(request):
+        raise httpx.ReadTimeout("", request=request)
+
+    async def no_sleep(_s):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    backend = OpenAICompatBackend(
+        base_url="http://x", api_key="k", model="m",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    completion = await backend.complete([{"role": "user", "content": "hi"}], [])
+    assert completion.error is not None
+    assert completion.error.message == "Network error: ReadTimeout (retried 3 times)"
+
+
+def test_chat_client_read_timeout_covers_generation():
+    from agent_augury.backend.openai_compat import OpenAICompatBackend
+
+    backend = OpenAICompatBackend(base_url="http://x", api_key="k", model="m")
+    assert backend._client.timeout.read == 600.0
+    assert backend._client.timeout.connect == 15.0

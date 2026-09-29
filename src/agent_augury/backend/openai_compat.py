@@ -10,7 +10,13 @@ import httpx
 
 from ..model_listing import extract_model_ids
 from .base import Completion, Message, ModelBackend, ToolCall, ToolSpec
-from .errors import classify_http, network_error
+from .errors import (
+    CHAT_CONNECT_TIMEOUT_S,
+    CHAT_READ_TIMEOUT_S,
+    classify_http,
+    describe_request_error,
+    network_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +30,14 @@ class OpenAICompatBackend(ModelBackend):
         api_key: str,
         model: str,
         client: httpx.Client | httpx.AsyncClient | None = None,
-        timeout: float = 120.0,
+        timeout: float = CHAT_READ_TIMEOUT_S,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
-        self._client = client or httpx.AsyncClient(timeout=timeout)
+        self._client = client or httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout, connect=CHAT_CONNECT_TIMEOUT_S)
+        )
         self._owns_client = client is None
 
     async def complete(
@@ -62,8 +70,8 @@ class OpenAICompatBackend(ModelBackend):
                     error=classify_http(code, body, model=self.model)
                 )
             except httpx.RequestError as exc:
+                last_error = describe_request_error(exc)
                 if attempt < 2:
-                    last_error = str(exc)
                     await asyncio.sleep(2 ** attempt)
                     continue
                 return Completion(

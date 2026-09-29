@@ -88,10 +88,31 @@ def classify_http(
             # let the detail reach the log. (design 4.1)
             return err("unknown", True, "Request rejected (HTTP 400) — the "
                                         "conversation may be too long.")
-        return err("bad_request", False, "Malformed request (HTTP 400).")
+        # The provider's own reason is the only clue to what was malformed.
+        why = " ".join(detail.split())[:200]
+        return err("bad_request", False,
+                   "Malformed request (HTTP 400)." + (f" Provider says: {why}" if why else ""))
     if status is not None and 500 <= status < 600:
         return err("server_error", True, f"Provider error (HTTP {status}).")
     return err("unknown", True, f"Unexpected response (HTTP {status}).")
+
+
+# Chat completions are non-streaming: nothing arrives until the whole reply is
+# generated, so the read timeout must cover generation. A long deliverable in
+# one write_file call ran past the old 120 s (live 2026-09-29, 3 retries all
+# timing out). Connect stays short so a dead network still fails fast.
+CHAT_READ_TIMEOUT_S = 600.0
+CHAT_CONNECT_TIMEOUT_S = 15.0
+
+
+def describe_request_error(exc: BaseException) -> str:
+    """``ReadTimeout`` / ``ConnectError: …`` — the type is the useful part.
+
+    ``str(httpx.ReadTimeout())`` is often empty, which rendered as a bare
+    ``Network error:`` with no clue it was a timeout.
+    """
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
 def network_error(message: str, *, model: str | None = None) -> BackendError:

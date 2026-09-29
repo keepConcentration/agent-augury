@@ -58,8 +58,66 @@ def _tombstone_tool_content(msg: dict[str, Any]) -> dict[str, Any]:
     name = msg.get("name") or "tool"
     tid = msg.get("tool_call_id") or msg.get("id") or "?"
     out = dict(msg)
-    out["content"] = f"[omitted tool result: {name}|{tid}, {n} chars]"
+    out["content"] = (
+        f"[omitted tool result: {name}|{tid}, {n} chars — no longer in this "
+        f"conversation; re-run the call before relying on it]"
+    )
     return out
+
+
+# Argument that identifies what a tool call touched, in preference order.
+_KEY_ARGS = ("path", "url", "command", "query", "thread", "name")
+_LEDGER_MAX = 40
+
+OMITTED_NOTE = (
+    "NOTE: the results of these calls are no longer in this conversation. "
+    "Re-run a call (e.g. read_file) before quoting, summarizing or relying on "
+    "its content — never reconstruct it from memory."
+)
+
+
+def tool_ledger(head: list[dict[str, Any]]) -> list[str]:
+    """One line per tool call in *head*: ``read_file src/x.py (87,638 chars)``.
+
+    Built from the calls' own arguments, not by regex over their output: live
+    (`e91282e8`) the regex kept README HTML fragments and not one file name,
+    so after compact the agent wrote its report from invention.
+    """
+    results: dict[str, str] = {}
+    for m in head:
+        if m.get("role") == "tool":
+            results[str(m.get("tool_call_id") or "")] = str(m.get("content") or "")
+    lines: list[str] = []
+    for m in head:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") if isinstance(tc.get("function"), dict) else tc
+            name = str(fn.get("name") or "tool")
+            args: Any = fn.get("arguments") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    args = {}
+            key = next((str(args[k]) for k in _KEY_ARGS if isinstance(args, dict) and args.get(k)), "")
+            line = f"{name} {key[:120]}".rstrip()
+            result = results.get(str(tc.get("id") or ""))
+            if result is not None:
+                line += " → error" if result.startswith('{"error"') else f" ({len(result):,} chars)"
+            if not lines or lines[-1] != line:
+                lines.append(line)
+    if len(lines) > _LEDGER_MAX:
+        dropped = len(lines) - _LEDGER_MAX
+        lines = [f"...({dropped} earlier calls)", *lines[-_LEDGER_MAX:]]
+    return lines
+
+
+def _ledger_block(head: list[dict[str, Any]]) -> str:
+    lines = tool_ledger(head)
+    if not lines:
+        return ""
+    return "\nTool calls already made:\n" + "\n".join(f"- {ln}" for ln in lines) + "\n" + OMITTED_NOTE
 
 
 def _split_head_tail(
@@ -86,6 +144,12 @@ def _split_head_tail(
 
     while approx_chars(tail) > keep_tail_chars and len(tail) > 1:
         head.append(tail.pop(0))
+    # Never open the tail with a tool result: the assistant tool_call it
+    # answers went to head (summarized away), and an orphan result is
+    # rejected outright — live `ea280c1f`, both agents got HTTP 400 on the
+    # first call after compact.
+    while tail and tail[0].get("role") == "tool":
+        head.append(tail.pop(0))
     return system, head, tail
 
 
@@ -95,7 +159,11 @@ def rule_based_summary(
     agent_id: str = "",
     phase: str = "",
 ) -> str:
-    """Deterministic compact summary (M4b)."""
+    """Deterministic compact summary (M4b).
+
+    Paths come from user/assistant text only — tool output is file contents,
+    and scraping it yielded noise; the tool ledger covers what was touched.
+    """
     paths: list[str] = []
     last_user = ""
     for m in head:
@@ -109,8 +177,6 @@ def rule_based_summary(
             paths.extend(_extract_paths(content))
         elif role == "assistant" and isinstance(content, str):
             paths.extend(_extract_paths(content))
-        elif role == "tool":
-            paths.extend(_extract_paths(str(content)))
 
     uniq_paths: list[str] = []
     seen: set[str] = set()
@@ -129,7 +195,7 @@ def rule_based_summary(
         summary_bits.append(f"last_user={last_user!r}")
     if uniq_paths:
         summary_bits.append("paths=" + ", ".join(uniq_paths))
-    return "; ".join(summary_bits)
+    return "; ".join(summary_bits) + _ledger_block(head)
 
 
 def _head_as_plain_text(head: list[dict[str, Any]], *, max_chars: int = 24_000) -> str:
@@ -286,6 +352,10 @@ async def compact_conversation_async(
             head, backend=backend, agent_id=agent_id, phase=phase
         )
         used_llm = body is not None
+        if body is not None:
+            # The LLM summary may paraphrase findings; the ledger + note still
+            # say which raw results are gone and must be re-read.
+            body += _ledger_block(head)
     if body is None:
         body = rule_based_summary(head, agent_id=agent_id, phase=phase)
 

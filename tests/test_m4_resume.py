@@ -215,6 +215,70 @@ def test_compact_reduces_size():
     )
 
 
+def _read_turns(files: list[tuple[str, str]]) -> list[dict]:
+    """assistant tool_call + tool result pairs, OpenAI shape (as stored)."""
+    conv: list[dict] = []
+    for i, (path, result) in enumerate(files):
+        conv.append({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": f"c{i}",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": json.dumps({"path": path})},
+            }],
+        })
+        conv.append({"role": "tool", "tool_call_id": f"c{i}", "content": result})
+    return conv
+
+
+def test_compact_summary_lists_tool_calls_and_warns_to_reread():
+    """Live `e91282e8`: after compact the summary named README HTML fragments
+    and no file, and the agent wrote its report from invention."""
+    conv = [{"role": "system", "content": "sys"}, {"role": "user", "content": "task"}]
+    conv += _read_turns([
+        ("src/agent_augury/core/session.py", '{"content": "' + "a" * 30_000 + '"}'),
+        ("README.md", '{"content": "<p align=\\"center\\"> https://pypi.org/x </p>' + "b" * 30_000 + '"}'),
+        ("missing.py", '{"error": "failed to read missing.py"}'),
+    ])
+    conv.append({"role": "user", "content": "next"})
+    new_conv, meta = compact_conversation(
+        conv, soft_limit_chars=10_000, keep_tail_chars=2_000, keep_tail_messages=1
+    )
+    assert meta is not None
+    summary = next(m["content"] for m in new_conv if str(m.get("content")).startswith("[checkpoint compact]"))
+    assert "- read_file src/agent_augury/core/session.py (30," in summary
+    assert "- read_file README.md (" in summary
+    assert "- read_file missing.py → error" in summary
+    assert "Re-run a call (e.g. read_file) before quoting" in summary
+    assert "pypi.org" not in summary and "<p" not in summary  # no scraped output
+
+
+@pytest.mark.parametrize("keep", range(1, 9))
+def test_compact_never_leaves_an_orphan_tool_result(keep):
+    """Live `ea280c1f`: the tail opened with a tool result whose tool_call was
+    summarized away; both agents' next call failed with HTTP 400."""
+    conv = [{"role": "system", "content": "sys"}, {"role": "user", "content": "task"}]
+    conv += _read_turns([(f"f{i}.py", "z" * 3_000) for i in range(6)])
+    new_conv, meta = compact_conversation(
+        conv, soft_limit_chars=5_000, keep_tail_chars=100_000, keep_tail_messages=keep
+    )
+    assert meta is not None
+    call_ids = {tc["id"] for m in new_conv for tc in (m.get("tool_calls") or [])}
+    orphans = [m for m in new_conv if m["role"] == "tool" and m["tool_call_id"] not in call_ids]
+    assert orphans == []
+
+
+def test_tombstoned_tail_result_says_to_rerun():
+    conv = [{"role": "system", "content": "sys"}]
+    conv += _read_turns([("a.py", "x" * 20_000), ("b.py", "y" * 9_000)])
+    new_conv, _meta = compact_conversation(
+        conv, soft_limit_chars=5_000, keep_tail_chars=50_000, keep_tail_messages=2
+    )
+    tomb = [m["content"] for m in new_conv if m.get("role") == "tool"]
+    assert tomb and "re-run the call" in tomb[-1]
+
+
 @pytest.mark.asyncio
 async def test_flush_compacts_large_conversation(tmp_path: Path):
     sessions = tmp_path / "sessions"

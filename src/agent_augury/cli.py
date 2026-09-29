@@ -17,6 +17,8 @@ Flags:
   - ``--demo`` — allow ``type: fake`` backends.
   - ``--headless`` — boot Core without Ink (daemon / chat-channel mode).
   - ``--no-auto-start`` — with ``--headless``, wait for human.send before first run.
+  - ``--plan TASK`` — team-planner setup: plan the team for TASK, then start
+    (TEAM_PLANNER_DESIGN.md). Without it, planner setups ask for the task.
 
 Design: ``docs/architecture/MULTI_FRONT_DESIGN.md`` (M7) — Ink is the primary
 Interactive Surface; headless is a launcher, not another messenger Surface.
@@ -42,10 +44,11 @@ from .ink_front import (
     resolve_project_root,
 )
 from .model_config import (
+    is_planner_config,
     load_model_config,
     model_config_exists,
 )
-from .wizard import WizardCancelled, check_tty, run_wizard
+from .wizard import WizardCancelled, _input, _input_required, check_tty, run_wizard
 
 _DEFAULT_OUTPUT_PATH = Path.home() / ".agent-augury" / "agent-augury-session.yaml"
 _INVALID_PATH_CHARS = set('<>"|?*')
@@ -123,8 +126,13 @@ def _launch_session(
     auto_start: bool = True,
     new_session: bool = False,
     session_id: str | None = None,
+    plan_first: bool = False,
 ) -> int:
-    """Start Ink or headless Core for a session config."""
+    """Start Ink or headless Core for a session config.
+
+    ``plan_first``: the YAML still holds ``providers``/``planner``; the Ink
+    gateway child asks for the task and plans the team before booting Core.
+    """
     if session_id:
         os.environ["AGENT_AUGURY_SESSION"] = session_id
     else:
@@ -149,13 +157,17 @@ def _launch_session(
         config=cfg_path,
         demo=allow_fake,
         quiet=quiet,
+        plan_first=plan_first,
     )
 
 
 def _save_config(cfg: dict[str, Any], output_path: Path) -> None:
     """Write a config dict to a YAML file."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    # allow_unicode: planner roles/tasks are often Korean — keep them readable.
+    output_path.write_text(
+        yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
 
 
 def _load_session_yaml(path: Path) -> dict[str, Any] | None:
@@ -247,8 +259,13 @@ def _run_wizard_flow(
     auto_start: bool = True,
     new_session: bool = False,
     session_id: str | None = None,
+    plan_task: str | None = None,
 ) -> int:
-    """Run the interactive wizard, save the YAML, then start Ink or headless."""
+    """Run the interactive wizard, save the YAML, then start Ink or headless.
+
+    Team-planner setups (``providers`` + ``planner``) plan the agent roster
+    for *plan_task* (asked when None) before the YAML is written.
+    """
     if not check_tty():
         print(
             "error: interactive wizard requires a TTY. "
@@ -271,13 +288,37 @@ def _run_wizard_flow(
             existing_model_config=existing if not force_reconfigure else None,
             force_reconfigure=force_reconfigure,
         )
+        planned = is_planner_config(cfg)
+        plan_first = False
+        if plan_task is not None and not planned:
+            print(
+                "error: --plan needs a team-planner setup "
+                "(run `agent-augury --reconfigure` and pick 'Team planner')",
+                file=sys.stderr,
+            )
+            return 1
+        if planned:
+            _prompt_provider_keys(cfg["providers"])
+            # Ink asks for the task itself and plans inside the gateway child
+            # (design §2.1); the YAML keeps providers/planner until then.
+            plan_first = plan_task is None and not headless
+            if not plan_first and not _plan_agents(cfg, plan_task):
+                print("\nTeam not accepted — nothing started.")
+                return 0
+            # A new roster must not resume the previous team's checkpoint.
+            new_session = True
+            session_id = None
         if output_path is None:
             output_path = _DEFAULT_OUTPUT_PATH
         else:
             output_path = _resolve_output_path(str(output_path))
         # --reconfigure: full rewrite. Otherwise keep extras (attention, task, …).
         if not force_reconfigure:
-            cfg = _preserve_session_extras(_load_session_yaml(output_path), cfg)
+            previous = _load_session_yaml(output_path)
+            if planned and previous:
+                # Bindings name the previous team's agent ids (design §4.4).
+                previous = {k: v for k, v in previous.items() if k not in _AGENT_BOUND_KEYS}
+            cfg = _preserve_session_extras(previous, cfg)
         _save_config(cfg, output_path)
         # First-time / --reconfigure wizard: confirm where YAML landed.
         # Silent reuse: Ink clears the TTY next — no pre-UI chatter.
@@ -324,7 +365,46 @@ def _run_wizard_flow(
         auto_start=auto_start,
         new_session=new_session,
         session_id=session_id,
+        plan_first=plan_first,
     )
+
+
+_AGENT_BOUND_KEYS = frozenset({"bots", "surfaces"})
+
+
+def _prompt_provider_keys(providers: dict[str, dict[str, Any]]) -> None:
+    """Ask for unset provider API keys. Still-unset ones just drop that
+    provider from the planner catalog."""
+    missing = _missing_api_key_envs(
+        {"agents": [{"backend": spec} for spec in providers.values()]}
+    )
+    if missing:
+        _prompt_and_set_api_keys(missing)
+
+
+def _plan_agents(cfg: dict[str, Any], task: str | None) -> bool:
+    """Fill ``cfg`` agents/task from the team planner (terminal). False when declined.
+
+    Pops ``providers`` / ``planner`` so the session YAML stays a plain config.
+    """
+    from .planner import CONFIRM_HINT, run_planner
+
+    providers = cfg.pop("providers")
+    planner = cfg.pop("planner")
+    if not task:
+        task = _input_required("\nWhat should the team do?")
+
+    def _ask(table: str) -> str:
+        print(f"\n{table}\n({CONFIRM_HINT})")
+        return _input("Start with this team?", "y")
+
+    agents = run_planner(task, providers, planner, ask=_ask)
+    if agents is None:
+        return False
+    cfg["agents"] = agents
+    cfg["task"] = task
+    cfg["bots"] = []
+    return True
 
 
 def _clear_tty() -> None:
@@ -359,6 +439,7 @@ def _run_ink_surface(
     config: str | None = None,
     demo: bool = False,
     quiet: bool = False,
+    plan_first: bool = False,
 ) -> int:
     """Spawn Ink (M2 hello / M7 real session).
 
@@ -403,6 +484,10 @@ def _run_ink_surface(
             env["AUGURY_DEMO"] = "1"
         if quiet:
             env["AUGURY_QUIET"] = "1"
+        if plan_first:
+            env["AUGURY_PLAN_FIRST"] = "1"
+        else:
+            env.pop("AUGURY_PLAN_FIRST", None)
 
     cmd = _ink_tsx_command(ink_dir)
     if cmd is None:
@@ -499,6 +584,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="resume or bind to this session id",
     )
+    parser.add_argument(
+        "--plan",
+        default=None,
+        metavar="TASK",
+        help="team-planner setup: plan agents for TASK, confirm, then start",
+    )
     args = parser.parse_args(argv)
 
     if args.headless and args.ink_hello:
@@ -526,6 +617,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.output is not None and args.config is not None:
         print("error: --output is only valid without --config", file=sys.stderr)
         return 1
+
+    if args.plan is not None:
+        if args.config is not None or args.session:
+            print(
+                "error: --plan cannot be combined with --config or --session "
+                "(it always starts a fresh session)",
+                file=sys.stderr,
+            )
+            return 1
+        if not args.plan.strip():
+            print("error: --plan needs a task description", file=sys.stderr)
+            return 1
+        try:
+            return _run_wizard_flow(
+                Path(args.output) if args.output else None,
+                force_reconfigure=args.reconfigure,
+                quiet=args.quiet,
+                allow_fake=args.demo,
+                headless=args.headless,
+                auto_start=not args.no_auto_start,
+                plan_task=args.plan,
+            )
+        except Exception as exc:  # noqa: BLE001 — CLI boundary
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     # --headless --reconfigure → wizard first, then headless (no prior --config).
     if args.headless and args.reconfigure:

@@ -1566,19 +1566,30 @@ class Session:
                         f"[protocol] Phase {phase}: the team chose {submitter} "
                         f"to post the {gate.entry_prefix} draft and it has not "
                         f"arrived yet. Do NOT write your own — wait, then "
-                        f"APPROVE: theirs on thread '{gate.thread_id}'."
+                        f"review it and send APPROVE: or REJECT: (with the "
+                        f"reason) on thread '{gate.thread_id}'."
                     ),
                 }
             )
             return True
+        # A vote nudge must leave room to say no: "you are the only one left,
+        # send APPROVE:" alone read as an order, and live (`c569c9dd`) the
+        # last reviewer approved a FINAL: whose file it could not find.
+        send = (
+            "Send APPROVE: (or REJECT: with the reason, if what you are "
+            "voting on does not hold up — e.g. a claimed file you cannot "
+            "open)"
+            if needs == "APPROVE:"
+            else f"Send {needs}"
+        )
         agent.conversation.append(
             {
                 "role": "user",
                 "content": (
                     f"[protocol] Phase {phase}: the gate has not counted you "
-                    f"yet. {who} Send {needs} as the FIRST line of a "
+                    f"yet. {who} {send} as the FIRST line of a "
                     f"send_message to thread '{gate.thread_id}' "
-                    f"(name={gate.thread_name!r}) — saying you approved in "
+                    f"(name={gate.thread_name!r}) — saying you voted in "
                     f"prose does not count. "
                     f"Do not create another thread named {gate.thread_name!r}."
                 ),

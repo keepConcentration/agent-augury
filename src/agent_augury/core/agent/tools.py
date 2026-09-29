@@ -36,6 +36,51 @@ def _json(result: Any) -> str:
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
+# read_file pages. A whole-file read stays in every later request, so a few
+# big files (session.py is 88k chars) pushed agents past the compact limit
+# within P1 and compaction then erased what they had read (live `e91282e8`,
+# `ea280c1f`). The char cap guards against long-line files (minified, data).
+READ_PAGE_LINES = 400
+READ_PAGE_CHARS = 30_000
+
+
+def _as_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _read_page(abs_path: str, lines: list[str], offset: Any, limit: Any) -> dict[str, Any]:
+    """One page of *lines* starting at 1-based *offset*, plus how to continue."""
+    total = len(lines)
+    start = max(1, _as_int(offset, 1))
+    max_lines = min(max(1, _as_int(limit, READ_PAGE_LINES)), READ_PAGE_LINES)
+    page: list[str] = []
+    chars = 0
+    for line in lines[start - 1 : start - 1 + max_lines]:
+        if page and chars + len(line) > READ_PAGE_CHARS:
+            break
+        page.append(line[:READ_PAGE_CHARS])
+        chars += len(page[-1])
+    end = start + len(page) - 1
+    content = "".join(page)
+    out: dict[str, Any] = {
+        "path": abs_path,
+        "content": content,
+        "size": len(content),
+        "lines": f"{start}-{end}" if page else "none",
+        "total_lines": total,
+    }
+    if end < total:
+        out["next_offset"] = end + 1
+        out["note"] = (
+            f"showing lines {start}-{end} of {total}; call read_file with "
+            f"offset={end + 1} for more, or read only the parts you need"
+        )
+    return out
+
+
 class ToolBox:
     """Binds server operations into model-callable tools."""
 
@@ -53,6 +98,43 @@ class ToolBox:
 
     # -- path security (P11) -------------------------------------------------
 
+    def _work_root(self) -> str | None:
+        """The working folder: first allowed root (the launch directory)."""
+        return self.policy.allowed_roots[0] if self.policy.allowed_roots else None
+
+    def _abs(self, path: str) -> str:
+        """Absolute path; relative ones resolve against the working folder.
+
+        Not the process CWD: Ink spawns the gateway from its own package dir
+        (the user cache for a pip install), so ``src/x.py`` resolved there and
+        was then denied as outside the launch-directory sandbox.
+        """
+        p = Path(path).expanduser()
+        root = self._work_root()
+        if not p.is_absolute() and root:
+            p = Path(root) / p
+        return os.path.abspath(p)
+
+    def _root_name_hint(self, path: str) -> str:
+        """Hint when *path* repeats the working folder's own name as a prefix.
+
+        Live `c569c9dd`: an agent in folder ``agent-augury`` asked for
+        ``agent-augury/README.md`` 21 times, then wrote its deliverable into a
+        new nested ``agent-augury/`` folder nobody looked in.
+        """
+        root = self._work_root()
+        if not root:
+            return ""
+        name = Path(root).name
+        first = Path(path).parts[0] if Path(path).parts else ""
+        if Path(path).is_absolute() or first != name:
+            return ""
+        rest = Path(*Path(path).parts[1:]).as_posix() if len(Path(path).parts) > 1 else "."
+        return (
+            f" (relative paths already start inside the working folder {root}"
+            f" — '{name}' is that folder itself; use '{rest}')"
+        )
+
     def _path_within_roots(self, path: str) -> bool:
         """P11: Path.resolve() + relative_to() — startswith 문자열 비교 금지.
 
@@ -61,7 +143,7 @@ class ToolBox:
         """
         if not self.policy.allowed_roots:
             return True
-        resolved = Path(path).resolve()
+        resolved = Path(self._abs(path)).resolve()
         for root in self.policy.allowed_roots:
             try:
                 resolved.relative_to(Path(root).resolve())
@@ -170,11 +252,23 @@ class ToolBox:
             },
             {
                 "name": "read_file",
-                "description": "Read a file's content from the filesystem. Returns the file content as text.",
+                "description": (
+                    f"Read a file's content, one page at a time (up to {READ_PAGE_LINES} "
+                    "lines per call). When more remains, the result has `next_offset`; "
+                    "call again with that offset to continue."
+                ),
                 "schema": {
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "file path to read"},
+                        "offset": {
+                            "type": "integer",
+                            "description": "1-based line to start from (default 1)",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": f"max lines to return (default/max {READ_PAGE_LINES})",
+                        },
                     },
                     "required": ["path"],
                 },
@@ -374,13 +468,13 @@ class ToolBox:
         err = self._check_root(path)
         if err:
             return err
-        abs_path = os.path.abspath(path)
+        abs_path = self._abs(path)
         try:
             with open(abs_path, "r", encoding="utf-8", errors="replace") as f:  # noqa: ASYNC230
-                content = f.read()
-            return _json({"path": abs_path, "content": content, "size": len(content)})
+                lines = f.read().splitlines(keepends=True)
         except Exception as exc:  # noqa: BLE001
-            return _json({"error": f"failed to read {path}: {exc}"})
+            return _json({"error": f"failed to read {path}: {exc}{self._root_name_hint(path)}"})
+        return _json(_read_page(abs_path, lines, args.get("offset"), args.get("limit")))
 
     async def _list_directory(self, args: dict[str, Any]) -> str:
         """List directory contents."""
@@ -388,7 +482,7 @@ class ToolBox:
         err = self._check_root(path)
         if err:
             return err
-        abs_path = os.path.abspath(path)
+        abs_path = self._abs(path)
         try:
             entries = []
             for entry in os.listdir(abs_path):
@@ -401,7 +495,7 @@ class ToolBox:
                 })
             return _json({"path": abs_path, "entries": entries})
         except Exception as exc:  # noqa: BLE001
-            return _json({"error": f"failed to list {path}: {exc}"})
+            return _json({"error": f"failed to list {path}: {exc}{self._root_name_hint(path)}"})
 
     async def _write_file(self, args: dict[str, Any]) -> str:
         """Write content to a file (creates parent dirs)."""
@@ -412,7 +506,13 @@ class ToolBox:
         err = self._check_root(path)
         if err:
             return err
-        abs_path = os.path.abspath(path)
+        abs_path = self._abs(path)
+        # Refuse rather than silently create <root>/<root-name>/…: that is
+        # where the deliverable got lost (`c569c9dd`). A real subfolder with
+        # the same name still works — the hint only fires when it is absent.
+        hint = self._root_name_hint(path)
+        if hint and not os.path.isdir(os.path.join(self._work_root() or "", Path(path).parts[0])):
+            return _json({"error": f"refusing to create a nested folder for {path}{hint}"})
         try:
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
             with open(abs_path, "w", encoding="utf-8") as f:  # noqa: ASYNC230
@@ -558,7 +658,7 @@ class ToolBox:
         err = self._check_root(path)
         if err:
             return err
-        abs_path = os.path.abspath(path)
+        abs_path = self._abs(path)
         try:
             with open(abs_path, "r", encoding="utf-8") as f:  # noqa: ASYNC230
                 content = f.read()
@@ -585,7 +685,7 @@ class ToolBox:
                 "after_len": len(new_content),
             })
         except FileNotFoundError:
-            return _json({"error": f"file not found: {path}"})
+            return _json({"error": f"file not found: {path}{self._root_name_hint(path)}"})
         except Exception as exc:  # noqa: BLE001
             return _json({"error": f"failed to edit {path}: {exc}"})
 
@@ -600,7 +700,7 @@ class ToolBox:
         err = self._check_root(path)
         if err:
             return err
-        abs_path = os.path.abspath(path)
+        abs_path = self._abs(path)
         try:
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
             with open(abs_path, "a", encoding="utf-8") as f:  # noqa: ASYNC230

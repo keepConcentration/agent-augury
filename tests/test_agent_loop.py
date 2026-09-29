@@ -606,3 +606,99 @@ def test_render_tool_instructions_only_enabled_tools():
 def test_render_tool_instructions_empty_for_no_tools():
     from agent_augury.core.agent.system_prompt import render_tool_instructions
     assert render_tool_instructions([]) == ""
+
+
+def test_render_tool_instructions_names_the_working_folder(tmp_path):
+    from agent_augury.core.agent.system_prompt import render_tool_instructions
+
+    root = tmp_path / "my-proj"
+    text = render_tool_instructions([{"name": "read_file"}], work_root=str(root))
+    assert f"Working folder: `{root}`" in text
+    assert "not `my-proj/src/app.py`" in text
+    assert "Working folder" not in render_tool_instructions([{"name": "read_file"}])
+
+
+# ---------------------------------------------------------------------------
+# Working folder: relative paths resolve against the launch dir, not the CWD
+# ---------------------------------------------------------------------------
+
+
+def _toolbox_in(tmp_path, monkeypatch):
+    """Work root = tmp/proj; process CWD elsewhere (Ink runs the gateway from
+    its package dir — the user cache for a pip install)."""
+    from agent_augury.core.agent.tools import ToolBox
+
+    root = tmp_path / "proj"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    elsewhere = tmp_path / "ink-cache"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    return ToolBox(MessageServer(), allowed_roots=[str(root)]), root
+
+
+async def test_relative_paths_resolve_against_working_folder(tmp_path, monkeypatch):
+    tb, root = _toolbox_in(tmp_path, monkeypatch)
+    read = json.loads(await tb.execute("a", "read_file", {"path": "src/a.py"}))
+    assert read["content"] == "x = 1\n"
+    listed = json.loads(await tb.execute("a", "list_directory", {"path": "."}))
+    assert {e["name"] for e in listed["entries"]} == {"src"}
+    wrote = json.loads(await tb.execute("a", "write_file", {"path": "out.md", "content": "hi"}))
+    assert wrote["status"] == "written"
+    assert (root / "out.md").read_text(encoding="utf-8") == "hi"
+
+
+async def test_read_file_pages_large_files(tmp_path, monkeypatch):
+    """Whole-file reads filled the context in P1 and compaction then erased
+    them (live `e91282e8`, `ea280c1f`) — reads come in pages now."""
+    tb, root = _toolbox_in(tmp_path, monkeypatch)
+    (root / "big.py").write_text("".join(f"line {i}\n" for i in range(1, 1001)), encoding="utf-8")
+
+    async def read(**args):
+        return json.loads(await tb.execute("a", "read_file", {"path": "big.py", **args}))
+
+    first = await read()
+    assert first["lines"] == "1-400" and first["total_lines"] == 1000
+    assert first["next_offset"] == 401 and "offset=401" in first["note"]
+    assert first["content"].startswith("line 1\n") and first["content"].endswith("line 400\n")
+
+    last = await read(offset=801)
+    assert last["lines"] == "801-1000" and "next_offset" not in last
+
+    few = await read(offset="10", limit=3)  # models sometimes send strings
+    assert few["content"] == "line 10\nline 11\nline 12\n" and few["next_offset"] == 13
+
+    assert (await read(limit=5000))["lines"] == "1-400"  # limit is capped
+    assert (await read(offset=5000))["lines"] == "none"
+
+
+async def test_read_file_char_cap_for_long_lines(tmp_path, monkeypatch):
+    from agent_augury.core.agent.tools import READ_PAGE_CHARS
+
+    tb, root = _toolbox_in(tmp_path, monkeypatch)
+    (root / "min.js").write_text(("x" * 20_000 + "\n") * 5, encoding="utf-8")
+    page = json.loads(await tb.execute("a", "read_file", {"path": "min.js"}))
+    assert page["size"] <= READ_PAGE_CHARS
+    assert page["lines"] == "1-1" and page["next_offset"] == 2
+
+
+async def test_folder_name_prefix_gets_a_hint(tmp_path, monkeypatch):
+    """Live `c569c9dd`: 21 reads of `agent-augury/...` from inside agent-augury."""
+    tb, _root = _toolbox_in(tmp_path, monkeypatch)
+    err = json.loads(await tb.execute("a", "read_file", {"path": "proj/src/a.py"}))["error"]
+    assert "use 'src/a.py'" in err
+    err = json.loads(await tb.execute("a", "list_directory", {"path": "proj"}))["error"]
+    assert "use '.'" in err
+
+
+async def test_write_refuses_nested_folder_named_like_the_root(tmp_path, monkeypatch):
+    """The deliverable got lost in a new `<root>/<root-name>/` folder."""
+    tb, root = _toolbox_in(tmp_path, monkeypatch)
+    out = json.loads(await tb.execute("a", "write_file", {"path": "proj/report.md", "content": "x"}))
+    assert "refusing to create a nested folder" in out["error"]
+    assert "use 'report.md'" in out["error"]
+    assert not (root / "proj").exists()
+    # A real subfolder of that name is still writable.
+    (root / "proj").mkdir()
+    ok = json.loads(await tb.execute("a", "write_file", {"path": "proj/report.md", "content": "x"}))
+    assert ok["status"] == "written"

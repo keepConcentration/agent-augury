@@ -244,7 +244,9 @@ class AgentLoop:
         if self._custom_system_prompt:
             return  # user-supplied prompt — don't overwrite
         if self.conversation and self.conversation[0]["role"] == "system":
-            tool_instructions = render_tool_instructions(self.tool_specs)
+            tool_instructions = render_tool_instructions(
+                self.tool_specs, work_root=self.tools._work_root()
+            )
             snap = self.server.snapshot()
             threads = [
                 {"thread_id": t.get("thread_id"), "name": t.get("name")}

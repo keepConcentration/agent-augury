@@ -17,6 +17,13 @@ from agent_augury.backend.openai_compat import OpenAICompatBackend
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _manual_setup_mode():
+    """Wizard tests here drive the manual agents flow (planner → test_planner.py)."""
+    with patch("agent_augury.wizard._select_setup_mode", return_value="manual"):
+        yield
+
+
 def _feed(responses):
     """Drive wizard prompts; exhausted inputs → '' so optional defaults apply."""
     it = iter(responses)

@@ -49,7 +49,7 @@ wizard(최초 1회)는 **provider 등록·인증 + 플래너 모델 1개 선택*
 ```
 [wizard — 최초 1회 / --reconfigure]
   Setup mode: 1) Team planner (기본)  2) Manual agents
-  └ 1) provider 등록 루프 (nous_oauth / openrouter / openai / nous)
+  └ 1) provider 등록 루프 (nous_oauth / openrouter / openai / nous / anthropic)
        → 인증 (기존 OAuth device code · api_key_env 재사용)
      플래너 provider + model 선택
      → model_config.json 에 providers + planner 저장
@@ -101,7 +101,7 @@ Wire 통로(gateway)는 Session이 소유하는데, Session은 명단이 있어�
 }
 ```
 
-- provider 이름 = wizard provider key (`openai` / `openrouter` / `nous` / `nous_oauth`). v1은 **종류당 1개**.
+- provider 이름 = wizard provider key (`openai` / `openrouter` / `nous` / `nous_oauth` / `anthropic`). v1은 **종류당 1개**.
 - provider 항목 = backend spec에서 `model`만 뺀 것. 에이전트 backend = `{**providers[name], "model": m}` → `build_backend()` 무변경.
 - 비밀값은 저장하지 않는다 (env 이름 / TokenStore만). 기존 원칙 유지.
 - `load_model_config()`는 `agents`(수동) **또는** `providers`+`planner`(플래너) 둘 중 하나가 유효하면 받아들인다. 둘 다 있으면 플래너 모드가 우선.

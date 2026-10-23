@@ -42,12 +42,15 @@ BACKEND_OPTIONS: dict[str, tuple[str, str]] = {
     "2": ("openrouter", "OpenRouter"),
     "3": ("nous", "Nous Portal (API key)"),
     "4": ("nous_oauth", "Nous Portal (OAuth device code)"),
+    "5": ("anthropic", "Anthropic Messages API"),
 }
 
 NOUS_DEFAULT_BASE_URL = "https://inference-api.nousresearch.com/v1"
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
 OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
+ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
+ANTHROPIC_DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
 
 
 # -- TTY detection -----------------------------------------------------------
@@ -165,6 +168,7 @@ def _try_list_models(
     Returns model IDs (str) or priced ``ModelInfo`` rows on success, None on failure.
     """
     from .backends_factory import (
+        list_models_anthropic,
         list_models_nous_oauth,
         list_models_nous_portal,
         list_models_openai_compat,
@@ -183,6 +187,13 @@ def _try_list_models(
             if not api_key:
                 return None
             return list_models_openai_compat(base_url, api_key)
+        if backend_type == "anthropic":
+            if not api_key_env:
+                return None
+            api_key = os.environ.get(api_key_env, "")
+            if not api_key:
+                return None
+            return list_models_anthropic(base_url, api_key)
         if backend_type == "nous":
             # Nous /models is public; prefer env key when set.
             api_key = os.environ.get(api_key_env, "") if api_key_env else ""
@@ -352,7 +363,7 @@ def _select_backend() -> str:
         choice = _input("Choice", "1")
         if choice in BACKEND_OPTIONS:
             return BACKEND_OPTIONS[choice][0]
-        print(f"  (invalid choice: {choice!r} — enter 1, 2, 3, or 4)")
+        print(f"  (invalid choice: {choice!r} — enter 1, 2, 3, 4, or 5)")
 
 
 def _collect_model_for_backend(
@@ -423,10 +434,16 @@ def _collect_provider(
         token = _run_nous_oauth_device_code(force_reconfigure=force_reconfigure)
         return backend, bool(token)
 
-    # Real backends (openai, nous) — reuse existing env var if available.
-    default_url = (
-        NOUS_DEFAULT_BASE_URL if backend_type == "nous" else OPENAI_DEFAULT_BASE_URL
-    )
+    # Real backends (openai, anthropic, nous) — reuse existing env var if available.
+    if backend_type == "nous":
+        default_url = NOUS_DEFAULT_BASE_URL
+        default_key_env = None
+    elif backend_type == "anthropic":
+        default_url = ANTHROPIC_DEFAULT_BASE_URL
+        default_key_env = ANTHROPIC_DEFAULT_API_KEY_ENV
+    else:
+        default_url = OPENAI_DEFAULT_BASE_URL
+        default_key_env = None
     if existing:
         default_url = existing.get("base_url", default_url)
     backend["base_url"] = _input("Base URL", default_url)
@@ -440,6 +457,8 @@ def _collect_provider(
             backend["api_key_env"] = existing_env
         else:
             backend["api_key_env"] = _input_required("API key env var name")
+    elif default_key_env:
+        backend["api_key_env"] = _input("API key env var name", default_key_env)
     else:
         backend["api_key_env"] = _input_required("API key env var name")
     return backend, True

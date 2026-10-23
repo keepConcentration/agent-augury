@@ -9,6 +9,7 @@ from typing import Any
 
 from .auth.oauth import NOUS_PORTAL_CONFIG
 from .auth.token_store import TokenStore
+from .backend.anthropic import AnthropicBackend
 from .backend.base import Completion, ModelBackend, ToolCall
 from .backend.fake import FakeModelBackend
 from .backend.nous_portal import NousPortalBackend
@@ -62,6 +63,13 @@ def build_backend(
         if not base_url:
             raise ValueError("openai backend requires 'base_url'")
         return OpenAICompatBackend(
+            base_url=base_url,
+            api_key=_api_key_from_env(spec),
+            model=spec["model"],
+        )
+    if btype == "anthropic":
+        base_url = spec.get("base_url") or "https://api.anthropic.com"
+        return AnthropicBackend(
             base_url=base_url,
             api_key=_api_key_from_env(spec),
             model=spec["model"],
@@ -153,6 +161,37 @@ def _fetch_model_infos_sync(
 def list_models_openai_compat(base_url: str, api_key: str) -> list[str] | None:
     """List models for an OpenAI-compatible backend. Returns None on failure."""
     return _fetch_models_sync(base_url, api_key)
+
+
+def list_models_anthropic(base_url: str, api_key: str) -> list[str] | None:
+    """List models for Anthropic Messages API (``x-api-key`` auth)."""
+    import httpx
+
+    from .backend.anthropic import ANTHROPIC_API_VERSION
+    from .model_listing import extract_model_ids
+
+    if not api_key:
+        return None
+    root = (base_url or "https://api.anthropic.com").rstrip("/")
+    try:
+        resp = httpx.get(
+            f"{root}/v1/models",
+            params={"limit": 1000},  # default page size is 20
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": ANTHROPIC_API_VERSION,
+                "Accept": "application/json",
+            },
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+    return extract_model_ids(data.get("data") or [])
 
 
 def list_openrouter_models(base_url: str, api_key: str = "") -> list[ModelInfo] | None:

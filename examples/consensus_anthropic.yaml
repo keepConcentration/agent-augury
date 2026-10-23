@@ -1,0 +1,33 @@
+# agent-augury — Anthropic Messages API backend example
+#
+# Usage:
+#   export ANTHROPIC_API_KEY=<your-key-here>
+#   agent-augury --config examples/consensus_anthropic.yaml
+#
+# Uses Console API billing (not claude.ai subscription). Secrets stay in the
+# environment — YAML stores the env var name only.
+
+max_steps: 30
+task: "두 에이전트가 분할 합의를 통해 각자 맡을 역할을 정하고, 게이트가 열리면 각자 작업 결과를 공유하세요."
+
+gate:
+  thread_name: plan
+
+agents:
+  - id: agent-1
+    backend:
+      type: anthropic
+      model: claude-sonnet-4-5
+      base_url: https://api.anthropic.com
+      api_key_env: ANTHROPIC_API_KEY
+
+  - id: agent-2
+    backend:
+      type: anthropic
+      model: claude-sonnet-4-5
+      base_url: https://api.anthropic.com
+      api_key_env: ANTHROPIC_API_KEY
+
+mirror:
+  type: discord_webhook
+  url_env: AUGURY_MIRROR_URL

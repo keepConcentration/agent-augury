@@ -366,6 +366,29 @@ def test_try_list_models_openai_failure_returns_none(monkeypatch):
         assert _try_list_models("openai", "https://api.openai.com/v1", "OPENAI_API_KEY") is None
 
 
+def test_try_list_models_anthropic_success(monkeypatch):
+    from unittest.mock import patch
+
+    from agent_augury.wizard import _try_list_models
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    with patch("agent_augury.backends_factory.list_models_anthropic") as mock:
+        mock.return_value = ["claude-sonnet-4-5"]
+        assert _try_list_models(
+            "anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY"
+        ) == ["claude-sonnet-4-5"]
+        mock.assert_called_once_with("https://api.anthropic.com", "sk-ant-test")
+
+
+def test_try_list_models_anthropic_no_key_returns_none(monkeypatch):
+    from agent_augury.wizard import _try_list_models
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert _try_list_models(
+        "anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY"
+    ) is None
+
+
 def test_try_list_models_openrouter_without_key_still_lists(monkeypatch):
     """OpenRouter listing must not require OPENROUTER_API_KEY to be set."""
     from unittest.mock import patch
@@ -687,3 +710,15 @@ def test_wizard_nous_oauth_auth_fallback_manual(tmp_path):
 
     assert cfg["agents"][0]["backend"]["type"] == "nous_oauth"
     assert cfg["agents"][0]["backend"]["model"] == "manual-model"
+
+
+def test_list_models_anthropic_requests_full_page():
+    from unittest.mock import MagicMock, patch
+
+    from agent_augury.backends_factory import list_models_anthropic
+
+    resp = MagicMock()
+    resp.json.return_value = {"data": [{"id": "claude-x"}]}
+    with patch("httpx.get", return_value=resp) as get:
+        assert list_models_anthropic("https://api.anthropic.com", "k") == ["claude-x"]
+    assert get.call_args.kwargs["params"] == {"limit": 1000}

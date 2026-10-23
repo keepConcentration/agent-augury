@@ -28,7 +28,7 @@
 - **non-blocking** delivery — agents keep working; messages land at the next `step()`
 - assignable **roles**, optional **P1–P5** collaboration protocol
 - **you** as a first-class participant (`ask_user`, Ink UI, Discord/Slack mirrors)
-- **model-agnostic** backends (OpenAI-compatible, Nous API key / OAuth)
+- **model-agnostic** backends (OpenAI-compatible, Anthropic Messages API, Nous API key / OAuth)
 
 Package layout (import paths; no legacy shims):
 
@@ -171,6 +171,7 @@ P1 starts with `start` agents; P2's `ASSIGN` / `SPLIT: none` lines then set who 
 Backends share one interface. Mix providers per agent:
 
 - OpenAI-compatible APIs (including OpenRouter)
+- Anthropic Messages API (`type: anthropic`, Console API key — not claude.ai subscription)
 - Nous Portal (API key)
 - Nous Portal (OAuth device code)
 - `type: fake` only with `--demo` (tests / offline examples)

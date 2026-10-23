@@ -27,7 +27,7 @@ agent-augury는 **여러 LLM 에이전트를 한 팀으로 돌리는 로컬 런�
 
 | 차원 | 목표 |
 |------|------|
-| 에이전트 모델 | **모델 무관** (OpenAI-compatible, Nous API/OAuth 등) |
+| 에이전트 모델 | **모델 무관** (OpenAI-compatible, Anthropic Messages, Nous API/OAuth 등) |
 | 통신 | **내부 메시지 서버(SSOT)** — 채널(Discord 등)은 읽기/상호작용 표면 |
 | 런타임 | **로컬 Python 프로세스** (asyncio) |
 | 구성 | **사용자가 에이전트 수·역할·백엔드를 YAML/위저드로 구성** |
@@ -243,7 +243,7 @@ from agent-3: (FYI) 내 몫은 DB 쪽이야.
 - **언어/런타임:** Python 3.11+ (asyncio 단일 루프, §3.5.4)
 - **패키징:** `pyproject.toml` (uv 또는 pip)
 - **설정:** YAML + CLI (둘 다 지원)
-- **모델 SDK:** 백엔드별 어댑터. **1순위 OpenAI-compatible, 2순위 Nous Portal.** 최소 의존(표준 라이브러리 + `httpx`/`aiohttp` 정도).
+- **모델 SDK:** 백엔드별 어댑터. **OpenAI-compatible, Anthropic Messages API, Nous Portal.** 최소 의존(표준 라이브러리 + `httpx`/`aiohttp` 정도).
 - **서버 상태:** 메모리(dict + asyncio 큐) + 선택적 aiosqlite 영속화 (구현됨).
 
 ### 4.2 디렉터리 (초안)

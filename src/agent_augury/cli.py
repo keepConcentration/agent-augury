@@ -209,7 +209,7 @@ def _missing_api_key_envs(cfg: dict[str, Any]) -> list[str]:
     for agent in cfg.get("agents") or []:
         backend = agent.get("backend") or {}
         btype = backend.get("type")
-        if btype not in ("openai", "nous"):
+        if btype not in ("openai", "nous", "anthropic"):
             continue
         env_name = backend.get("api_key_env")
         if not env_name or env_name in seen:

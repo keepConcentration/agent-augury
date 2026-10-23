@@ -488,6 +488,48 @@ def test_load_config_openai_backend_missing_api_key_env_raises(tmp_path):
         load_config(p)
 
 
+def test_load_config_anthropic_backend_base_url_optional(monkeypatch, tmp_path):
+    from agent_augury.backends_factory import build_backend
+
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {
+            "type": "anthropic", "model": "m", "api_key_env": "ANTHROPIC_API_KEY",
+        }}],
+    })
+    cfg = load_config(p)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    backend = build_backend(cfg["agents"][0]["backend"])
+    assert backend.base_url == "https://api.anthropic.com"
+
+
+def test_load_config_anthropic_backend_missing_api_key_env_raises(tmp_path):
+    p = write_cfg(tmp_path, {
+        "mode": "L3",
+        "agents": [{"id": "a1", "backend": {"type": "anthropic", "base_url": "http://x"}}],
+    })
+    with pytest.raises(ConfigError, match="anthropic backend requires 'api_key_env'"):
+        load_config(p)
+
+
+def test_build_anthropic_backend_reads_api_key_from_env(monkeypatch):
+    from agent_augury.backend.anthropic import AnthropicBackend
+    from agent_augury.backends_factory import build_backend
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    backend = build_backend(
+        {
+            "type": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "base_url": "https://api.anthropic.com",
+            "api_key_env": "ANTHROPIC_API_KEY",
+        }
+    )
+    assert isinstance(backend, AnthropicBackend)
+    assert backend.api_key == "sk-ant-test"
+    assert backend.model == "claude-sonnet-4-5"
+
+
 def test_load_config_nous_backend_missing_base_url_raises(tmp_path):
     p = write_cfg(tmp_path, {
         "mode": "L3",

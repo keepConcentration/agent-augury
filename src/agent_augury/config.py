@@ -12,7 +12,7 @@ import yaml
 from .bot_token_env import validate_token_env_name
 from .core.server import RESERVED_NAMES
 
-_VALID_BACKEND_TYPES = {"openai", "nous", "nous_oauth"}
+_VALID_BACKEND_TYPES = {"openai", "anthropic", "nous", "nous_oauth"}
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -797,6 +797,10 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
                 raise ConfigError(f"agents[{i}] openai backend requires 'base_url' key")
             if "api_key_env" not in backend:
                 raise ConfigError(f"agents[{i}] openai backend requires 'api_key_env' key")
+        elif btype == "anthropic":
+            # base_url optional: build_backend defaults to https://api.anthropic.com
+            if "api_key_env" not in backend:
+                raise ConfigError(f"agents[{i}] anthropic backend requires 'api_key_env' key")
         elif btype == "nous":
             if "base_url" not in backend:
                 raise ConfigError(f"agents[{i}] nous backend requires 'base_url' key")

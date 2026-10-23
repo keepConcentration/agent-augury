@@ -10,6 +10,8 @@ import yaml
 
 from agent_augury.config import load_config
 from agent_augury.wizard import (
+    ANTHROPIC_DEFAULT_API_KEY_ENV,
+    ANTHROPIC_DEFAULT_BASE_URL,
     NOUS_DEFAULT_BASE_URL,
     OPENAI_DEFAULT_BASE_URL,
     WizardCancelled,
@@ -206,6 +208,32 @@ def test_wizard_nous_backend_uses_default_base_url(tmp_path):
     assert backend["model"] == "Hermes-4"
     assert backend["base_url"] == NOUS_DEFAULT_BASE_URL
     assert backend["api_key_env"] == "NOUS_API_KEY"
+
+
+def test_wizard_anthropic_backend_uses_defaults(tmp_path):
+    inputs = iter([
+        "agent-1",             # agent id
+        "5",                   # backend choice = anthropic
+        "",                    # base_url → default
+        "",                    # api_key_env → ANTHROPIC_API_KEY
+        "claude-sonnet-4-5",   # model (manual when listing fails)
+        "n",                   # no more agents
+    ])
+    with patch("builtins.input", side_effect=_feed(inputs)), \
+         patch("agent_augury.wizard.save_model_config"), \
+         patch("agent_augury.backends_factory.list_models_anthropic", return_value=None):
+        cfg = run_wizard()
+
+    backend = cfg["agents"][0]["backend"]
+    assert backend["type"] == "anthropic"
+    assert backend["model"] == "claude-sonnet-4-5"
+    assert backend["base_url"] == ANTHROPIC_DEFAULT_BASE_URL
+    assert backend["api_key_env"] == ANTHROPIC_DEFAULT_API_KEY_ENV
+
+    cfg_path = tmp_path / "check.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    loaded = load_config(cfg_path)
+    assert loaded["agents"][0]["backend"]["type"] == "anthropic"
 
 
 def test_wizard_openrouter_emits_openai_with_defaults(tmp_path):

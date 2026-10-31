@@ -117,6 +117,7 @@ export type ErrorCode =
   | "not_controller"
   | "gateway_unavailable"
   | "timeout"
+  | "tab_not_connected"
   | "internal_error";
 
 export type Reply = {

@@ -8,10 +8,10 @@
 import {readFileSync} from "node:fs";
 import {join} from "node:path";
 import {Ajv2020} from "ajv/dist/2020.js";
-import {decodeLine, encodeLine, type WireMessage} from "../../../ink/src/wire.js";
+import {decodeLine, encodeLine, maskSensitive, type WireMessage} from "../../../ink/src/wire.js";
 import {repoRoot} from "./paths.js";
 
-export {encodeLine, type WireMessage};
+export {encodeLine, maskSensitive, type WireMessage};
 
 /** Longest stdout line we accept from the child (08 §4.1, [가정]). */
 export const MAX_LINE_BYTES = 1024 * 1024;
@@ -70,7 +70,7 @@ export function commandSchemaError(message: WireMessage): string | null {
 export type ChildLine =
   | {kind: "event"; message: WireMessage; schemaError: string | null}
   | {kind: "result"; message: WireMessage}
-  | {kind: "decode_error"; error: string};
+  | {kind: "decode_error"; error: string; oversize?: boolean};
 
 /** Classify one child stdout line.
  *

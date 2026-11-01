@@ -48,6 +48,9 @@ function readToken(): Promise<string | null> {
 }
 
 const say = (line: string) => process.stderr.write(`augury web: ${line}\n`);
+// If the CLI died, stderr may be a dead pipe: a failed log line must not turn
+// a clean shutdown into an "uncaught exception" one.
+process.stderr.on("error", () => {});
 
 async function main(): Promise<void> {
   const given = await readToken();
@@ -103,6 +106,17 @@ async function main(): Promise<void> {
   });
   // If the CLI closed its end of stdout, nobody can read the URL: shut down.
   process.stdout.on("error", () => stop("stdout closed", 1));
+  // Launched by the CLI (token on stdin): the CLI keeps stdin open, so EOF means
+  // it is gone — do not outlive it. Dev mode has no such parent.
+  if (!devMode) {
+    if (process.stdin.readableEnded) {
+      stop("stdin closed", 0);
+    } else {
+      process.stdin.on("data", () => {});
+      process.stdin.on("end", () => stop("stdin closed", 0));
+      process.stdin.resume();
+    }
+  }
 
   // The only stdout line: the CLI relays it to the user's terminal.
   process.stdout.write(`${bff.url}\n`);

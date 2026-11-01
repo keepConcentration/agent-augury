@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {existsSync} from "node:fs";
+import {existsSync, mkdtempSync, writeFileSync} from "node:fs";
 import {request as httpRequest, type IncomingMessage} from "node:http";
+import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {test} from "node:test";
 import {flagsFromEnv, startBff, type Bff} from "./bff.js";
@@ -155,14 +156,23 @@ function runMain(stdin: string | null, keepStdinOpen = false) {
   if (!keepStdinOpen) {
     child.stdin.end();
   }
-  const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+  // A BFF that never exits must fail the test, not hang it: kill it after 30 s.
+  const exited = Promise.race([
+    new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code))),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("BFF did not exit in time"));
+      }, 30_000).unref(),
+    ),
+  ]);
   /** This BFF's own gateway child, from its "gateway pid N" line. */
   const gatewayPid = () => Number(/gateway pid (\d+)/.exec(err)?.[1] ?? NaN);
   return {child, out: () => out, err: () => err, exited, gatewayPid};
 }
 
 test("main: token from stdin, URL on stdout, token never on stderr; SIGTERM cleans up", {skip: !hasVenv && "no repo .venv"}, async () => {
-  const m = runMain(`${TOKEN}\n`);
+  const m = runMain(`${TOKEN}\n`, true);
   await until(() => !Number.isNaN(m.gatewayPid()), 20_000);
   const url = m.out().trim();
   assert.match(url, new RegExp(`^http://127\\.0\\.0\\.1:\\d+/#token=${TOKEN}$`));
@@ -178,7 +188,7 @@ test("main: token from stdin, URL on stdout, token never on stderr; SIGTERM clea
 });
 
 test("main: SIGHUP (terminal closed) also shuts down cleanly", {skip: !hasVenv && "no repo .venv"}, async () => {
-  const m = runMain(`${TOKEN}\n`);
+  const m = runMain(`${TOKEN}\n`, true);
   await until(() => !Number.isNaN(m.gatewayPid()), 20_000);
   const pid = m.gatewayPid();
   m.child.kill("SIGHUP");
@@ -186,8 +196,18 @@ test("main: SIGHUP (terminal closed) also shuts down cleanly", {skip: !hasVenv &
   await until(() => !alive(pid), 5000);
 });
 
+test("main: when the CLI's stdin closes, the BFF shuts down cleanly", {skip: !hasVenv && "no repo .venv"}, async () => {
+  const m = runMain(`${TOKEN}\n`, true);
+  await until(() => !Number.isNaN(m.gatewayPid()), 20_000);
+  const pid = m.gatewayPid();
+  m.child.stdin.end();
+  assert.equal(await m.exited, 0);
+  assert.match(m.err(), /stdin closed/);
+  await until(() => !alive(pid), 5000);
+});
+
 test("main: if the BFF is SIGKILLed, its child still exits (stdin EOF)", {skip: !hasVenv && "no repo .venv"}, async () => {
-  const m = runMain(`${TOKEN}\n`);
+  const m = runMain(`${TOKEN}\n`, true);
   await until(() => !Number.isNaN(m.gatewayPid()), 20_000);
   const pid = m.gatewayPid();
   m.child.kill("SIGKILL");
@@ -222,6 +242,23 @@ test("startBff: a child that cannot even spawn leaves no listening server behind
   await assert.rejects(startBff({token: TOKEN, devMode: false, env: {PATH: process.env.PATH}, python: "", args: [], log: () => {}}), /cannot be empty/);
   // The handle leaves the resource list a moment after close() resolves.
   await until(() => servers() === before, 1000);
+});
+
+test("shutdown removes a secrets file the child never consumed", {skip: !hasVenv && "no repo .venv"}, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "augury-secrets-test-"));
+  const file = join(dir, "augury-secrets-x.json");
+  writeFileSync(file, JSON.stringify({OPENAI_API_KEY: "sk-x"}), {mode: 0o600});
+  const bff = await startBff({
+    token: TOKEN,
+    devMode: false,
+    env: {PATH: process.env.PATH, AUGURY_GATEWAY_SECRETS_FILE: file},
+    python,
+    args: ["-c", "import time; time.sleep(30)"], // never loads it
+    log: () => {},
+  });
+  assert.ok(existsSync(file));
+  await bff.shutdown();
+  assert.equal(existsSync(file), false);
 });
 
 test("startBff: commands sent during shutdown get 503", {skip: !hasVenv && "no repo .venv"}, async () => {

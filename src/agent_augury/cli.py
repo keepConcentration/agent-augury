@@ -457,55 +457,62 @@ def _run_ink_surface(
     # D1: do not pass API tokens / bot secrets into the Node Ink process.
     # Secrets ride a short-lived file that only the Python Gateway child loads.
     env = scrub_env_for_ink()
-    env.setdefault("AUGURY_PYTHON", sys.executable)
-    src_entry = pythonpath_src_entry()
-    if src_entry is not None:
-        env["PYTHONPATH"] = os.pathsep.join(
-            [str(src_entry), env.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep)
-    root = resolve_project_root()
-    if root is not None:
-        env.setdefault("AUGURY_PROJECT_ROOT", str(root))
-    # The Gateway child's cwd comes from the Ink front's own location (the user
-    # cache for a wheel install), so it cannot see where the user launched us.
-    # Hand it our cwd — that is the project they mean by a relative path.
-    env.setdefault("AUGURY_FILE_ROOT", str(Path.cwd()))
-    env["AUGURY_GATEWAY_MODE"] = mode
-    if mode == "session":
-        if not config:
-            print("error: session mode requires --config PATH", file=sys.stderr)
-            return 1
-        cfg_path = Path(config).expanduser().resolve()
-        if not cfg_path.is_file():
-            print(f"error: config not found: {cfg_path}", file=sys.stderr)
-            return 1
-        env["AUGURY_CONFIG"] = str(cfg_path)
-        if demo:
-            env["AUGURY_DEMO"] = "1"
-        if quiet:
-            env["AUGURY_QUIET"] = "1"
-        if plan_first:
-            env["AUGURY_PLAN_FIRST"] = "1"
-        else:
-            env.pop("AUGURY_PLAN_FIRST", None)
+    secrets_file = env.get("AUGURY_GATEWAY_SECRETS_FILE")
+    try:
+        env.setdefault("AUGURY_PYTHON", sys.executable)
+        src_entry = pythonpath_src_entry()
+        if src_entry is not None:
+            env["PYTHONPATH"] = os.pathsep.join(
+                [str(src_entry), env.get("PYTHONPATH", "")]
+            ).rstrip(os.pathsep)
+        root = resolve_project_root()
+        if root is not None:
+            env.setdefault("AUGURY_PROJECT_ROOT", str(root))
+        # The Gateway child's cwd comes from the Ink front's own location (the user
+        # cache for a wheel install), so it cannot see where the user launched us.
+        # Hand it our cwd — that is the project they mean by a relative path.
+        env.setdefault("AUGURY_FILE_ROOT", str(Path.cwd()))
+        env["AUGURY_GATEWAY_MODE"] = mode
+        if mode == "session":
+            if not config:
+                print("error: session mode requires --config PATH", file=sys.stderr)
+                return 1
+            cfg_path = Path(config).expanduser().resolve()
+            if not cfg_path.is_file():
+                print(f"error: config not found: {cfg_path}", file=sys.stderr)
+                return 1
+            env["AUGURY_CONFIG"] = str(cfg_path)
+            if demo:
+                env["AUGURY_DEMO"] = "1"
+            if quiet:
+                env["AUGURY_QUIET"] = "1"
+            if plan_first:
+                env["AUGURY_PLAN_FIRST"] = "1"
+            else:
+                env.pop("AUGURY_PLAN_FIRST", None)
 
-    cmd = _ink_tsx_command(ink_dir)
-    if cmd is None:
-        npm = shutil.which("npm")
-        if npm is None:
-            print(
-                "error: Ink Surface requires Node.js >= 22 (`npm` on PATH).\n"
-                "Install from https://nodejs.org/ then re-run `agent-augury`.\n"
-                "Or set AUGURY_INK_DIR to a fronts/ink tree that already has "
-                "node_modules.",
-                file=sys.stderr,
-            )
-            return 1
-        # Fallback: silent npm so lifecycle banners do not pollute the TTY.
-        cmd = [npm, "run", "start", "--silent"]
+        cmd = _ink_tsx_command(ink_dir)
+        if cmd is None:
+            npm = shutil.which("npm")
+            if npm is None:
+                print(
+                    "error: Ink Surface requires Node.js >= 22 (`npm` on PATH).\n"
+                    "Install from https://nodejs.org/ then re-run `agent-augury`.\n"
+                    "Or set AUGURY_INK_DIR to a fronts/ink tree that already has "
+                    "node_modules.",
+                    file=sys.stderr,
+                )
+                return 1
+            # Fallback: silent npm so lifecycle banners do not pollute the TTY.
+            cmd = [npm, "run", "start", "--silent"]
 
-    _clear_tty()
-    return subprocess.call(cmd, cwd=ink_dir, env=env)
+        _clear_tty()
+        return subprocess.call(cmd, cwd=ink_dir, env=env)
+    finally:
+        # The Gateway child deletes it once loaded; if it never got that far
+        # (bad config, no npm, Ink failed), keys must not stay in the temp dir.
+        if secrets_file:
+            Path(secrets_file).unlink(missing_ok=True)
 
 
 def _run_ink_hello() -> int:

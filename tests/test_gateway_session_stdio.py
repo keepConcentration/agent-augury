@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import glob
 import os
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from agent_augury.gateway.stdio import decode_line, encode_line
 from agent_augury.gateway.types import make_command
@@ -150,6 +154,56 @@ def test_cli_passes_launch_dir_to_gateway(tmp_path, monkeypatch):
     monkeypatch.setattr("subprocess.call", fake_call)
     cli._run_ink_surface(mode="hello")
     assert captured["AUGURY_FILE_ROOT"] == str(Path(tmp_path).resolve())
+
+
+def _secrets_files() -> set[str]:
+    return set(glob.glob(os.path.join(tempfile.gettempdir(), "augury-secrets-*.json")))
+
+
+def test_ink_launch_leaves_no_secrets_file(tmp_path, monkeypatch):
+    """The Gateway child normally deletes the file; if it never runs, cli.py must."""
+    from agent_augury import cli
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-for-disk")
+    monkeypatch.setattr(cli, "ensure_ink_front", lambda: (tmp_path, None))
+    monkeypatch.setattr(cli, "_ink_tsx_command", lambda d: ["true"])
+    monkeypatch.setattr(cli, "_clear_tty", lambda: None)
+    seen: list[str] = []
+
+    def fake_call(cmd, cwd=None, env=None):
+        seen.append((env or {}).get("AUGURY_GATEWAY_SECRETS_FILE", ""))
+        return 0
+
+    monkeypatch.setattr("subprocess.call", fake_call)
+    before = _secrets_files()
+    assert cli._run_ink_surface(mode="hello") == 0
+    assert seen and seen[0], "the secret should still travel by file"
+    assert _secrets_files() <= before
+
+
+def test_ink_early_errors_leave_no_secrets_file(tmp_path, monkeypatch):
+    from agent_augury import cli
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-for-disk")
+    monkeypatch.setattr(cli, "ensure_ink_front", lambda: (tmp_path, None))
+    before = _secrets_files()
+    # Config missing → returns before Ink starts.
+    assert cli._run_ink_surface(mode="session", config=str(tmp_path / "nope.yaml")) == 1
+    # No tsx and no npm → returns before Ink starts.
+    monkeypatch.setattr(cli, "_ink_tsx_command", lambda d: None)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    assert cli._run_ink_surface(mode="hello") == 1
+
+    # Launch itself raising.
+    def boom(*a, **kw):
+        raise OSError("exec failed")
+
+    monkeypatch.setattr(cli, "_ink_tsx_command", lambda d: ["true"])
+    monkeypatch.setattr(cli, "_clear_tty", lambda: None)
+    monkeypatch.setattr("subprocess.call", boom)
+    with pytest.raises(OSError):
+        cli._run_ink_surface(mode="hello")
+    assert _secrets_files() <= before
 
 
 def test_cli_config_launches_ink_session():

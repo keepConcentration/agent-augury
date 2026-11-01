@@ -49,6 +49,8 @@ export type BffState = {
 
 export type Model = {
   rows: Row[];
+  /** Agents have run at least once (agent.step / turn_done) — hides Start (F-011). */
+  started: boolean;
   /** Highest seq applied; frames at or below it are replay duplicates (F-015). */
   lastSeq: number;
   /** Status from the event stream alone; ``status()`` overlays ``bff.state``. */
@@ -57,11 +59,11 @@ export type Model = {
   nextLocal: number;
 };
 
-// No Ctrl+C here (CP-7); the Quit button joins this hint when it exists (WBS 3.8).
-export const RESUME_HINT = "에이전트가 멈췄습니다. 메시지를 보내면 이어서 진행합니다.";
+// No Ctrl+C here (CP-7): the Web ends a session with the Quit button.
+export const RESUME_HINT = "에이전트가 멈췄습니다. 메시지를 보내면 이어서 진행하고, 끝내려면 종료 버튼을 누르세요.";
 
 export function initialModel(): Model {
-  return {rows: [], lastSeq: 0, base: "connected", state: null, nextLocal: -1};
+  return {rows: [], started: false, lastSeq: 0, base: "connected", state: null, nextLocal: -1};
 }
 
 function push(m: Model, row: Omit<Row, "key">, key?: number): Model {
@@ -105,7 +107,8 @@ export function applyWire(m: Model, seq: number, e: WireMessage): Model {
   if (seq <= m.lastSeq) {
     return m;
   }
-  let out: Model = {...m, lastSeq: seq, base: nextBase(m.base, e)};
+  const started = m.started || e.type === "agent.step" || e.type === "session.turn_done";
+  let out: Model = {...m, lastSeq: seq, base: nextBase(m.base, e), started};
   const line = formatEvent(e);
   if (line) {
     const markdown = e.type === "agent.step" || e.type === "message";
@@ -129,6 +132,14 @@ export function applyNotice(m: Model, seq: number, n: Notice): Model {
   }
   const tone: Tone = n.level === "error" ? "error" : n.level === "warn" ? "warn" : "dim";
   return push({...m, lastSeq: seq}, {kind: "text", text: `[${n.kind}] ${n.text}`, tone}, seq);
+}
+
+/** The user's own input (Ink echoes it too). Only this tab sees it: Wire has no echo (09 §3.3). */
+export function applyEcho(m: Model, text: string, note: string | null): Model {
+  const row = push(m, {kind: "text", text: note ? `${text}    ⓘ ${note}` : text, tone: "normal"});
+  // Ink: sending input means the agents run (App.tsx onSubmit).
+  const base = m.base === "connected" || m.base === "ready" || m.base === "idle" || m.base === "interrupted" ? "running" : m.base;
+  return {...row, base};
 }
 
 /** Apply a ``bff.state`` frame: the authority for pending, ended and gateway. */

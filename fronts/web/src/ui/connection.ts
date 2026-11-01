@@ -116,6 +116,30 @@ export async function start(token: string | null): Promise<Start> {
   }
 }
 
+export type CmdResult =
+  | {kind: "ok"; result: Record<string, unknown>; failed: boolean; failure: string | null}
+  | {kind: "http"; status: number; code: string; cmdId: string | null}
+  | {kind: "network"};
+
+/** API-05. The tab id rides X-Augury-Tab; the BFF owns dir, id and source. */
+export async function sendCommand(tab: string, body: Record<string, unknown>): Promise<CmdResult> {
+  let res: Response;
+  try {
+    res = await fetch("/api/cmd", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Augury-Tab": tab},
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return {kind: "network"};
+  }
+  const data = (await res.json().catch(() => ({}))) as Record<string, any>;
+  if (res.status === 200) {
+    return {kind: "ok", result: data.result ?? {}, failed: data.failed === true, failure: data.failure ?? null};
+  }
+  return {kind: "http", status: res.status, code: String(data.error?.code ?? res.status), cmdId: data.error?.cmd_id ?? null};
+}
+
 export type StreamHandlers = {
   wire: (seq: number, e: WireMessage) => void;
   notice: (seq: number, n: Notice) => void;

@@ -1,11 +1,26 @@
 /** Web Surface app shell (WBS 3.1) and timeline (3.2) — 09 §2·§3.1~3.3·§3.9. */
 
-import {useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState} from "react";
+import {useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode} from "react";
 import {authLink} from "./auth.js";
-import {claim, openStream, session, start, takeFragmentToken, type Session} from "./connection.js";
+import {outcome, plan} from "./compose.js";
+import {claim, openStream, sendCommand, session, start, takeFragmentToken, type Session} from "./connection.js";
+import {
+  ApprovalCard,
+  Composer,
+  ControlBar,
+  GateNotice,
+  QuestionPanel,
+  QuitDialog,
+  type Approval,
+  type Can,
+  type ComposerHandle,
+  type Question,
+} from "./controls.js";
+import {escAction, isCardShortcut} from "./keys.js";
 import {Markdown} from "./markdown.js";
 import {
   STATUS_LABEL,
+  applyEcho,
   applyNotice,
   applyState,
   applyWire,
@@ -20,10 +35,12 @@ import {
 type Action =
   | {type: "wire"; seq: number; e: Parameters<typeof applyWire>[2]}
   | {type: "notice"; seq: number; n: Notice}
-  | {type: "state"; s: NonNullable<Model["state"]>};
+  | {type: "state"; s: NonNullable<Model["state"]>}
+  | {type: "echo"; text: string; note: string | null};
 
 function reduce(m: Model, a: Action): Model {
   if (a.type === "wire") return applyWire(m, a.seq, a.e);
+  if (a.type === "echo") return applyEcho(m, a.text, a.note);
   if (a.type === "notice") return applyNotice(m, a.seq, a.n);
   return applyState(m, a.s);
 }
@@ -59,7 +76,7 @@ function TimelineRow({row}: {row: Row}) {
 }
 
 /** Follows the bottom unless the user scrolled up; then counts what arrived (09 §3.3). */
-function Timeline({rows}: {rows: Row[]}) {
+function Timeline({rows, dock}: {rows: Row[]; dock: ReactNode}) {
   const box = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const seen = useRef(rows.length);
@@ -108,6 +125,8 @@ function Timeline({rows}: {rows: Row[]}) {
           ↓ 새 이벤트 {unseen}건
         </button>
       )}
+      {/* Cards float over the timeline's bottom: the composer below never moves (10 M1). */}
+      {dock && <div className="dock">{dock}</div>}
     </div>
   );
 }
@@ -167,6 +186,16 @@ export function App() {
   const [auth, setAuth] = useState<string[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [dialog, setDialog] = useState(false);
+  const [quitOpen, setQuitOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
+  /** Approvals whose command got a 504: the card says "result unknown" (08 §6.2). */
+  const [unknownIds, setUnknownIds] = useState<ReadonlySet<string>>(new Set());
+  const [cardError, setCardError] = useState<{id: string; rev: number; text: string} | null>(null);
+  const composer = useRef<ComposerHandle>(null);
+  const card = useRef<HTMLDivElement>(null);
+  const questionPanel = useRef<HTMLDivElement>(null);
   const toastId = useRef(0);
 
   const toast = useCallback((level: Toast["level"], text: string) => {
@@ -227,6 +256,124 @@ export function App() {
     else if (got) toast("info", "이 탭에서 조작합니다");
   };
 
+  const s = model.state;
+  const st = status(model);
+  const can: Can =
+    phase !== "live"
+      ? {act: false, reason: phase === "reconnecting" ? "연결 복구 후 사용할 수 있습니다" : "연결 중…"}
+      : !s
+        ? {act: false, reason: "연결 중…"}
+        : s.gateway.status === "exited"
+          ? {act: false, reason: `세션 프로세스가 끝났습니다 (exit ${s.gateway.exit_code ?? "?"})`}
+          : s.ended
+            ? {act: false, reason: "세션이 끝났습니다"}
+            : !s.is_controller
+              ? {act: false, reason: "👁 읽기 전용 탭입니다"}
+              : {act: true, reason: null};
+  const approvals = (s?.pending_approvals ?? []) as unknown as Approval[];
+  const questions = (s?.pending_questions ?? []) as unknown as Question[];
+  const approval = approvals[0] ?? null;
+  const question = questions[0] ?? null;
+
+  /** One command through API-05, with the shared feedback rules (compose.outcome). */
+  const send = async (body: Record<string, unknown>, echo: string | null = null): Promise<boolean> => {
+    setBusy(true);
+    try {
+      const type = String(body.type);
+      const r = await sendCommand(tab, body);
+      const o = outcome(type, r);
+      if (o.toast) toast(o.toast.level, o.toast.text);
+      if (r.kind === "http" && r.code === "timeout" && type === "approval.resolve") {
+        setUnknownIds((ids) => new Set([...ids, String(body.approval_id)]));
+      }
+      if (r.kind === "ok" && r.failed && type === "approval.resolve") {
+        setCardError({id: String(body.approval_id), rev: approval?.revision ?? 0, text: r.failure ?? "rejected"});
+      }
+      // Echo only what is known to have landed: not a 504, not "already handled".
+      if (r.kind === "ok" && !r.failed && echo) {
+        dispatch({type: "echo", text: echo, note: o.asTurn ? "idle 입력: 멘션·스레드 미전달" : null});
+      }
+      return o.clear;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = async (text: string): Promise<boolean> => {
+    const p = plan(text, {
+      agents: s?.agents ?? [],
+      question: question ? {question_id: question.question_id, thread_id: question.thread_id, agent_id: question.agent_id} : null,
+      gateThread: s?.human_approval_pending?.thread_id ?? null,
+    });
+    if (p.kind === "empty") return false;
+    if (p.kind === "quit") {
+      setQuitOpen(true);
+      return true;
+    }
+    if (p.kind === "blocked") {
+      setWarning(p.warning);
+      return false;
+    }
+    setWarning(p.warning);
+    return send(p.body, p.echo);
+  };
+
+  const decide = (d: "granted" | "denied") => {
+    if (!approval || busy) return; // no second resolve while the first is in the air
+    setCardError(null);
+    void send({type: "approval.resolve", approval_id: approval.approval_id, decision: d}, `> approval ${d} [${approval.approval_id}]`);
+  };
+  const interrupt = () => void send({type: "session.interrupt"});
+  const quit = () => {
+    setQuitOpen(false);
+    void send({type: "session.quit"});
+  };
+  const startSession = async () => {
+    setStarting(true);
+    if (!(await send({type: "session.start"}))) setStarting(false);
+  };
+  // "Starting…" until the agents actually ran (F-011).
+  if (starting && model.started) setStarting(false);
+
+  // Keyboard: Esc and Alt+Shift+A anywhere on the page (09 §5).
+  const keyState = useRef({dialogOpen: false, canInterrupt: false});
+  keyState.current = {
+    dialogOpen: dialog || quitOpen,
+    canInterrupt: can.act && (st === "running" || st === "ask_user" || st === "approval"),
+  };
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (isCardShortcut(e)) {
+        e.preventDefault();
+        (card.current ?? questionPanel.current)?.focus();
+        return;
+      }
+      if (e.key !== "Escape") return;
+      const action = escAction({
+        dialogOpen: keyState.current.dialogOpen,
+        confirming: document.querySelector('.card.approval[data-confirming="true"]') !== null,
+        canInterrupt: keyState.current.canInterrupt,
+        composing: e.isComposing,
+        inComposer: document.activeElement?.id === "composer",
+      });
+      if (action === "close-dialog") {
+        setDialog(false);
+        setQuitOpen(false);
+      } else if (action === "interrupt") {
+        interrupt();
+      }
+      // "cancel-confirm" is handled by the focused card itself.
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+  // Forget per-card notes once the card is gone.
+  useEffect(() => {
+    const live = new Set(approvals.map((a) => a.approval_id));
+    if ([...unknownIds].some((id) => !live.has(id))) setUnknownIds(new Set([...unknownIds].filter((id) => live.has(id))));
+    if (cardError && !live.has(cardError.id)) setCardError(null);
+  });
+
   if (phase === "expired") {
     return (
       <div className="fullscreen">
@@ -252,36 +399,102 @@ export function App() {
     );
   }
 
-  const s = model.state;
+  const hap = s?.human_approval_pending ?? null;
+  const dock = approval ? (
+    <ApprovalCard
+      ref={card}
+      a={approval}
+      index={1}
+      total={approvals.length}
+      questions={questions.length}
+      can={can}
+      unknown={unknownIds.has(approval.approval_id)}
+      error={cardError?.id === approval.approval_id && cardError.rev === approval.revision ? cardError.text : null}
+      onDecide={decide}
+      onClaim={() => void takeControl(false)}
+    />
+  ) : question ? (
+    <QuestionPanel
+      ref={questionPanel}
+      q={question}
+      index={1}
+      total={questions.length}
+      can={can}
+      onAnswer={(content) => {
+        if (busy) return;
+        const option = question.options[Number(content) - 1] ?? "";
+        void send(
+          {type: "human.answer", content, question_id: question.question_id, thread_id: question.thread_id},
+          `> [${content}] ${option} → ${question.agent_id ? `@${question.agent_id}` : "?"}`,
+        );
+      }}
+      onSkip={() => {
+        if (!busy) void send({type: "human.skip", question_id: question.question_id}, "> /skip");
+      }}
+      onClaim={() => void takeControl(false)}
+    />
+  ) : hap ? (
+    <GateNotice pending={hap} summary={gateSummary(model)} idle={st === "idle"} can={can} onPrefix={(p) => composer.current?.fill(p)} />
+  ) : null;
+  const composerLabel = question
+    ? `답변 → ${question.agent_id ? `@${question.agent_id}` : "?"} (${question.question_id})`
+    : st === "idle"
+      ? "메시지 (새 턴 시작)"
+      : "메시지";
+  const composerHint = approval
+    ? "승인은 위 카드 버튼으로 합니다"
+    : (s?.agents.length ?? 0) === 0 && can.act
+      ? "에이전트 목록이 아직 없습니다 — 멘션 검사를 건너뜁니다"
+      : null;
+  // While a dialog is open the page behind it takes no input (09 §3.8, review 3.4 Nit).
+  const blocked = dialog || quitOpen;
   return (
     <div className="app">
-      <StatusBar model={model} phase={phase} />
-      <div className="banners">
-        {info?.dev_mode && (
-          <div className="banner warn">⚠ 개발 모드: --web 없이 기동되어 비밀값 스크럽이 보장되지 않습니다</div>
-        )}
-        {auth.length > 0 && (
-          <div className="banner info">
-            🔑 인증 필요:{" "}
-            {auth.map((line, i) => (
-              <div key={i}>
-                <AuthText text={line} />
-              </div>
-            ))}
-            <button className="link" onClick={() => setAuth([])}>
-              닫기
-            </button>
-          </div>
-        )}
-        {phase === "reconnecting" && <div className="banner warn">⟳ 연결이 끊겼습니다. 재연결 중…</div>}
-        {s && !s.is_controller && (
-          <div className="banner info">
-            {s.has_controller ? "👁 다른 탭이 조작 중입니다. 이 탭은 보기만 합니다" : "조작 중인 탭이 없습니다"}{" "}
-            <button onClick={() => void takeControl(false)}>이 탭에서 조작</button>
-          </div>
-        )}
+      <div className="main" {...(blocked ? {inert: ""} : {})}>
+        <StatusBar model={model} phase={phase} />
+        <div className="banners">
+          {info?.dev_mode && (
+            <div className="banner warn">⚠ 개발 모드: --web 없이 기동되어 비밀값 스크럽이 보장되지 않습니다</div>
+          )}
+          {auth.length > 0 && (
+            <div className="banner info">
+              🔑 인증 필요:{" "}
+              {auth.map((line, i) => (
+                <div key={i}>
+                  <AuthText text={line} />
+                </div>
+              ))}
+              <button className="link" onClick={() => setAuth([])}>
+                닫기
+              </button>
+            </div>
+          )}
+          {phase === "reconnecting" && <div className="banner warn">⟳ 연결이 끊겼습니다. 재연결 중…</div>}
+          {s && !s.is_controller && (
+            <div className="banner info">
+              {s.has_controller ? "👁 다른 탭이 조작 중입니다. 이 탭은 보기만 합니다" : "조작 중인 탭이 없습니다"}{" "}
+              <button onClick={() => void takeControl(false)}>이 탭에서 조작</button>
+            </div>
+          )}
+        </div>
+        <div className="sr-only" aria-live="assertive">
+          {approval ? `${approval.agent_id} 이 ${approval.tool} 승인을 요청했습니다` : ""}
+        </div>
+        <Timeline rows={model.rows} dock={dock} />
+        <Composer ref={composer} can={can} label={composerLabel} hint={composerHint} warning={warning} busy={busy} onSubmit={submit} />
+        <ControlBar
+          showStart={Boolean(info?.flags.no_auto_start) && !model.started}
+          starting={starting}
+          canStart={can.act && !busy}
+          canInterrupt={keyState.current.canInterrupt && !busy}
+          canQuit={can.act}
+          seq={model.lastSeq}
+          live={phase === "live"}
+          onStart={() => void startSession()}
+          onInterrupt={interrupt}
+          onQuit={() => setQuitOpen(true)}
+        />
       </div>
-      <Timeline rows={model.rows} />
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.level}`}>
@@ -290,6 +503,7 @@ export function App() {
         ))}
       </div>
       {dialog && <ClaimDialog onCancel={() => setDialog(false)} onConfirm={() => void takeControl(true)} />}
+      {quitOpen && <QuitDialog onCancel={() => setQuitOpen(false)} onConfirm={quit} />}
     </div>
   );
 }

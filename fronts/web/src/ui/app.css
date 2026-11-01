@@ -1,0 +1,277 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1d1f23;
+  --muted: #6b7079;
+  --line: #e2e4e8;
+  --panel: #f6f7f9;
+  --accent: #2f6fde;
+  --warn: #9a6500;
+  --warn-bg: #fff6e0;
+  --error: #b42318;
+  --error-bg: #fdecea;
+  --info-bg: #eaf1fd;
+  --ok: #1a7f37;
+  --approval: #a3268e;
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171b;
+    --fg: #e6e7ea;
+    --muted: #9399a3;
+    --line: #2b2f36;
+    --panel: #1d2026;
+    --accent: #6d9bf0;
+    --warn: #e2b04a;
+    --warn-bg: #2e2612;
+    --error: #f0857a;
+    --error-bg: #34191a;
+    --info-bg: #17243b;
+    --ok: #57c27a;
+    --approval: #df73cb;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+button {
+  font: inherit;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0 4px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.chip {
+  font-weight: 600;
+}
+
+.chip.st-running {
+  color: var(--ok);
+}
+.chip.st-approval {
+  color: var(--approval);
+}
+.chip.st-ask_user,
+.chip.st-interrupted {
+  color: var(--warn);
+}
+.chip.st-exited {
+  color: var(--error);
+}
+.chip.st-connected,
+.chip.st-ready,
+.chip.st-idle,
+.chip.st-ended,
+.chip.stale {
+  color: var(--muted);
+}
+
+.gate {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.roster,
+.gw,
+.tab {
+  color: var(--muted);
+}
+
+.tab {
+  margin-left: auto;
+}
+
+.banner {
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.banner.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.banner.info {
+  background: var(--info-bg);
+}
+.banner .host {
+  color: var(--muted);
+}
+
+.timeline-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.timeline {
+  height: 100%;
+  overflow-y: auto;
+  padding: 8px 16px 24px;
+  overflow-wrap: anywhere;
+}
+
+.row {
+  padding: 3px 0;
+  white-space: pre-wrap;
+}
+.row.tone-dim {
+  color: var(--muted);
+}
+.row.tone-warn {
+  color: var(--warn);
+}
+.row.tone-error {
+  color: var(--error);
+}
+.row.gap {
+  font-style: italic;
+}
+
+.md {
+  white-space: normal;
+}
+.md p {
+  margin: 0.2em 0;
+  white-space: pre-wrap;
+}
+.md .md-h {
+  font-weight: 700;
+}
+.md pre {
+  margin: 0.4em 0;
+  padding: 8px;
+  background: var(--panel);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.md .md-image {
+  color: var(--muted);
+}
+.md table {
+  border-collapse: collapse;
+}
+.md th,
+.md td {
+  border: 1px solid var(--line);
+  padding: 2px 6px;
+}
+
+.new-chip {
+  position: absolute;
+  right: 16px;
+  bottom: 10px;
+}
+
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(420px, calc(100vw - 32px));
+}
+.toast {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.toast.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.toast.error {
+  background: var(--error-bg);
+  color: var(--error);
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 40%);
+  padding: 16px;
+}
+.dialog {
+  max-width: 440px;
+  padding: 16px 20px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+.dialog h2 {
+  margin: 0 0 8px;
+  font-size: 1.1em;
+}
+.dialog .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.fullscreen {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  padding: 16px;
+  text-align: center;
+  gap: 8px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}

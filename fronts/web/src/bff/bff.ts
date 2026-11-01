@@ -4,7 +4,7 @@
  * whole BFFs side by side; ``main.ts`` is the thin CLI around it.
  */
 
-import {rmSync} from "node:fs";
+import {existsSync, rmSync} from "node:fs";
 import {join} from "node:path";
 import {CommandBus} from "./cmd.js";
 import {GatewayChild, childArgs, type Env} from "./gateway.js";
@@ -79,9 +79,13 @@ export async function startBff(options: BffOptions): Promise<Bff> {
   });
   const parts: BffParts = {hub, state, bus};
 
+  const staticRoot = options.staticRoot ?? join(repoRoot, "fronts", "web", "dist");
+  if (!existsSync(join(staticRoot, "index.html"))) {
+    log("augury web: the UI is not built yet — run `npm run build` in fronts/web (the API still works)");
+  }
   const server = await startServer({
     token: options.token,
-    staticRoot: options.staticRoot ?? join(repoRoot, "fronts", "web", "dist"),
+    staticRoot,
     onError: (err) => log(`augury web: ${maskSensitive(err.message)}`),
     routes: [
       hub.route(),

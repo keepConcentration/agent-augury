@@ -8,10 +8,26 @@
 import {readFileSync} from "node:fs";
 import {join} from "node:path";
 import {Ajv2020} from "ajv/dist/2020.js";
-import {decodeLine, encodeLine, maskSensitive, type WireMessage} from "../../../ink/src/wire.js";
+import {decodeLine, encodeLine, maskSensitive as inkMask, type WireMessage} from "../../../ink/src/wire.js";
 import {repoRoot} from "./paths.js";
 
-export {encodeLine, maskSensitive, type WireMessage};
+export {encodeLine, type WireMessage};
+
+// Beyond Ink's Bearer/api_key/token rules: cookies and password/secret pairs
+// can show up in gateway stderr and BFF logs (review 2.8).
+const MORE_SENSITIVE: Array<[RegExp, string]> = [
+  [/((?:Set-)?Cookie:\s*)[^\r\n]+/gi, "$1***"],
+  [/((?:password|passwd|secret)["\s:=]+)\S+/gi, "$1***"],
+];
+
+/** Ink's masking plus the cookie/password/secret rules; used for every BFF log line and notice. */
+export function maskSensitive(text: string): string {
+  let out = inkMask(text);
+  for (const [pattern, replacement] of MORE_SENSITIVE) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
 
 /** Longest stdout line we accept from the child (08 §4.1, [가정]). */
 export const MAX_LINE_BYTES = 1024 * 1024;

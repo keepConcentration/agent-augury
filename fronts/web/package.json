@@ -5,7 +5,8 @@
   "description": "Web Surface (BFF + SPA) for agent-augury",
   "type": "module",
   "scripts": {
-    "test": "tsx --test --test-force-exit src/bff/*.test.ts",
+    "start": "node --import tsx src/bff/main.ts",
+    "test": "tsx --test src/bff/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

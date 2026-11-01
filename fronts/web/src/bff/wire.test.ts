@@ -5,6 +5,7 @@ import {
   EVENT_TYPES,
   commandSchemaError,
   lineSplitter,
+  maskSensitive,
   parseChildLine,
 } from "./wire.js";
 
@@ -56,6 +57,12 @@ test("decode errors never quote the line", () => {
 
 test("a cmd coming back from the child is rejected", () => {
   assert.equal(parseChildLine('{"dir":"cmd","type":"session.quit","id":"x"}').kind, "decode_error");
+});
+
+test("BFF masking adds cookie and password/secret rules on top of Ink's", () => {
+  const out = maskSensitive("Cookie: augury_web_1=abc; x=y | password=hunter2 | secret: s3 | Bearer tok123");
+  assert.doesNotMatch(out, /abc|hunter2|s3 |tok123/);
+  assert.match(out, /Cookie: \*\*\*/);
 });
 
 test("command schema: answer needs content, unknown types are named", () => {

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from agent_augury.gateway.stdio import decode_line, encode_line
 from agent_augury.gateway.types import make_command
@@ -147,9 +150,155 @@ def test_cli_passes_launch_dir_to_gateway(tmp_path, monkeypatch):
         captured.update(env or {})
         return 0
 
-    monkeypatch.setattr("subprocess.call", fake_call)
+    monkeypatch.setattr(cli, "_call_ink", fake_call)
     cli._run_ink_surface(mode="hello")
     assert captured["AUGURY_FILE_ROOT"] == str(Path(tmp_path).resolve())
+
+
+@pytest.fixture
+def secrets_tmp(tmp_path, monkeypatch) -> Path:
+    """Private temp dir so parallel runs cannot add or remove files under us."""
+    d = tmp_path / "tmp"
+    d.mkdir()
+    monkeypatch.setenv("TMPDIR", str(d))
+    monkeypatch.setattr(tempfile, "tempdir", str(d))
+    return d
+
+
+def _secrets_files(d: Path) -> list[Path]:
+    return sorted(d.glob("augury-secrets-*.json"))
+
+
+def test_ink_launch_leaves_no_secrets_file(tmp_path, monkeypatch, secrets_tmp):
+    """The Gateway child normally deletes the file; if it never runs, cli.py must."""
+    from agent_augury import cli
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-for-disk")
+    monkeypatch.setattr(cli, "ensure_ink_front", lambda: (tmp_path, None))
+    monkeypatch.setattr(cli, "_ink_tsx_command", lambda d: ["true"])
+    monkeypatch.setattr(cli, "_clear_tty", lambda: None)
+    seen: list[str] = []
+
+    def fake_call(cmd, cwd=None, env=None):
+        path = (env or {}).get("AUGURY_GATEWAY_SECRETS_FILE", "")
+        seen.append(path)
+        assert Path(path).is_file()
+        return 0
+
+    monkeypatch.setattr(cli, "_call_ink", fake_call)
+    assert cli._run_ink_surface(mode="hello") == 0
+    assert seen and Path(seen[0]).parent == secrets_tmp, "the secret should travel by file"
+    assert _secrets_files(secrets_tmp) == []
+
+
+def test_ink_early_errors_leave_no_secrets_file(tmp_path, monkeypatch, secrets_tmp):
+    from agent_augury import cli
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-for-disk")
+    monkeypatch.setattr(cli, "ensure_ink_front", lambda: (tmp_path, None))
+    # Config missing → returns before Ink starts.
+    assert cli._run_ink_surface(mode="session", config=str(tmp_path / "nope.yaml")) == 1
+    assert _secrets_files(secrets_tmp) == []
+    # No tsx and no npm → returns before Ink starts.
+    monkeypatch.setattr(cli, "_ink_tsx_command", lambda d: None)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    assert cli._run_ink_surface(mode="hello") == 1
+    assert _secrets_files(secrets_tmp) == []
+
+    # Launch itself raising.
+    def boom(*a, **kw):
+        raise OSError("exec failed")
+
+    monkeypatch.setattr(cli, "_ink_tsx_command", lambda d: ["true"])
+    monkeypatch.setattr(cli, "_clear_tty", lambda: None)
+    monkeypatch.setattr("subprocess.Popen", boom)
+    with pytest.raises(OSError):
+        cli._run_ink_surface(mode="hello")
+    assert _secrets_files(secrets_tmp) == []
+
+
+def test_ink_surface_restores_signal_handlers(tmp_path, monkeypatch):
+    import signal
+
+    from agent_augury import cli
+
+    monkeypatch.setattr(cli, "ensure_ink_front", lambda: (tmp_path, None))
+    monkeypatch.setattr(cli, "_ink_tsx_command", lambda d: ["true"])
+    monkeypatch.setattr(cli, "_clear_tty", lambda: None)
+    during: list = []
+    monkeypatch.setattr(
+        cli, "_call_ink", lambda *a, **kw: during.append(signal.getsignal(signal.SIGTERM)) or 0
+    )
+    before = signal.getsignal(signal.SIGTERM)
+    assert cli._run_ink_surface(mode="hello") == 0
+    assert during and during[0] is not before
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+_FAKE_INK = """
+import pathlib, signal, sys, time
+ready, got = map(pathlib.Path, sys.argv[1:3])
+def on_term(signum, frame):
+    got.write_text(str(signum))
+    sys.exit(0)
+signal.signal(signal.SIGTERM, on_term)
+signal.signal(signal.SIGHUP, on_term)
+ready.write_text("ok")
+time.sleep(60)
+sys.exit(3)
+"""
+
+_CLI_UNDER_TEST = """
+import pathlib, sys
+from agent_augury import cli
+ink_dir, ready, got = sys.argv[1:4]
+cli.ensure_ink_front = lambda: (pathlib.Path(ink_dir), None)
+cli._ink_tsx_command = lambda d: [sys.executable, "-c", {fake!r}, ready, got]
+cli._clear_tty = lambda: None
+sys.exit(cli._run_ink_surface(mode="hello"))
+"""
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX signals")
+@pytest.mark.parametrize("signame", ["SIGTERM", "SIGHUP"])
+def test_signal_during_ink_removes_secrets_file(tmp_path, signame):
+    """`kill <cli pid>` / closed terminal: no handler meant no ``finally``."""
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    secrets_dir = tmp_path / "tmp"
+    secrets_dir.mkdir()
+    ready, got = tmp_path / "ready", tmp_path / "got"
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(SRC),
+        "TMPDIR": str(secrets_dir),
+        "OPENAI_API_KEY": "sk-test-not-for-disk",
+    }
+    script = _CLI_UNDER_TEST.format(fake=_FAKE_INK)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script, str(tmp_path), str(ready), str(got)],
+        env=env,
+        close_fds=False,
+    )
+    try:
+        deadline = time.monotonic() + 20
+        while not ready.exists():
+            assert proc.poll() is None, "CLI exited before Ink started"
+            assert time.monotonic() < deadline, "fake Ink never started"
+            time.sleep(0.05)
+        assert len(_secrets_files(secrets_dir)) == 1
+        sig = getattr(signal, signame)
+        proc.send_signal(sig)
+        assert proc.wait(timeout=15) == 128 + sig
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert _secrets_files(secrets_dir) == []
+    assert got.read_text() == str(int(sig)), "Ink should get the signal to clean up"
 
 
 def test_cli_config_launches_ink_session():

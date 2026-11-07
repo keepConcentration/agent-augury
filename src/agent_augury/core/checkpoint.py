@@ -116,14 +116,10 @@ def config_fingerprint(cfg: dict[str, Any], *, config_path: str | None = None) -
 def parse_checkpoint_config(
     cfg: dict[str, Any],
     *,
-    demo: bool = False,
     new_session: bool = False,
     cli_session_id: str | None = None,
 ) -> CheckpointConfig:
-    """Build CheckpointConfig from YAML + CLI. ``--demo`` forces disabled."""
-    if demo:
-        return CheckpointConfig(enabled=False, new_session=True)
-
+    """Build CheckpointConfig from YAML (``session.checkpoint``) + CLI."""
     sess = cfg.get("session") if isinstance(cfg.get("session"), dict) else {}
     cp = sess.get("checkpoint") if isinstance(sess.get("checkpoint"), dict) else {}
 
@@ -559,14 +555,12 @@ def bootstrap_session(
     cfg: dict[str, Any],
     *,
     config_path: str | None = None,
-    demo: bool = False,
     new_session: bool = False,
     cli_session_id: str | None = None,
 ) -> SessionBootstrap:
     """Resolve session id, optionally load checkpoint (fail → fresh)."""
     opts = parse_checkpoint_config(
         cfg,
-        demo=demo,
         new_session=new_session,
         cli_session_id=cli_session_id,
     )

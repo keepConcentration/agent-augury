@@ -69,7 +69,7 @@
 3. 재기동 시 기본 UX: **이어서 하기** (또는 “이어하기 / 새 세션” 선택).  
 4. 복원 후 모델은 **이전 conversation + phase + (선택) 스레드 목록**을 보고 업무를 계속한다.  
 5. 옵트인 가능하되, headless/Discord 실사용 프로필에서는 **기본 on**을 권장한다.  
-6. 기존 `--demo` / 단위 테스트는 체크포인트 **off**로 결정론 유지.
+6. 단위 테스트는 체크포인트 **off**로 결정론 유지 (`session.checkpoint.enabled: false` — `--demo` 는 2026-11-07 제거).
 
 ### 2.2 비목표 (v1)
 
@@ -226,7 +226,7 @@ else:
 |---|------|------|
 | D1 | **idle-wait + 다음 메시지** | 재기동 직후 `run()` 자동 재개(auto-continue) **안 함**. Discord/headless는 hydrate 후 idle → 다음 human 입력에서 turn 시작. |
 | D2 | **동일 프롬프트도 append** | 이전에 넣었던 task와 문자열이 같아도 skip/dedupe 하지 않음. 항상 새 user turn으로 append. |
-| D3 | **체크포인트 기본 on** | headless **와** Ink/stdio **둘 다** `checkpoint.enabled: true` (단 `--demo`는 false). |
+| D3 | **체크포인트 기본 on** | headless **와** Ink/stdio **둘 다** `checkpoint.enabled: true` (예전 `--demo` 의 false 는 2026-11-07 플래그와 함께 제거). |
 
 명시적 `/new` 또는 `--new-session` → fresh.
 
@@ -299,7 +299,7 @@ v1에서는 “미개방이면 합의 다시”를 허용 (문서화).
 session:
   id: null                    # 고정 ID (없으면 자동)
   checkpoint:
-    enabled: true             # headless·Ink 공통 기본 true; --demo는 false
+    enabled: true             # headless·Ink 공통 기본 true
     dir: ~/.agent-augury/sessions
     flush_debounce_ms: 1000
     flush_interval_s: 30
@@ -441,7 +441,7 @@ Windows: rename 원자성·경로 권한 테스트 포함.
 | pending approval | v1 discard |
 | 재기동 직후 | **idle-wait** — 다음 human 메시지에서 `run()` (D1; auto-continue 없음) |
 | 동일 프롬프트 재입력 | **항상 append** (D2; dedupe 없음) |
-| 체크포인트 기본 | headless **+ Ink** 둘 다 `enabled: true` (D3); `--demo`만 false |
+| 체크포인트 기본 | headless **+ Ink** 둘 다 `enabled: true` (D3); 끄려면 설정에서 `enabled: false` |
 | resume 모드 기본 | `auto` (유효 체크포인트면 hydrate); Ink에서 확인 UI는 `resume: ask` |
 | 새 세션 | `--new-session` / `/new` / YAML `resume: never` |
 | 툴 리플레이 | 안 함 |

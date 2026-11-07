@@ -110,12 +110,12 @@ tools:
     shell: dangerous        # require | dangerous | off  (기본: Hermes-like)
     file_write: dangerous   # require | dangerous | off  (경로는 allowed_roots)
     web: off
-    bypass: false           # true 또는 --demo → 자동 GRANTED
+    bypass: false           # true → 자동 GRANTED
     ttl_seconds: 600        # pending 만료
 ```
 
 - 글로벌 `tools.approval` + (선택) 에이전트별 deep-merge는 기존 `ToolPolicy` 병합 패턴을 따른다.
-- CLI `--demo`는 `bypass: true`와 동치로 취급한다.
+- ~~CLI `--demo`는 `bypass: true`와 동치로 취급한다.~~ (2026-11-07 `--demo` 제거 — §4.8)
 - **기본값 (v0.7.5~):** `shell: dangerous`, `file_write: dangerous`, `web: off`.
   T5(권장 = require)를 그대로 넣으면 에이전트가 파일을 쓸 때마다 카드가 떠서
   사용자가 통째로 `off` 로 꺼버린다 — 꺼진 기본값은 아무것도 안 막는다. 그래서
@@ -268,15 +268,18 @@ observe-only (webhook mirror)는 승인 채널로 치지 않는다.
 Local tool wrapper 또는 `AgentLoop` → policy 조회 → `ApprovalStore` 접근이 필요하므로  
 Session이 store / “has_interact_surface” 콜백을 loop에 주입한다.
 
-### 4.8 `--demo` / 테스트
+### 4.8 테스트 (`--demo` 제거, 2026-11-07)
+
+> **변경:** `--demo` 플래그와 fake 백엔드(`type: fake`·`FakeModelBackend`·`allow_fake`)를 제품에서
+> 제거했다. 예전에는 `--demo` 가 bypass 와 동치였기 때문에 fake 백엔드로는 승인 카드가 뜨는
+> 세션을 만들 수 없었다(Web Surface 통합 테스트 WBS 5.2 에서 드러남). 이제 bypass 는 설정으로만 켠다.
 
 | 조건 | 동작 |
 |------|------|
-| `allow_fake` / `--demo` | approval bypass (자동 granted 취급, Store 생략 가능) |
-| `tools.approval.bypass: true` | 동일 (테스트 전용; README에 경고) |
-| 단위 테스트 | bypass 또는 mock Store + fake interact surface |
+| `tools.approval.bypass: true` | approval bypass (자동 granted 취급). 신뢰하는 설정에서만; README에 경고 |
+| `Session.from_config(approval_bypass=True)` | 같은 효과의 프로그램 인자(테스트·임베딩용, CLI 에는 노출 안 함) |
+| 단위 테스트 | 테스트 전용 `type: scripted`(`tests/scripted.py`) + bypass 또는 mock Store + 테스트용 interact surface |
 
-기존 fake YAML E2E가 깨지지 않게 CI는 `--demo` 경로를 유지한다.  
 승인 자체 테스트는 bypass 없이 mock surface로 별도 모듈.
 
 ### 4.9 감사

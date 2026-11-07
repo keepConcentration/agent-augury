@@ -34,7 +34,7 @@ def _base_yaml(tools_yaml: str = "") -> str:
 agents:
   - id: agent-1
     backend:
-      type: fake
+      type: scripted
       script: ["ok"]
 """
 
@@ -50,7 +50,7 @@ def test_tools_unknown_top_key_rejected(tmp_path):
         _base_yaml("  shell:\n    enabled: true\n  unknown: 1\n"),
     )
     with pytest.raises(ConfigError, match="unknown key 'unknown'"):
-        load_config(path, allow_fake=True)
+        load_config(path)
 
 
 def test_tools_shell_unknown_key_rejected(tmp_path):
@@ -59,7 +59,7 @@ def test_tools_shell_unknown_key_rejected(tmp_path):
         _base_yaml("  shell:\n    enable: true\n"),  # 오타: enabled 가 아니라 enable
     )
     with pytest.raises(ConfigError, match="unknown key 'enable'"):
-        load_config(path, allow_fake=True)
+        load_config(path)
 
 
 def test_tools_web_unknown_key_rejected(tmp_path):
@@ -68,7 +68,7 @@ def test_tools_web_unknown_key_rejected(tmp_path):
         _base_yaml("  web:\n    max_result: 5\n"),  # 오타
     )
     with pytest.raises(ConfigError, match="unknown key 'max_result'"):
-        load_config(path, allow_fake=True)
+        load_config(path)
 
 
 def test_tools_approval_unknown_key_rejected(tmp_path):
@@ -77,7 +77,7 @@ def test_tools_approval_unknown_key_rejected(tmp_path):
         _base_yaml("  approval:\n    shell_mode: require\n"),
     )
     with pytest.raises(ConfigError, match="unknown key 'shell_mode'"):
-        load_config(path, allow_fake=True)
+        load_config(path)
 
 
 def test_tools_approval_valid(tmp_path):
@@ -85,7 +85,7 @@ def test_tools_approval_valid(tmp_path):
         tmp_path,
         _base_yaml("  approval:\n    shell: require\n    file_write: require\n    web: off\n"),
     )
-    cfg = load_config(path, allow_fake=True)
+    cfg = load_config(path)
     assert cfg["tools"]["approval"]["shell"] == "require"
 
 
@@ -100,7 +100,7 @@ def test_invalid_search_provider_rejected(tmp_path):
         _base_yaml("  web:\n    search_provider: bing\n"),
     )
     with pytest.raises(ConfigError, match="search_provider"):
-        load_config(path, allow_fake=True)
+        load_config(path)
 
 
 @pytest.mark.parametrize("provider", ["duckduckgo", "serper", "tavily", "searxng"])
@@ -109,7 +109,7 @@ def test_valid_search_provider_accepted(tmp_path, provider):
         tmp_path,
         _base_yaml(f"  web:\n    search_provider: {provider}\n"),
     )
-    cfg = load_config(path, allow_fake=True)
+    cfg = load_config(path)
     assert cfg["tools"]["web"]["search_provider"] == provider
 
 
@@ -124,7 +124,7 @@ def test_shell_allowed_must_be_list(tmp_path):
         _base_yaml("  shell:\n    allowed: git\n"),  # 문자열 → 오류
     )
     with pytest.raises(ConfigError, match="shell.allowed"):
-        load_config(path, allow_fake=True)
+        load_config(path)
 
 
 def test_web_allow_domains_must_be_list(tmp_path):
@@ -133,7 +133,7 @@ def test_web_allow_domains_must_be_list(tmp_path):
         _base_yaml("  web:\n    allow_domains: example.com\n"),
     )
     with pytest.raises(ConfigError, match="allow_domains"):
-        load_config(path, allow_fake=True)
+        load_config(path)
 
 
 def test_file_allowed_roots_must_be_list_of_strings(tmp_path):
@@ -142,7 +142,7 @@ def test_file_allowed_roots_must_be_list_of_strings(tmp_path):
         _base_yaml("  file:\n    allowed_roots: [1, 2]\n"),
     )
     with pytest.raises(ConfigError, match="allowed_roots"):
-        load_config(path, allow_fake=True)
+        load_config(path)
 
 
 # ---------------------------------------------------------------------------
@@ -161,11 +161,11 @@ def test_agent_tools_unknown_key_rejected(tmp_path):
         "        enabled: false\n"
         "        bogus: true\n"
         "    backend:\n"
-        "      type: fake\n"
+        "      type: scripted\n"
         "      script: [\"ok\"]\n",
     )
     with pytest.raises(ConfigError, match="agents\\[0\\].tools"):
-        load_config(path, allow_fake=True)
+        load_config(path)
 
 
 def test_agent_tools_valid_override_accepted(tmp_path):
@@ -181,10 +181,10 @@ def test_agent_tools_valid_override_accepted(tmp_path):
         "      shell:\n"
         "        enabled: false\n"
         "    backend:\n"
-        "      type: fake\n"
+        "      type: scripted\n"
         "      script: [\"ok\"]\n",
     )
-    cfg = load_config(path, allow_fake=True)
+    cfg = load_config(path)
     assert cfg["tools"]["shell"]["allowed"] == ["git"]
     assert cfg["agents"][0]["tools"]["shell"]["enabled"] is False
 
@@ -200,7 +200,7 @@ def test_empty_shell_allowed_warns_but_loads(tmp_path, capsys):
         tmp_path,
         _base_yaml("  shell:\n    enabled: true\n    allowed: []\n"),
     )
-    cfg = load_config(path, allow_fake=True)
+    cfg = load_config(path)
     assert cfg["tools"]["shell"]["allowed"] == []
     captured = capsys.readouterr()
     assert "warning" in captured.out.lower()
@@ -211,7 +211,7 @@ def test_allow_domains_ip_literal_warns(tmp_path, capsys):
         tmp_path,
         _base_yaml("  web:\n    allow_domains: [127.0.0.1]\n"),
     )
-    cfg = load_config(path, allow_fake=True)
+    cfg = load_config(path)
     assert cfg["tools"]["web"]["allow_domains"] == ["127.0.0.1"]
     captured = capsys.readouterr()
     assert "warning" in captured.out.lower()
@@ -224,5 +224,5 @@ def test_allow_domains_ip_literal_warns(tmp_path, capsys):
 
 def test_no_tools_section_loads_with_defaults(tmp_path):
     path = _write(tmp_path, _base_yaml())
-    cfg = load_config(path, allow_fake=True)
+    cfg = load_config(path)
     assert "tools" not in cfg  # 미설정 → 키 없음 (ToolPolicy.from_config 기본값 사용)

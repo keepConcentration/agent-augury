@@ -612,14 +612,14 @@ def test_config_roster_defaults(tmp_path: Path):
             "mode": "light",
         },
         "agents": [
-            {"id": "a1", "backend": {"type": "fake", "script": ["x"]}},
-            {"id": "a2", "backend": {"type": "fake", "script": ["x"]}},
-            {"id": "a3", "backend": {"type": "fake", "script": ["x"]}},
+            {"id": "a1", "backend": {"type": "scripted", "script": ["x"]}},
+            {"id": "a2", "backend": {"type": "scripted", "script": ["x"]}},
+            {"id": "a3", "backend": {"type": "scripted", "script": ["x"]}},
         ],
     }
     path = tmp_path / "r.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    cfg = load_config(path, allow_fake=True)
+    cfg = load_config(path)
     assert cfg["protocol"]["roster"]["start"] == 2
     assert cfg["protocol"]["roster"]["max"] == 3
 

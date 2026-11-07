@@ -89,7 +89,7 @@ def test_save_model_config_defaults_to_home_dir():
 
 def test_save_model_config_unicode_agent_id(tmp_path):
     """Unicode agent IDs are preserved as-is (ensure_ascii=False)."""
-    agents = [{"id": "에이전트-1", "backend": {"type": "fake", "script": ["hi"]}}]
+    agents = [{"id": "에이전트-1", "backend": {"type": "scripted", "script": ["hi"]}}]
     path = tmp_path / "config.json"
     save_model_config(20, agents, path=path)
 

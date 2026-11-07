@@ -325,7 +325,7 @@ async function harness(sink?: {alive: () => boolean; send: (m: WireMessage) => b
       bus.route(),
       state.claimRoute(),
       state.sessionRoute({
-        flags: {demo: true, no_auto_start: false, plan_first: false, session: null},
+        flags: {no_auto_start: false, plan_first: false, session: null},
         devMode: false,
         seqLast: () => hub.seqLast,
         streamsAvailable: () => hub.available(),
@@ -407,7 +407,7 @@ test("API-03 session info", async () => {
     body: {
       gateway: {status: "starting", exit_code: null, signal: null},
       seq_last: 1,
-      flags: {demo: true, no_auto_start: false, plan_first: false, session: null},
+      flags: {no_auto_start: false, plan_first: false, session: null},
       dev_mode: false,
       tab: {controller: true},
       streams_available: 3,

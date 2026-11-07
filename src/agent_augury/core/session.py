@@ -523,7 +523,7 @@ class Session:
             )
             protocol_spec["human_approval"] = ha_map
             # D4: interact required when any phase enabled (Ink attaches later;
-            # Discord inbound counted here; bypass for demo/tests).
+            # Discord inbound counted here; bypass for tests).
             if (
                 any_human_approval(ha_map)
                 and not approval_bypass
@@ -615,7 +615,6 @@ class Session:
         cfg: dict[str, Any],
         *,
         config_path: str | None = None,
-        demo: bool = False,
         new_session: bool = False,
         cli_session_id: str | None = None,
         on_step=None,
@@ -636,13 +635,11 @@ class Session:
         boot = bootstrap_session(
             cfg,
             config_path=config_path,
-            demo=demo,
             new_session=new_session,
             cli_session_id=cli_session_id,
         )
         opts = parse_checkpoint_config(
             cfg,
-            demo=demo,
             new_session=new_session,
             cli_session_id=cli_session_id,
         )
@@ -654,7 +651,7 @@ class Session:
             allowed_roots=allowed_roots,
             token_store=token_store,
             on_user_code=on_user_code,
-            approval_bypass=approval_bypass or bool(demo),
+            approval_bypass=approval_bypass,
             db_path=db_path,
         )
         session.session_id = boot.session_id

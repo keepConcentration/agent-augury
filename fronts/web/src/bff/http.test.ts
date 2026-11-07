@@ -22,7 +22,13 @@ function raw(port: number, request: string): Promise<Raw> {
     const socket = connect(port, "127.0.0.1", () => socket.write(request));
     const chunks: Buffer[] = [];
     socket.on("data", (c) => chunks.push(c));
-    socket.on("error", reject);
+    // A refused body is never read: the server closes with our unsent bytes still
+    // queued, so the kernel may answer with RST after the reply. Keep the reply.
+    socket.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "ECONNRESET" || chunks.length === 0) {
+        reject(err);
+      }
+    });
     socket.on("close", () => {
       const text = Buffer.concat(chunks).toString("utf8");
       const [head, ...rest] = text.split("\r\n\r\n");
@@ -61,6 +67,7 @@ const root = mkdtempSync(join(tmpdir(), "augury-web-static-"));
 mkdirSync(join(root, "assets"));
 writeFileSync(join(root, "index.html"), "<!doctype html><title>augury</title>");
 writeFileSync(join(root, "assets", "app-abc.js"), "console.log(1)");
+writeFileSync(join(root, "assets", "app-B3x_9kQz.js"), "console.log(2)");
 writeFileSync(join(root, "assets", "app-abc.js.map"), "{}");
 writeFileSync(join(root, "assets", ".hidden.js"), "x");
 writeFileSync(join(root, "secret.txt"), "do not serve");
@@ -190,9 +197,13 @@ test("API-01: index and hashed assets; no traversal, maps, dot-files or director
   const index = await request(port, "GET", "/");
   assert.equal(index.status, 200);
   assert.match(index.headers["content-type"], /text\/html/);
-  const asset = await request(port, "GET", "/assets/app-abc.js");
+  const asset = await request(port, "GET", "/assets/app-B3x_9kQz.js");
   assert.equal(asset.headers["content-type"], "text/javascript; charset=utf-8");
-  assert.match(asset.headers["cache-control"], /immutable/);
+  assert.equal(asset.headers["cache-control"], "public, max-age=31536000, immutable");
+  // No content hash in the name → never immutable.
+  const plain = await request(port, "GET", "/assets/app-abc.js");
+  assert.equal(plain.status, 200);
+  assert.equal(plain.headers["cache-control"], "no-cache");
   for (const path of [
     "/assets/../secret.txt",
     "/assets/%2e%2e/secret.txt",
@@ -266,6 +277,41 @@ test("exchange body cap is 1 KiB; a declared oversize closes without reading", a
   const r = await request(port, "POST", "/api/auth/exchange", post(), JSON.stringify({token: "x".repeat(1100)}));
   assert.equal(r.status, 413);
   assert.equal(r.headers.connection, "close");
+});
+
+test("a refused request with a body is answered with Connection: close, never drained", async () => {
+  // Content-Length body on a refused request (wrong Origin) → close, not keep-alive.
+  const declared = await raw(
+    port,
+    `POST /api/echo HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\n` +
+      `Origin: http://evil.example\r\nContent-Length: 2\r\n\r\n{}`,
+  );
+  assert.equal(declared.status, 403);
+  assert.equal(declared.headers.connection, "close");
+  // An endless chunked body: the server must close the socket itself instead of
+  // reading forever. The client stays half-open and keeps sending.
+  const closed = await new Promise<{status: number; connection: string | undefined}>((resolve, reject) => {
+    const socket = connect({port, host: "127.0.0.1", allowHalfOpen: true}, () => {
+      socket.write(
+        `POST /api/nope HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\n` +
+          `Transfer-Encoding: chunked\r\n\r\n4\r\nxxxx\r\n`,
+      );
+    });
+    const pump = setInterval(() => socket.write("4\r\nxxxx\r\n", () => {}), 10);
+    const timer = setTimeout(() => reject(new Error("server kept reading the refused body")), 3000);
+    const chunks: Buffer[] = [];
+    socket.on("data", (c) => chunks.push(c));
+    socket.on("error", () => {});
+    socket.on("close", () => {
+      clearInterval(pump);
+      clearTimeout(timer);
+      const head = Buffer.concat(chunks).toString("utf8").split("\r\n\r\n")[0];
+      const connection = /\r\nconnection: *([^\r]*)/i.exec(head)?.[1];
+      resolve({status: Number(head.split(" ")[1]), connection});
+    });
+  });
+  assert.equal(closed.status, 404);
+  assert.equal(closed.connection, "close");
 });
 
 test("a reset upgrade socket does not crash the server", async () => {

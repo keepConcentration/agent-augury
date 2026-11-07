@@ -9,7 +9,7 @@ import {randomBytes, timingSafeEqual} from "node:crypto";
 import {readFile, realpath, stat} from "node:fs/promises";
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from "node:http";
 import type {Duplex} from "node:stream";
-import {extname, join, resolve, sep} from "node:path";
+import {basename, extname, join, resolve, sep} from "node:path";
 import {performance} from "node:perf_hooks";
 
 /** Body caps (08 §2.1 step 9, [가정]). */
@@ -30,6 +30,9 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
   ".png": "image/png",
 };
+
+/** Build output names carry a content hash (``app-B3x_9kQz.js``). */
+const HASHED_ASSET = /-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
 
 /** 32 random bytes, base64url (≥128 bit — N-002). */
 export function newSecret(): string {
@@ -356,7 +359,9 @@ export function staticRoutes(root: string): Array<[string, Route]> {
           if (!file.startsWith(assets + sep) || !type || rel.split(/[\\/]/).some((p) => p.startsWith("."))) {
             return errorReply(404, "not_found", "not found");
           }
-          return serve(file, {"Content-Type": type, "Cache-Control": "public, max-age=31536000, immutable"});
+          // Only content-hashed names may be cached forever; others revalidate.
+          const cache = HASHED_ASSET.test(basename(file)) ? "public, max-age=31536000, immutable" : "no-cache";
+          return serve(file, {"Content-Type": type, "Cache-Control": cache});
         },
       },
     ],
@@ -423,10 +428,10 @@ export async function startServer(options: BffServerOptions): Promise<BffServer>
     try {
       const checked = checkRequest(req, {port, routes, auth});
       if ("reply" in checked) {
-        send(res, checked.reply);
-        if (checked.reply.headers?.Connection !== "close") {
-          req.resume();
-        }
+        // Never drain a refused request's body: with one (declared or chunked) we
+        // answer Connection: close and Node destroys the socket after the reply.
+        const hasBody = Number(req.headers["content-length"] ?? 0) > 0 || req.headers["transfer-encoding"] !== undefined;
+        send(res, hasBody ? {...checked.reply, headers: {...checked.reply.headers, Connection: "close"}} : checked.reply);
         return;
       }
       let body: Record<string, unknown> | null = null;

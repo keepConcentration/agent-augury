@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import {existsSync} from "node:fs";
+import {existsSync, mkdtempSync, writeFileSync} from "node:fs";
+import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {test} from "node:test";
 import {GatewayChild, childArgs, childEnv, configEnvNames, resolvePython, type GatewayHandlers} from "./gateway.js";
@@ -70,6 +71,18 @@ test("childEnv: Ink launch keys pass; non-secret ${NAME} refs pass like Python's
   assert.equal(env.AGENT_AUGURY_SESSION, "s");
   assert.equal(env.GITHUB_TOKEN, "g");
   assert.equal(env.SLACK_WEBHOOK_URL, undefined);
+});
+
+test("childEnv reports allowlisted secret names it held back, without values", () => {
+  const dropped: string[] = [];
+  const env = childEnv(
+    {PATH: "/bin", OPENAI_API_KEY: "sk-1", ANTHROPIC_API_KEY: "sk-2", OLLAMA_HOST: "h"},
+    "a: ${OPENAI_API_KEY}\nb: ${OLLAMA_HOST}",
+    dropped,
+  );
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  // Only names the child would otherwise get are listed; unrelated secrets stay quiet.
+  assert.deepEqual(dropped, ["OPENAI_API_KEY"]);
 });
 
 test("configEnvNames finds ${NAME} references", () => {
@@ -250,4 +263,112 @@ test("unreadable AUGURY_CONFIG is reported before spawning", {skip: !hasVenv && 
   });
   await until(() => gw.status === "exited");
   assert.match(String(c.errors[0]), /AUGURY_CONFIG/);
+});
+
+const posixVenv = (!hasVenv || process.platform === "win32") && "needs POSIX + .venv";
+
+test("a held-back ${SECRET} reference is reported by name only", {skip: !hasVenv && "no repo .venv"}, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "augury-web-"));
+  const config = join(dir, "c.yaml");
+  writeFileSync(config, "api_key: ${OPENAI_API_KEY}\n");
+  const c = collect();
+  const gw = new GatewayChild(c.handlers, {
+    env: {PATH: process.env.PATH, AUGURY_CONFIG: config, OPENAI_API_KEY: "sk-very-secret"},
+    python,
+    args: ["-c", "pass"],
+  });
+  await until(() => gw.status === "exited");
+  const msg = c.errors.map(String).find((m) => m.includes("OPENAI_API_KEY"));
+  assert.ok(msg);
+  assert.ok(!c.errors.some((e) => String(e).includes("sk-very-secret")));
+});
+
+test("quit path escalates the leftover group to SIGKILL when a grandchild traps SIGTERM", {skip: posixVenv}, async () => {
+  const c = collect();
+  const script =
+    "import json,subprocess,sys\n" +
+    "g = subprocess.Popen([sys.executable, '-c', 'import signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print(1, flush=True); time.sleep(30)'], stdout=subprocess.PIPE)\n" +
+    "g.stdout.readline()\n" +
+    "print(json.dumps({'dir':'event','type':'log','text':str(g.pid)}), flush=True)\n" +
+    "sys.stdin.readline()\n" +
+    "sys.exit(0)";
+  const gw = new GatewayChild(c.handlers, {env: {PATH: process.env.PATH}, python, args: ["-c", script]});
+  await until(() => c.lines.length > 0);
+  const first = c.lines[0];
+  const grandchild = Number(first.kind === "event" ? first.message.text : NaN);
+  assert.ok(alive(grandchild));
+  assert.equal(await gw.stop(300), true);
+  // The child itself left on session.quit; only the group needed escalation.
+  assert.equal(gw.exitCode, 0);
+  assert.equal(gw.signal, null);
+  await until(() => !alive(grandchild), 3000);
+});
+
+test("stop long after the child exited does not signal a possibly reused group id", {skip: posixVenv}, async (t) => {
+  const c = collect();
+  const gw = new GatewayChild(c.handlers, {env: {PATH: process.env.PATH}, python, args: ["-c", "pass"]});
+  await until(() => gw.status === "exited");
+  await new Promise((r) => setTimeout(r, 400));
+  const kill = t.mock.method(process, "kill", () => true);
+  assert.equal(await gw.stop(100), true);
+  assert.deepEqual(
+    kill.mock.calls.filter((call) => call.arguments[0] === -(gw.pid as number)),
+    [],
+  );
+});
+
+test("the process exit hook SIGTERMs the group and stop()/dispose remove it", {skip: posixVenv}, async () => {
+  const c = collect();
+  const before = process.listeners("exit");
+  const script =
+    "import json,subprocess,time\n" +
+    "p = subprocess.Popen(['sleep', '30'])\n" +
+    "print(json.dumps({'dir':'event','type':'log','text':str(p.pid)}), flush=True)\n" +
+    "time.sleep(30)";
+  const gw = new GatewayChild(c.handlers, {env: {PATH: process.env.PATH}, python, args: ["-c", script]});
+  const added = process.listeners("exit").filter((l) => !before.includes(l));
+  assert.equal(added.length, 1);
+  await until(() => c.lines.length > 0);
+  const first = c.lines[0];
+  const grandchild = Number(first.kind === "event" ? first.message.text : NaN);
+  // Simulate the BFF going down without stop(): the hook must be synchronous.
+  (added[0] as () => void)();
+  await until(() => !alive(grandchild) && gw.status === "exited", 5000);
+  await gw.stop(300);
+  assert.ok(!process.listeners("exit").includes(added[0]));
+
+  const other = new GatewayChild(collect().handlers, {env: {PATH: process.env.PATH}, python, args: ["-c", "pass"]});
+  const hook = process.listeners("exit").filter((l) => !before.includes(l));
+  assert.equal(hook.length, 1);
+  other.dispose();
+  assert.ok(!process.listeners("exit").includes(hook[0]));
+  await other.stop(300);
+});
+
+test("stdout lines after the close fallback are counted and reported", {skip: posixVenv}, async () => {
+  const c = collect();
+  // The grandchild keeps stdout open past the 1 s fallback, then writes two lines.
+  const script =
+    "import subprocess\n" +
+    "subprocess.Popen(['sh', '-c', 'sleep 1.5; echo {}; echo {}'])";
+  const gw = new GatewayChild(c.handlers, {env: {PATH: process.env.PATH}, python, args: ["-c", script]});
+  await until(() => gw.status === "exited");
+  await until(() => c.errors.some((e) => /dropped 2 stdout line/.test(String(e))), 5000);
+  assert.equal(c.lines.length, 0);
+});
+
+test("a stdin write that fails later reaches onError once", {skip: posixVenv}, async () => {
+  const c = collect();
+  const gw = new GatewayChild(c.handlers, {
+    env: {PATH: process.env.PATH},
+    python,
+    args: ["-c", "import os,sys,time; os.close(0); print('{}', flush=True); time.sleep(30)"],
+  });
+  await until(() => gw.status === "running");
+  // stdin is still writable from our side, so send() queues and returns true.
+  assert.equal(gw.send({dir: "cmd", type: "session.quit", id: "x"}), true);
+  await until(() => c.errors.some((e) => /EPIPE/.test(String(e))), 5000);
+  assert.equal(new Set(c.errors).size, c.errors.length);
+  assert.equal(c.errors.filter((e) => /EPIPE/.test(String(e))).length, 1);
+  await gw.stop(300);
 });

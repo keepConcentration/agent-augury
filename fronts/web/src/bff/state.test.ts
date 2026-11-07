@@ -454,7 +454,7 @@ test("handleChildLine: wire frame first, then one bff.state; invalid events neve
   await close(h);
 });
 
-test("handleChildExit: waiting command 503, pending cleared, exit broadcast", async () => {
+test("handleChildExit: a command already written gets 502 gateway_exited, pending cleared, exit broadcast", async () => {
   const h = await harness();
   const a = await Stream.open(h.bff.port, h.cookie, A);
   await until(() => a.states().length === 1);
@@ -463,7 +463,7 @@ test("handleChildExit: waiting command 503, pending cleared, exit broadcast", as
   await until(() => h.sent.length === 1);
   handleChildExit(0, null, h);
   const r = await waiting;
-  assert.deepEqual([r.status, r.body.error.code], [503, "gateway_unavailable"]);
+  assert.deepEqual([r.status, r.body.error.code], [502, "gateway_exited"]);
   await until(() => a.last().gateway.status === "exited");
   assert.deepEqual(a.last().pending_questions, []);
   a.res.destroy();

@@ -400,10 +400,10 @@ test("late result of an expired N1 never touches the newer N2 on the same key", 
 test("N1's unknown timer does not reopen a key a newer command owns", async () => {
   const {bus, state, hub} = setup({timeoutMs: 40, unknownMs: 10});
   state.pending.add("a:a1");
-  await bus.handle(TAB, {type: "approval.resolve", approval_id: "a1", decision: "denied"}); // N1 → UNKNOWN
+  await bus.handle(TAB, {type: "approval.resolve", approval_id: "a1", decision: "denied", revision: 1}); // N1 → UNKNOWN
   // The state module dropped and re-offered a1 (CommandState may do this), and N2 answers it.
   state.resolving.delete("a:a1");
-  const n2 = bus.handle(TAB, {type: "approval.resolve", approval_id: "a1", decision: "granted"});
+  const n2 = bus.handle(TAB, {type: "approval.resolve", approval_id: "a1", decision: "granted", revision: 1});
   await new Promise((r) => setTimeout(r, 20)); // N1's expiry fires while N2 is in flight
   assert.equal(state.check("a:a1"), "in_flight", "only N2 may reopen it");
   assert.equal(state.calls.filter((c) => c === "answerable a:a1").length, 0);

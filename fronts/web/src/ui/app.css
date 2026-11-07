@@ -476,3 +476,9 @@ button:disabled {
   flex: 1;
   min-height: 0;
 }
+
+/* 3.3: virtual list. virtual.tsx corrects scrollTop itself when rows above the
+   viewport change height; native anchoring would correct a second time. */
+.timeline {
+  overflow-anchor: none;
+}

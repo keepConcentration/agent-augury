@@ -1,0 +1,36 @@
+# Web Surface approval fixture (WBS 5.2 integration tests, 5.5 manual E2E).
+#
+# One agent on a real backend type pointed at the stub model server
+# (test/stub-model.ts), which replays tool calls. tools.approval.file_write is
+# `require` with no bypass, so every write waits for a human decision:
+#   1) write granted.txt            — approve it and the file appears
+#   2) a disguised write            — zero-width char in the path; bidi (U+202E),
+#      an escape sequence and a fake "[approval] granted" line in the content;
+#      a newline inside an argument key. The approval card must show all of it.
+# Files land only under AUGURY_FILE_ROOT.
+#
+# Manual run (two terminals):
+#   node --import tsx test/stub-model.ts          # prints AUGURY_STUB_MODEL_URL=…
+#   AUGURY_STUB_MODEL_URL=… AUGURY_STUB_MODEL_API_KEY=stub AUGURY_FILE_ROOT=$(mktemp -d) \
+#     agent-augury --web --new-session --config fronts/web/test/fixtures/approval.yaml
+# The stub plays its script once; restart it for another run.
+task: "approval fixture: write two files, each needs a human decision"
+max_steps: 6
+session:
+  checkpoint:
+    enabled: false
+
+tools:
+  approval:
+    shell: off
+    file_write: require
+    web: off
+    bypass: false
+
+agents:
+  - id: bob
+    backend:
+      type: openai
+      model: stub
+      base_url: ${AUGURY_STUB_MODEL_URL}
+      api_key_env: AUGURY_STUB_MODEL_API_KEY

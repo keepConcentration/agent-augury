@@ -37,6 +37,8 @@ export type BffOptions = {
   staticRoot?: string;
   /** BFF log (stderr by default). */
   log?: (line: string) => void;
+  /** Command result timeout (08 §6.4 default 10 s) — tests shorten it to reach 504. */
+  cmdTimeoutMs?: number;
 };
 
 export type Bff = BffParts & {
@@ -75,6 +77,7 @@ export async function startBff(options: BffOptions): Promise<Bff> {
     state,
     hub,
     log,
+    ...(options.cmdTimeoutMs === undefined ? {} : {timeoutMs: options.cmdTimeoutMs}),
   });
   const parts: BffParts = {hub, state, bus};
 

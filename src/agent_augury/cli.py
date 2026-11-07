@@ -433,6 +433,57 @@ def _ink_tsx_command(ink_dir: Path) -> list[str] | None:
     return None
 
 
+class _InkTerminated(SystemExit):
+    """SIGTERM/SIGHUP while Ink runs — exits like the signal would (128 + n)."""
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(128 + signum)
+        self.signum = signum
+
+
+def _ink_exit_signals() -> list[int]:
+    import signal
+
+    return [s for s in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGHUP", None)) if s]
+
+
+def _defer_signals() -> object | None:
+    """Hold SIGINT/SIGTERM/SIGHUP until ``_restore_signal_mask`` (POSIX only)."""
+    import signal
+
+    if not hasattr(signal, "pthread_sigmask"):
+        return None
+    return signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, *_ink_exit_signals()})
+
+
+def _restore_signal_mask(old: object | None) -> None:
+    import signal
+
+    if old is not None:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
+def _call_ink(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> int:
+    """``subprocess.call`` that hands SIGTERM/SIGHUP to Ink before we exit."""
+    import subprocess
+
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env)
+    try:
+        return proc.wait()
+    except BaseException as exc:
+        if isinstance(exc, _InkTerminated):
+            # Let Ink restore the TTY and stop its Gateway child first.
+            proc.send_signal(exc.signum)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        raise
+
+
 def _run_ink_surface(
     *,
     mode: str = "hello",
@@ -446,19 +497,36 @@ def _run_ink_surface(
     Ink owns the TTY and spawns a Python Gateway child over JSONL stdio.
     """
     import shutil
-    import subprocess
+    import signal
 
     ink_dir, ink_err = ensure_ink_front()
     if ink_dir is None:
         print(f"error: {ink_err}", file=sys.stderr)
         return 1
-    from .gateway.secrets import scrub_env_for_ink
+    from .gateway.secrets import SECRETS_FILE_ENV, scrub_env_for_ink
 
-    # D1: do not pass API tokens / bot secrets into the Node Ink process.
-    # Secrets ride a short-lived file that only the Python Gateway child loads.
-    env = scrub_env_for_ink()
-    secrets_file = env.get("AUGURY_GATEWAY_SECRETS_FILE")
+    def _on_exit_signal(signum: int, _frame: object) -> None:
+        for sig in previous:
+            signal.signal(sig, signal.SIG_IGN)  # one shutdown is enough
+        raise _InkTerminated(signum)
+
+    # Without these, SIGTERM/SIGHUP kill us outright and ``finally`` never runs.
+    previous: dict[int, Any] = {}
+    for sig in _ink_exit_signals():
+        try:
+            previous[sig] = signal.signal(sig, _on_exit_signal)
+        except ValueError:  # not the main thread — cannot install handlers
+            break
+    env: dict[str, str] = {}
+    old_mask = _defer_signals()
     try:
+        try:
+            # D1: do not pass API tokens / bot secrets into the Node Ink process.
+            # Secrets ride a short-lived file that only the Python Gateway child
+            # loads. Signals wait until ``env`` names the file so ``finally`` sees it.
+            env = scrub_env_for_ink()
+        finally:
+            _restore_signal_mask(old_mask)
         env.setdefault("AUGURY_PYTHON", sys.executable)
         src_entry = pythonpath_src_entry()
         if src_entry is not None:
@@ -507,12 +575,19 @@ def _run_ink_surface(
             cmd = [npm, "run", "start", "--silent"]
 
         _clear_tty()
-        return subprocess.call(cmd, cwd=ink_dir, env=env)
+        return _call_ink(cmd, cwd=ink_dir, env=env)
     finally:
         # The Gateway child deletes it once loaded; if it never got that far
-        # (bad config, no npm, Ink failed), keys must not stay in the temp dir.
-        if secrets_file:
-            Path(secrets_file).unlink(missing_ok=True)
+        # (bad config, no npm, Ink failed, SIGTERM), keys must not stay in tmp.
+        old_mask = _defer_signals()
+        try:
+            secrets_file = env.get(SECRETS_FILE_ENV)
+            if secrets_file:
+                Path(secrets_file).unlink(missing_ok=True)
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+        finally:
+            _restore_signal_mask(old_mask)
 
 
 def _run_ink_hello() -> int:

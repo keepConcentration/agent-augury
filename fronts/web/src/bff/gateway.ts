@@ -220,7 +220,8 @@ export class GatewayChild {
         this.status = "running";
         this.guard(() => handlers.onLine(parseChildLine(line)));
       },
-      (bytes) => this.guard(() => handlers.onLine({kind: "decode_error", error: `line too long (${bytes} bytes)`})),
+      (bytes) =>
+        this.guard(() => handlers.onLine({kind: "decode_error", error: `line too long (${bytes} bytes)`, oversize: true})),
     );
     this.child.stdout.on("data", stdout.write);
     this.child.stdout.on("end", () => {

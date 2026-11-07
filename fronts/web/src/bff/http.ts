@@ -112,9 +112,16 @@ export type ErrorCode =
   | "method_not_allowed"
   | "payload_too_large"
   | "unsupported_media_type"
+  | "too_many_streams"
   | "internal_error";
 
-export type Reply = {status: number; headers?: Record<string, string>; body?: unknown};
+export type Reply = {
+  status: number;
+  headers?: Record<string, string>;
+  body?: unknown;
+  /** Long-lived response (SSE): called after the headers are written, instead of a body. */
+  stream?: (res: ServerResponse) => void;
+};
 
 export function errorReply(status: number, code: ErrorCode, message: string, headers?: Record<string, string>): Reply {
   return {status, headers, body: {error: {code, message}}};
@@ -289,6 +296,11 @@ function send(res: ServerResponse, reply: Reply): void {
     "Cache-Control": "no-store",
     ...reply.headers,
   };
+  if (reply.stream) {
+    res.writeHead(reply.status, headers);
+    reply.stream(res);
+    return;
+  }
   let body: Buffer | undefined;
   if (Buffer.isBuffer(reply.body)) {
     body = reply.body;
@@ -473,6 +485,9 @@ export async function startServer(options: BffServerOptions): Promise<BffServer>
       new Promise((done) => {
         clearTimeout(sweep);
         server.close(() => done());
+        // SSE streams never end on their own. This also cuts in-flight replies —
+        // acceptable at shutdown.
+        server.closeAllConnections();
       }),
   };
 }

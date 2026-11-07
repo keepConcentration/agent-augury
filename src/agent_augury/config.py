@@ -806,9 +806,8 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
                 raise ConfigError(f"agents[{i}] nous backend requires 'base_url' key")
             if "api_key_env" not in backend:
                 raise ConfigError(f"agents[{i}] nous backend requires 'api_key_env' key")
-        elif btype == "nous_oauth":
-            if "model" not in backend:
-                raise ConfigError(f"agents[{i}] nous_oauth backend requires 'model' key")
+        elif btype == "nous_oauth" and "model" not in backend:
+            raise ConfigError(f"agents[{i}] nous_oauth backend requires 'model' key")
 
     # agents 섹션 내 role/role_custom 검증
     roles = data.get("roles")

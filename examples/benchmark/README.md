@@ -8,7 +8,7 @@
 > in v0.3 — this suite only asserts the current inbox path.
 >
 > **Status:** `run_l3_passive_awareness.py` + `test_l3_passive_awareness.py`
-> (FakeModelBackend). Included in CI via `pytest tests/ examples/benchmark/ -q`.
+> (benchmark-only replay backend `_ReplayBackend`). Included in CI via `pytest tests/ examples/benchmark/ -q`.
 
 ---
 
@@ -17,7 +17,7 @@
 1. **Work is not blocked** — after a correction arrives, the agent continues exploring.
 2. **Corrections are absorbed** — at the next step boundary, into context and the final answer.
 
-The suite fixes tool sequences with `FakeModelBackend` and checks **search call
+The suite fixes tool sequences with the benchmark-only `_ReplayBackend` and checks **search call
 count** and **final answer**.
 
 ## Scenario
@@ -48,7 +48,7 @@ assert agent_a.polled == 0               # 명시적 폴링/대기 도구 사용
 # 스크립트 (수치 단언 + 출력)
 python examples/benchmark/run_l3_passive_awareness.py
 
-# pytest 버전 (CI 통합용 — 오프라인, fake 백엔드)
+# pytest 버전 (CI 통합용 — 오프라인, 재생 백엔드)
 pytest examples/benchmark/ -q
 ```
 
@@ -100,7 +100,7 @@ L2(블로킹 수신)보다 작업을 덜 방해한다는 것을 보여주고 싶
 
 `AGENT_RELEVANCE_BUDGET_DESIGN.md` §9. 단위·통합 단언은
 `tests/test_attention_budget.py` (+ `examples/attention_budget_demo.yaml`).
-전체 세션 수치 벤치는 선택 — FakeModelBackend `calls`로 동일 축 측정 가능.
+전체 세션 수치 벤치는 선택 — `_ReplayBackend.calls`로 동일 축 측정 가능.
 
 ### 측정 축 (V1)
 - `backend.complete` 호출 횟수 (T0 skip → 호출 감소)

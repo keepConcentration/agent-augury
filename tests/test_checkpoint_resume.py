@@ -32,11 +32,11 @@ def _cfg(tmp_path: Path, *, sessions_dir: Path, with_protocol: bool = True) -> d
         "agents": [
             {
                 "id": "a1",
-                "backend": {"type": "fake", "script": [{"text": "ok"}]},
+                "backend": {"type": "scripted", "script": [{"text": "ok"}]},
             },
             {
                 "id": "a2",
-                "backend": {"type": "fake", "script": [{"text": "ok"}]},
+                "backend": {"type": "scripted", "script": [{"text": "ok"}]},
             },
         ],
     }
@@ -51,7 +51,7 @@ def _cfg(tmp_path: Path, *, sessions_dir: Path, with_protocol: bool = True) -> d
         }
     path = tmp_path / "session.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    return load_config(path, allow_fake=True)
+    return load_config(path)
 
 
 def test_checkpoint_store_roundtrip(tmp_path: Path):
@@ -112,9 +112,11 @@ def test_fingerprint_mismatch_falls_back(tmp_path: Path):
     assert "fingerprint" in (boot.resume_failed or "")
 
 
-def test_parse_demo_disables_checkpoint():
-    opts = parse_checkpoint_config({}, demo=True)
-    assert opts.enabled is False
+def test_checkpoint_disabled_by_yaml_only():
+    """With --demo gone, only session.checkpoint.enabled turns checkpoints off."""
+    assert parse_checkpoint_config({}).enabled is True
+    off = {"session": {"checkpoint": {"enabled": False}}}
+    assert parse_checkpoint_config(off).enabled is False
 
 
 @pytest.mark.asyncio
@@ -126,7 +128,6 @@ async def test_session_resume_conversation_and_phase(tmp_path: Path):
     s1 = Session.open_from_config(
         cfg,
         config_path=cfg_path,
-        demo=False,
         approval_bypass=True,
         allowed_roots=[str(tmp_path)],
     )
@@ -156,7 +157,6 @@ async def test_session_resume_conversation_and_phase(tmp_path: Path):
     s2 = Session.open_from_config(
         cfg,
         config_path=cfg_path,
-        demo=False,
         cli_session_id=sid,
         approval_bypass=True,
         allowed_roots=[str(tmp_path)],

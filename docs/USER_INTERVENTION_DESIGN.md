@@ -411,7 +411,7 @@ src/agent_augury/
   channels/discord/bot.py # (v1.1) inbound 옵션, on_message 핸들러
   channels/discord/inbound.py
 examples/
-  human_in_the_loop.yaml  # v1.0 데모 (fake 백엔드)
+  human_in_the_loop.yaml  # v1.0 데모 (fake 백엔드 — 2026-11-07 제거)
 tests/
   test_human_in_the_loop.py  # v1.0 통과 기준 자동 검증 (시나리오 A)
   test_reserved_names.py     # 예약어/발신 경로 경계 검증 (시나리오 C, S1~S4)

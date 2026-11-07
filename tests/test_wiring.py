@@ -6,10 +6,10 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.config import ConfigError, load_config
 from agent_augury.core.session import Session
 from tests.conftest import build_cfg
+from tests.scripted import ScriptedBackend
 
 
 def write_cfg(tmp_path, body: dict):
@@ -25,11 +25,11 @@ FAKE_CFG = build_cfg(
     max_steps=12,
     task="find the answer",
     agents=[
-        {"id": "agent-1", "backend": {"type": "fake", "script": ["thinking...", "answer: 43"]}},
+        {"id": "agent-1", "backend": {"type": "scripted", "script": ["thinking...", "answer: 43"]}},
         {
             "id": "agent-2",
             "backend": {
-                "type": "fake",
+                "type": "scripted",
                 "script": [
                     {"tool_calls": [
                         {"name": "create_thread", "arguments": {"name": "work", "participants": ["agent-1", "agent-2"]}},
@@ -102,7 +102,7 @@ async def test_run_parallel_and_task_injected_to_first_agent(tmp_path):
     assert sys_then_user == ["system", "user"]
     assert "find the answer" in agent1.conversation[1]["content"]
     # both agents ran their scripted completions to exhaustion
-    assert isinstance(agent1.backend, FakeModelBackend)
+    assert isinstance(agent1.backend, ScriptedBackend)
     assert agent1.backend.call_count == 2
     assert session.agents[1].backend.call_count == 2
     assert steps >= 4
@@ -151,7 +151,7 @@ GATE_CFG = build_cfg(
     agents=[
         {
             "id": "a1",
-            "backend": {"type": "fake", "script": [
+            "backend": {"type": "scripted", "script": [
                 {"tool_calls": [
                     {"name": "create_thread", "arguments": {"name": "plan", "participants": ["a1", "a2", "a3"]}},
                     {"name": "send_message", "arguments": {"thread": "$thread:0", "content": "PROPOSE: 분할 v1", "mentions": []}},
@@ -166,7 +166,7 @@ GATE_CFG = build_cfg(
         },
         {
             "id": "a2",
-            "backend": {"type": "fake", "script": [
+            "backend": {"type": "scripted", "script": [
                 {"tool_calls": [
                     {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "APPROVE: ok", "mentions": []}},
                 ]},
@@ -177,7 +177,7 @@ GATE_CFG = build_cfg(
         },
         {
             "id": "a3",
-            "backend": {"type": "fake", "script": [
+            "backend": {"type": "scripted", "script": [
                 {"tool_calls": [
                     {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "APPROVE: ok", "mentions": []}},
                 ]},
@@ -223,11 +223,10 @@ def test_cli_accepts_gate_config(tmp_path):
 
     cfg_path = write_cfg(tmp_path, GATE_CFG)
     with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
-        rc = main(["--config", str(cfg_path), "--demo"])
+        rc = main(["--config", str(cfg_path)])
     assert rc == 0
     ink.assert_called_once()
     assert ink.call_args.kwargs["config"] == str(cfg_path)
-    assert ink.call_args.kwargs["demo"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +271,7 @@ GATE_BLOCK_CFG = build_cfg(
             # a1 is deliberately NOT the proposer: the entry signal counts as
             # its author's vote, so a proposing a1 would open the gate before
             # this test ever gets to observe a closed-gate block.
-            "backend": {"type": "fake", "script": [
+            "backend": {"type": "scripted", "script": [
                 {"tool_calls": [
                     {"name": "create_thread", "arguments": {"name": "plan", "participants": ["a1", "a2"]}},
                     {"name": "create_thread", "arguments": {"name": "hunt", "participants": ["a1", "a2"]}},
@@ -292,7 +291,7 @@ GATE_BLOCK_CFG = build_cfg(
         },
         {
             "id": "a2",
-            "backend": {"type": "fake", "script": [
+            "backend": {"type": "scripted", "script": [
                 {"tool_calls": [
                     {"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "PROPOSE: v1", "mentions": []}},
                 ]},
@@ -317,17 +316,16 @@ async def test_gate_blocks_work_share_until_open(tmp_path):
     assert work_msgs[0]["seq"] > session.gate.opened_at_seq
 
 
-def test_cli_runs_fake_session_and_prints_log(tmp_path):
-    """--config --demo launches Ink (session UI owns logging)."""
+def test_cli_runs_scripted_session_and_prints_log(tmp_path):
+    """--config launches Ink (session UI owns logging)."""
     from agent_augury.cli import main
 
     cfg_path = write_cfg(tmp_path, FAKE_CFG)
     with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
-        rc = main(["--config", str(cfg_path), "--demo"])
+        rc = main(["--config", str(cfg_path)])
     assert rc == 0
     ink.assert_called_once()
     assert ink.call_args.kwargs["mode"] == "session"
-    assert ink.call_args.kwargs["demo"] is True
     assert ink.call_args.kwargs["config"] == str(cfg_path)
 
 
@@ -349,7 +347,7 @@ PROTOCOL_PHASE_GATE_CFG = build_cfg(
         {
             "id": "a1",
             "backend": {
-                "type": "fake",
+                "type": "scripted",
                 "script": [
                     # P1: send READY: to finish exploration
                     {"tool_calls": [
@@ -398,7 +396,7 @@ PROTOCOL_PHASE_GATE_CFG = build_cfg(
         {
             "id": "a2",
             "backend": {
-                "type": "fake",
+                "type": "scripted",
                 "script": [
                     # P1: send READY: to finish exploration
                     {"tool_calls": [
@@ -568,7 +566,7 @@ def test_load_config_mirror_missing_url_env_raises(tmp_path):
 
 
 def test_load_config_rejects_fake_backend_type(tmp_path):
-    """fake backend type must be rejected after removal from _VALID_BACKEND_TYPES."""
+    """The fake backend was removed: ``type: fake`` is an unknown backend type."""
     p = write_cfg(tmp_path, {
         "mode": "L3",
         "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
@@ -577,24 +575,11 @@ def test_load_config_rejects_fake_backend_type(tmp_path):
         load_config(p)
 
 
-def test_load_config_allow_fake_true_permits_fake_backend(tmp_path):
-    """allow_fake=True permits type: fake backends (offline demo/benchmark)."""
-    p = write_cfg(tmp_path, {
-        "mode": "L3",
-        "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-    })
-    cfg = load_config(p, allow_fake=True)
-    assert cfg["agents"][0]["backend"]["type"] == "fake"
+def test_build_backend_rejects_fake_type():
+    from agent_augury.backends_factory import build_backend
 
-
-def test_load_config_allow_fake_default_rejects_fake(tmp_path):
-    """allow_fake defaults to False → type: fake still rejected."""
-    p = write_cfg(tmp_path, {
-        "mode": "L3",
-        "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["hi"]}}],
-    })
-    with pytest.raises(ConfigError):
-        load_config(p)
+    with pytest.raises(ValueError, match="unknown backend type"):
+        build_backend({"type": "fake", "script": ["hi"]})
 
 
 # ---------------------------------------------------------------------------

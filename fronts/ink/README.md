@@ -22,7 +22,7 @@ cache and runs `npm install` on first launch. Override with `AUGURY_INK_DIR`.
 
 ```bash
 agent-augury --config examples/consensus_openai.yaml
-agent-augury --demo --config examples/demo.yaml
+agent-augury --config examples/demo.yaml   # needs OPENAI_API_KEY
 agent-augury          # wizard, then Ink
 ```
 
@@ -39,7 +39,6 @@ Env (set by CLI, or manually for `npm start`):
 |-----|---------|
 | `AUGURY_GATEWAY_MODE` | `hello` (default) or `session` |
 | `AUGURY_CONFIG` | session YAML path (required when mode=session) |
-| `AUGURY_DEMO` | `1` to allow `type: fake` backends |
 | `AUGURY_PYTHON` | Python binary if `.venv` is not found |
 | `AUGURY_NO_AUTO_START` | `1` to wait for first `human.send` instead of config task |
 | `AUGURY_INK_DIR` | Override Ink front directory (CLI) |

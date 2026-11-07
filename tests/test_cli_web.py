@@ -21,7 +21,7 @@ from agent_augury import cli
 from agent_augury.cli import _web_env, _web_front_dir, main
 
 REPO = Path(__file__).resolve().parents[1]
-DEMO_YAML = REPO / "examples" / "demo.yaml"
+LIFECYCLE_YAML = REPO / "tests" / "fixtures" / "web_lifecycle.yaml"
 
 
 @pytest.mark.parametrize(
@@ -44,10 +44,17 @@ def test_web_rejects_unsupported_combinations(argv, message, capsys):
 
 def test_web_passes_session_flags_and_allows_no_auto_start():
     with patch.object(cli, "_run_web_surface", return_value=0) as run:
-        assert main(["--web", "--config", "s.yaml", "--demo", "--quiet", "--no-auto-start", "--session", "s1"]) == 0
+        assert main(["--web", "--config", "s.yaml", "--quiet", "--no-auto-start", "--session", "s1"]) == 0
     run.assert_called_once_with(
-        "s.yaml", demo=True, quiet=True, no_auto_start=True, new_session=False, session_id="s1"
+        "s.yaml", quiet=True, no_auto_start=True, new_session=False, session_id="s1"
     )
+
+
+def test_web_rejects_the_removed_demo_flag():
+    with patch.object(cli, "_run_web_surface") as run, pytest.raises(SystemExit) as exc:
+        main(["--web", "--config", "s.yaml", "--demo"])
+    assert exc.value.code == 2
+    run.assert_not_called()
 
 
 def test_no_auto_start_still_needs_headless_or_web(capsys):
@@ -60,14 +67,15 @@ def test_web_env_scrubs_secrets_and_sets_ink_keys(tmp_path, monkeypatch):
     monkeypatch.setenv("AUGURY_PLAN_FIRST", "1")
     monkeypatch.setenv("AGENT_AUGURY_SESSION", "stale")
     cfg = tmp_path / "s.yaml"
-    env = _web_env(cfg, demo=True, quiet=False, no_auto_start=True, new_session=False, session_id=None)
+    env = _web_env(cfg, quiet=False, no_auto_start=True, new_session=False, session_id=None)
     secrets_file = Path(env["AUGURY_GATEWAY_SECRETS_FILE"])
     try:
         assert "OPENAI_API_KEY" not in env
         assert json.loads(secrets_file.read_text())["OPENAI_API_KEY"] == "sk-test-123"
         assert env["AUGURY_GATEWAY_MODE"] == "session"
         assert env["AUGURY_CONFIG"] == str(cfg)
-        assert env["AUGURY_DEMO"] == "1" and env["AUGURY_NO_AUTO_START"] == "1"
+        assert env["AUGURY_NO_AUTO_START"] == "1"
+        assert "AUGURY_DEMO" not in env
         assert "AUGURY_QUIET" not in env
         assert "AUGURY_PLAN_FIRST" not in env
         assert "AGENT_AUGURY_SESSION" not in env
@@ -85,10 +93,10 @@ def test_web_reports_missing_config(tmp_path, capsys):
 
 def test_web_reports_old_or_missing_node(capsys):
     with patch.object(shutil, "which", return_value=None):
-        assert cli._run_web_surface(str(DEMO_YAML)) == 1
+        assert cli._run_web_surface(str(LIFECYCLE_YAML)) == 1
     assert "Node.js >= 22" in capsys.readouterr().err
     with patch.object(shutil, "which", return_value="/usr/bin/node"), patch.object(cli, "_node_major", return_value=20):
-        assert cli._run_web_surface(str(DEMO_YAML)) == 1
+        assert cli._run_web_surface(str(LIFECYCLE_YAML)) == 1
     assert "Node.js >= 22" in capsys.readouterr().err
 
 
@@ -104,13 +112,13 @@ def _ready_front(tmp_path, monkeypatch, *, with_modules: bool = True) -> Path:
 
 def test_web_reports_missing_node_modules(tmp_path, monkeypatch, capsys):
     web = _ready_front(tmp_path, monkeypatch, with_modules=False)
-    assert cli._run_web_surface(str(DEMO_YAML)) == 1
+    assert cli._run_web_surface(str(LIFECYCLE_YAML)) == 1
     assert f"run `npm install` in {web}" in capsys.readouterr().err
 
 
 def test_web_refuses_windows(monkeypatch, capsys):
     monkeypatch.setattr(sys, "platform", "win32")
-    assert cli._run_web_surface(str(DEMO_YAML)) == 1
+    assert cli._run_web_surface(str(LIFECYCLE_YAML)) == 1
     assert "not supported on Windows" in capsys.readouterr().err
 
 
@@ -139,7 +147,7 @@ def test_web_token_goes_over_stdin_only_and_secrets_never_in_env(tmp_path, monke
     _ready_front(tmp_path, monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-live-should-not-pass")
     monkeypatch.setattr(subprocess, "Popen", _FakeBff)
-    assert cli._run_web_surface(str(DEMO_YAML)) == 0
+    assert cli._run_web_surface(str(LIFECYCLE_YAML)) == 0
     bff = _FakeBff.last
     token = bff.stdin.getvalue().decode().strip()
     assert re.fullmatch(r"[A-Za-z0-9_-]{43}", token)
@@ -168,7 +176,7 @@ def test_web_removes_the_secrets_file_when_the_bff_cannot_start(tmp_path, monkey
 
     monkeypatch.setattr(cli, "_web_env", spy)
     monkeypatch.setattr(subprocess, "Popen", broken)
-    assert cli._run_web_surface(str(DEMO_YAML)) == 1
+    assert cli._run_web_surface(str(LIFECYCLE_YAML)) == 1
     assert "could not start the Web BFF" in capsys.readouterr().err
     assert made and not Path(made[0]).exists()
 
@@ -187,9 +195,9 @@ requires_web = pytest.mark.skipif(not _ready, reason="needs node and fronts/web/
 
 def _start(*extra: str) -> tuple[subprocess.Popen[str], str]:
     proc = subprocess.Popen(
-        [sys.executable, "-m", "agent_augury.cli", "--web", "--config", str(DEMO_YAML), "--demo", *extra],
+        [sys.executable, "-m", "agent_augury.cli", "--web", "--config", str(LIFECYCLE_YAML), "--no-auto-start", *extra],
         cwd=REPO,
-        env={**os.environ, "PYTHONPATH": str(REPO / "src")},
+        env={**os.environ, "PYTHONPATH": str(REPO / "src"), "AUGURY_TEST_DUMMY_API_KEY": "dummy"},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -271,20 +279,37 @@ def test_web_launch_prints_url_token_works_once_and_ctrl_c_cleans_up():
 def test_web_second_ctrl_c_exits_now_and_leaves_nothing():
     before = _pids()
     proc, url = _start()
+    gateways: list[str] = []
     try:
         assert url.startswith("http://127.0.0.1:")
         end = time.monotonic() + 10
         while len(_pids() - before) < 2 and time.monotonic() < end:
             time.sleep(0.1)
         spawned = sorted(_pids() - before)
+        # Make the graceful shutdown slow on purpose: a stopped Gateway never
+        # answers quit, so the BFF waits (quit → 3 s → SIGTERM). Without this
+        # the BFF finishes in ~0.1 s and there is no "second Ctrl+C" to test.
+        gateways += [
+            p for p in spawned
+            if "session_stdio" in subprocess.run(["ps", "-o", "command=", "-p", p], capture_output=True, text=True, check=False).stdout
+        ]
+        assert gateways, "expected the Gateway child"
+        for p in gateways:
+            os.kill(int(p), signal.SIGSTOP)
         proc.send_signal(signal.SIGINT)
-        time.sleep(0.2)
+        time.sleep(0.5)
+        assert proc.poll() is None, "still shutting down"
         proc.send_signal(signal.SIGINT)
         assert proc.wait(timeout=20) == 130
-        _wait_gone(spawned)
+        _wait_gone(spawned)  # the BFF SIGKILLs its process group on exit, stopped or not
     finally:
         if proc.poll() is None:
             proc.kill()
+        for p in gateways:  # never leave a stopped child behind if an assert failed
+            try:
+                os.kill(int(p), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 @requires_web

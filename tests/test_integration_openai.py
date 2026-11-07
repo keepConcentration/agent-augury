@@ -7,7 +7,7 @@ Enable real OpenAI smoke / consensus E2E with::
     export OPENAI_API_KEY=sk-...
     pytest tests/test_integration_openai.py -m openai -v
 
-Offline tests in this module (YAML load + fake-backend P1~P5 E2E) always run.
+Offline tests in this module (YAML load + scripted-backend P1~P5 E2E) always run.
 """
 
 from __future__ import annotations
@@ -22,12 +22,13 @@ from agent_augury.core.session import Session
 from tests.conftest import requires_openai
 
 ROOT = Path(__file__).resolve().parents[1]
-P1_P5_YAML = ROOT / "examples" / "p1_to_p5_protocol.yaml"
+P1_P5_YAML = ROOT / "tests" / "fixtures" / "p1_to_p5_scripted.yaml"
+P1_P5_EXAMPLE = ROOT / "examples" / "p1_to_p5_protocol.yaml"
 CONSENSUS_OPENAI_YAML = ROOT / "examples" / "consensus_openai.yaml"
 
 
 def _load_p1_p5_cfg():
-    """Load P1~P5 protocol config, bypassing load_config validation for fake backends."""
+    """Load the scripted P1~P5 fixture (test-only backend: tests/scripted.py)."""
     import yaml
     raw = P1_P5_YAML.read_text(encoding="utf-8")
     return yaml.safe_load(raw)
@@ -39,7 +40,7 @@ def _load_p1_p5_cfg():
 
 
 def test_p1_to_p5_protocol_yaml_loads():
-    """YAML mirror of p1_to_p5_demo.py must validate."""
+    """The scripted P1~P5 fixture has every gate and agent."""
     cfg = _load_p1_p5_cfg()
     assert set(cfg["protocol"]["gates"]) == {
         "P2_SPLIT",
@@ -48,12 +49,12 @@ def test_p1_to_p5_protocol_yaml_loads():
         "P5_SUBMIT",
     }
     assert len(cfg["agents"]) == 3
-    assert all(a["backend"]["type"] == "fake" for a in cfg["agents"])
+    assert all(a["backend"]["type"] == "scripted" for a in cfg["agents"])
 
 
 @pytest.mark.asyncio
-async def test_p1_to_p5_protocol_yaml_e2e_fake():
-    """Full P1~P5 protocol via YAML + FakeModelBackend (no external API)."""
+async def test_p1_to_p5_protocol_yaml_e2e_scripted():
+    """Full P1~P5 protocol via YAML + ScriptedBackend (no external API)."""
     cfg = _load_p1_p5_cfg()
     session = Session.from_config(cfg)
     protocol = session.protocol
@@ -105,7 +106,7 @@ async def test_p1_to_p5_protocol_yaml_e2e_fake():
 def test_cli_p1_to_p5_protocol_yaml():
     """CLI --config launches Ink for the P1~P5 YAML (session path).
 
-    Full protocol E2E lives in ``test_p1_to_p5_protocol_yaml_e2e_fake``.
+    Full protocol E2E lives in ``test_p1_to_p5_protocol_yaml_e2e_scripted``.
     D11: protocol-only YAML has no standalone ``gate:`` → Session.gate is None.
     """
     from unittest.mock import patch
@@ -119,12 +120,12 @@ def test_cli_p1_to_p5_protocol_yaml():
     assert session.protocol is not None
 
     with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
-        rc = main(["--config", str(P1_P5_YAML), "--demo"])
+        rc = main(["--config", str(P1_P5_EXAMPLE)])
     assert rc == 0
     ink.assert_called_once()
     assert ink.call_args.kwargs["mode"] == "session"
-    assert ink.call_args.kwargs["config"] == str(P1_P5_YAML)
-    assert ink.call_args.kwargs["demo"] is True
+    assert ink.call_args.kwargs["config"] == str(P1_P5_EXAMPLE)
+    assert "demo" not in ink.call_args.kwargs
 
 
 # ---------------------------------------------------------------------------

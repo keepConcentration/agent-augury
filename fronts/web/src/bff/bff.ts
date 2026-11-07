@@ -20,7 +20,6 @@ const isOn = (value: string | undefined) => value === "1" || value === "true";
 /** API-03 ``flags``, from the env the CLI hands over (SRS §3.5.1). */
 export function flagsFromEnv(env: Env): Flags {
   return {
-    demo: isOn(env.AUGURY_DEMO),
     no_auto_start: isOn(env.AUGURY_NO_AUTO_START),
     plan_first: isOn(env.AUGURY_PLAN_FIRST),
     session: env.AGENT_AUGURY_SESSION || null,

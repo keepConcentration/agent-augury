@@ -1,4 +1,4 @@
-"""Model backend adapters (OpenAI-compatible, Anthropic Messages, Nous, Fake)."""
+"""Model backend adapters (OpenAI-compatible, Anthropic Messages, Nous)."""
 
 from .base import Completion, ModelBackend, ToolCall
 

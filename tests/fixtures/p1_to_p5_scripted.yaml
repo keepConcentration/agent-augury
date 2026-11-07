@@ -1,0 +1,173 @@
+# Test fixture: P1~P5 full collaboration protocol on the test-only scripted
+# backend (tests/scripted.py) — tests/test_integration_openai.py runs it offline.
+# Real-model version: examples/p1_to_p5_protocol.yaml
+
+max_steps: 50
+protocol:
+  participants:
+  - agent-1
+  - agent-2
+  - agent-3
+  roster:
+    start: -1   # full pool — scripted E2E expects all three agents
+  gates:
+    P2_SPLIT: plan
+    P3_EXECUTE: execution
+    P4_REVIEW: review
+    P5_SUBMIT: submission
+agents:
+- id: agent-1
+  backend:
+    type: scripted
+    script:
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:plan
+          content: 'READY:'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:plan
+          content: 'PROPOSE: agent-1→검색·종합, agent-2→검증, agent-3→정리'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:plan
+          content: 'APPROVE: ok'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:execution
+          content: '(FYI) agent-1 검색 완료: 정답 후보 43'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:execution
+          content: 'APPROVE: ok'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:review
+          content: 'RESULT: 정답은 43 (근거: 다중 소수 곱)'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:review
+          content: 'APPROVE: ok'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:submission
+          content: 'FINAL: 정답은 43'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:submission
+          content: 'APPROVE: ok'
+          mentions: []
+    - text: done
+- id: agent-2
+  backend:
+    type: scripted
+    script:
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:plan
+          content: 'READY:'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:plan
+          content: 'APPROVE: ok'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:execution
+          content: '(FYI) agent-2 검증 완료: 근거 일치'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:execution
+          content: 'APPROVE: ok'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:review
+          content: 'RESULT: 검증 완료 (이의 없음)'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:review
+          content: 'APPROVE: ok'
+          mentions: []
+    - text: waiting for final answer
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:submission
+          content: 'APPROVE: ok'
+          mentions: []
+    - text: done
+- id: agent-3
+  backend:
+    type: scripted
+    script:
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:plan
+          content: 'READY:'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:plan
+          content: 'APPROVE: ok'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:execution
+          content: (FYI) agent-3 정리 완료
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:execution
+          content: 'APPROVE: ok'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:review
+          content: 'RESULT: 정리 완료 (이의 없음)'
+          mentions: []
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:review
+          content: 'APPROVE: ok'
+          mentions: []
+    - text: waiting for final answer
+    - tool_calls:
+      - name: send_message
+        arguments:
+          thread: $thread_by_name:submission
+          content: 'APPROVE: ok'
+          mentions: []
+    - text: done

@@ -23,6 +23,10 @@ from agent_augury.cli import _web_env, _web_front_dir, main
 REPO = Path(__file__).resolve().parents[1]
 DEMO_YAML = REPO / "examples" / "demo.yaml"
 
+# ``--web`` refuses Windows before any other check (test_web_refuses_windows);
+# these tests drive the POSIX path past that refusal.
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="--web is POSIX-only for now")
+
 
 @pytest.mark.parametrize(
     ("argv", "message"),
@@ -79,11 +83,13 @@ def test_web_env_scrubs_secrets_and_sets_ink_keys(tmp_path, monkeypatch):
         secrets_file.unlink(missing_ok=True)
 
 
+@posix_only
 def test_web_reports_missing_config(tmp_path, capsys):
     assert cli._run_web_surface(str(tmp_path / "nope.yaml")) == 1
     assert "config not found" in capsys.readouterr().err
 
 
+@posix_only
 def test_web_reports_old_or_missing_node(capsys):
     with patch.object(shutil, "which", return_value=None):
         assert cli._run_web_surface(str(DEMO_YAML)) == 1
@@ -109,12 +115,14 @@ def _ready_front(tmp_path, monkeypatch, *, with_modules: bool = True) -> Path:
     return web
 
 
+@posix_only
 def test_web_reports_missing_node_modules(tmp_path, monkeypatch, capsys):
     web = _ready_front(tmp_path, monkeypatch, with_modules=False)
     assert cli._run_web_surface(str(DEMO_YAML)) == 1
     assert f"run `npm install` in {web}" in capsys.readouterr().err
 
 
+@posix_only
 @pytest.mark.parametrize(
     ("remove", "named"),
     [
@@ -163,6 +171,7 @@ class _FakeBff:
         self.signals.append(sig)
 
 
+@posix_only
 def test_web_token_goes_over_stdin_only_and_secrets_never_in_env(tmp_path, monkeypatch, capsys):
     _ready_front(tmp_path, monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-live-should-not-pass")
@@ -180,6 +189,7 @@ def test_web_token_goes_over_stdin_only_and_secrets_never_in_env(tmp_path, monke
     assert not Path(bff.env["AUGURY_GATEWAY_SECRETS_FILE"]).exists()
 
 
+@posix_only
 @pytest.mark.parametrize(("rc", "expected"), [(-15, 143), (-9, 137), (3, 3), (0, 0)])
 def test_web_normalizes_a_signal_death_to_128_plus_n(tmp_path, monkeypatch, rc, expected):
     _ready_front(tmp_path, monkeypatch)
@@ -188,6 +198,7 @@ def test_web_normalizes_a_signal_death_to_128_plus_n(tmp_path, monkeypatch, rc, 
     assert cli._run_web_surface(str(DEMO_YAML)) == expected
 
 
+@posix_only
 @pytest.mark.parametrize("tty", [False, True])
 def test_web_warns_on_stderr_when_the_token_url_goes_to_a_non_terminal(
     tmp_path, monkeypatch, capsys, tty
@@ -202,6 +213,7 @@ def test_web_warns_on_stderr_when_the_token_url_goes_to_a_non_terminal(
     assert "one-time access token" not in out.out
 
 
+@posix_only
 def test_web_removes_the_secrets_file_when_the_bff_cannot_start(tmp_path, monkeypatch, capsys):
     _ready_front(tmp_path, monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-live-should-not-linger")

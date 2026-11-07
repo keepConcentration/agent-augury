@@ -16,6 +16,8 @@ export const SSE_DEFAULTS = {
   maxBytes: 16 * 1024 * 1024,
   maxStreams: 4,
   pingMs: 15_000,
+  /** Buffered output that has not drained for this long means a dead (half-open) peer. */
+  stallMs: 60_000,
   retryMs: 2000,
   writableLimit: 4 * 1024 * 1024,
 };
@@ -42,8 +44,23 @@ export type HubOptions = Partial<typeof SSE_DEFAULTS> & {
 
 type Frame = {seq: number; text: string; bytes: number};
 /** ``replayAllowance``: bytes of the initial replay still allowed in the socket buffer. */
-type Conn = {tab: string; res: ServerResponse; closed: boolean; replayAllowance: number};
+/** ``stalledAt``: when a ping first found output still buffered; cleared on ``drain``. */
+type Conn = {tab: string; res: ServerResponse; closed: boolean; replayAllowance: number; stalledAt?: number};
 type Gap = {from: number; to: number};
+
+/** Mask every string, however deep (08 §4.5). */
+function maskDeep(value: unknown): unknown {
+  if (typeof value === "string") {
+    return maskSensitive(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(maskDeep);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskDeep(v)]));
+  }
+  return value;
+}
 
 function frame(event: string, data: string, id?: number): string {
   return `${id === undefined ? "" : `id: ${id}\n`}event: ${event}\ndata: ${data}\n\n`;
@@ -70,6 +87,7 @@ export class EventHub {
     this.now = options.now ?? Date.now;
     this.ping = setInterval(() => {
       for (const conn of this.conns.values()) {
+        this.checkStall(conn);
         this.write(conn, ": ping\n\n");
       }
     }, this.opts.pingMs).unref();
@@ -105,6 +123,18 @@ export class EventHub {
     }
   }
 
+  /** A half-open peer never acks, so its buffer never drains: free its slot (maxStreams). */
+  private checkStall(conn: Conn): void {
+    if (conn.res.writableLength === 0) {
+      conn.stalledAt = undefined;
+    } else if (conn.stalledAt === undefined) {
+      conn.stalledAt = this.now();
+    } else if (this.now() - conn.stalledAt >= this.opts.stallMs) {
+      conn.closed = true;
+      conn.res.destroy();
+    }
+  }
+
   private append(event: "wire" | "bff.notice", data: string): void {
     const seq = ++this.seq;
     const text = frame(event, data, seq);
@@ -123,12 +153,9 @@ export class EventHub {
     this.append("wire", JSON.stringify(message));
   }
 
-  /** ``bff.notice`` (08 §4.5): every string field masked, text clipped, stamped with ``ts``. */
+  /** ``bff.notice`` (08 §4.5): every string (nested too) masked, text clipped, stamped with ``ts``. */
   publishNotice(notice: Notice): void {
-    const out: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(notice)) {
-      out[key] = typeof value === "string" ? maskSensitive(value) : value;
-    }
+    const out = maskDeep(notice) as Record<string, unknown>;
     let text = out.text as string;
     if (text.length > NOTICE_TEXT_MAX) {
       let end = NOTICE_TEXT_MAX;
@@ -159,7 +186,8 @@ export class EventHub {
       n = 0; // another seq space (BFF restarted): replay everything
     }
     const min = this.frames.length ? this.frames[0].seq : this.seq + 1;
-    const gap = n + 1 < min ? {from: n + 1, to: min - 1} : null;
+    // A first connect (no Last-Event-ID) missed nothing, so a trimmed buffer front is no gap.
+    const gap = lastEventId !== undefined && n + 1 < min ? {from: n + 1, to: min - 1} : null;
     const replay = gap ? this.frames : this.frames.filter((f) => f.seq > n);
 
     if (this.shut) {
@@ -175,6 +203,8 @@ export class EventHub {
     }
     const conn: Conn = {tab, res, closed: false, replayAllowance: 0};
     this.conns.set(tab, conn);
+    res.socket?.setKeepAlive(true, this.opts.pingMs);
+    res.on("drain", () => (conn.stalledAt = undefined));
     res.on("close", () => {
       conn.closed = true;
       if (this.conns.get(tab) === conn) {

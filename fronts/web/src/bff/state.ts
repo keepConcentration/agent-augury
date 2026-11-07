@@ -123,10 +123,14 @@ export class BffState implements CommandState {
     return key.startsWith("a:") ? this.approvals.get(id) : this.questions.get(id);
   }
 
-  check(key: CmdKey): "not_pending" | "in_flight" | null {
+  check(key: CmdKey, revision?: number): "not_pending" | "stale_revision" | "in_flight" | null {
     const item = this.item(key);
     if (!item) {
       return "not_pending";
+    }
+    // An answer to an older revision must not approve the re-issued args.
+    if (revision !== undefined && "revision" in item && item.revision !== revision) {
+      return "stale_revision";
     }
     return item.resolving ? "in_flight" : null;
   }
@@ -308,14 +312,18 @@ export class BffState implements CommandState {
     const old = this.approvals.get(id);
     const changed = old !== undefined && this.approvalPrints.get(id) !== print;
     this.approvalPrints.set(id, print);
+    const agentId = String(e.agent_id);
+    const ttl = typeof e.ttl_seconds === "number" ? e.ttl_seconds : null;
+    // An identical re-issue keeps received_at, so the snapshot (and digest) stays the same.
+    const same = old !== undefined && !changed && old.agent_id === agentId && old.ttl_seconds === ttl;
     this.approvals.set(id, {
       approval_id: id,
-      agent_id: String(e.agent_id),
+      agent_id: agentId,
       tool: String(e.tool),
       args_preview: clipArgs(e.args_preview, this.opts.argValueMax),
       revision: old ? old.revision + (changed ? 1 : 0) : 1,
-      ttl_seconds: typeof e.ttl_seconds === "number" ? e.ttl_seconds : null,
-      received_at: this.now(),
+      ttl_seconds: ttl,
+      received_at: same ? old.received_at : this.now(),
       resolving: old?.resolving ?? false,
     });
   }

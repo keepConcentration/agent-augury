@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
 import {formatGate} from "../../../ink/src/wire.js";
-import {RESUME_HINT, applyNotice, applyState, applyWire, freshNotice, gateSummary, initialModel, status, type BffState, type Model} from "./model.js";
+import {RESUME_HINT, announcement, applyNotice, applyState, applyWire, freshNotice, gateSummary, initialModel, status, type BffState, type Model} from "./model.js";
 
 const ev = (type: string, extra: Record<string, unknown> = {}) => ({dir: "event" as const, type, ...extra});
 
@@ -106,6 +106,17 @@ test("gate summary is Ink's formatGate text, character for character (F-012)", (
   const m = applyState(initialModel(), state({gate}));
   assert.equal(gateSummary(m), formatGate({dir: "event", type: "session.gate", ...gate}));
   assert.equal(gateSummary(applyState(initialModel(), state())), null);
+});
+
+test("announcement: approval first, then a new question, then a gate step", () => {
+  const ap = {agent_id: "bob", tool: "run_command"};
+  const q = {agent_id: "alice", question_id: "q1"};
+  assert.equal(announcement(ap, q, {phase: "P2"}), "bob 이 run_command 승인을 요청했습니다");
+  assert.equal(announcement(null, q, {phase: "P2"}), "alice 이 질문했습니다 (q1)");
+  assert.equal(announcement(null, {agent_id: null, question_id: "q2"}, null), "에이전트 이 질문했습니다 (q2)");
+  assert.equal(announcement(null, null, {phase: "P2"}), "사람 승인이 필요한 단계입니다 · P2");
+  assert.equal(announcement(null, null, {phase: null}), "사람 승인이 필요한 단계입니다");
+  assert.equal(announcement(null, null, null), "");
 });
 
 test("rows already pushed keep their identity, so a memoized row does not re-render", () => {

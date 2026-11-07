@@ -96,6 +96,13 @@ test("plan: decorated or lower-case gate prefixes go to the gate thread; a bare 
   }
 });
 
+test("outcome: 502 gateway_exited — quit is done; other commands may have landed", () => {
+  const r = {kind: "http", status: 502, code: "gateway_exited", cmdId: null} as const;
+  assert.deepEqual(outcome("session.quit", r), {clear: true, toast: null, asTurn: false});
+  assert.equal(outcome("human.send", r).toast?.level, "warn");
+  assert.equal(outcome("human.send", r).clear, false);
+});
+
 test("outcome: stale_revision keeps nothing decided and asks to look again", () => {
   const o = outcome("approval.resolve", {kind: "http", status: 409, code: "stale_revision", cmdId: null});
   assert.deepEqual(o, {clear: false, toast: {level: "warn", text: STALE_TEXT}, asTurn: false});

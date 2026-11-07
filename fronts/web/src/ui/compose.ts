@@ -136,6 +136,11 @@ export function outcome(type: string, r: CmdResult): Outcome {
       return type === "session.quit"
         ? {clear: true, toast: null, asTurn: false}
         : {clear: false, toast: {level: "error", text: "세션이 실행 중이 아닙니다"}, asTurn: false};
+    case "gateway_exited":
+      // Written, then the child exited before answering: quit did its job; anything else may have landed.
+      return type === "session.quit"
+        ? {clear: true, toast: null, asTurn: false}
+        : {clear: false, toast: {level: "warn", text: "세션이 응답 전에 종료됐습니다 — 이미 적용됐을 수 있습니다"}, asTurn: false};
     case "not_controller":
       return {clear: false, toast: {level: "warn", text: "이 탭은 읽기 전용입니다"}, asTurn: false};
     case "in_flight":

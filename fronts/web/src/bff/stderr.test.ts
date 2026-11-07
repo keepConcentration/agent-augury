@@ -28,3 +28,11 @@ test("every line is logged masked; blank lines are ignored", () => {
   assert.match(logs[0], /^\[gateway\] /);
   assert.deepEqual(notices.map((n) => n.kind), ["stderr"]);
 });
+
+test("provider errors quoting a raw key are logged masked (no key name before the value)", () => {
+  const logs: string[] = [];
+  const sinks = {notice: () => {}, log: (l: string) => logs.push(l)};
+  handleStderrLine("Error code: 401 - Incorrect API key provided: sk-proj-AbCdEf123456", sinks);
+  handleStderrLine("400 for url https://example.test/v1beta/models?key=AIzaSyA1b2C3d4E5f6G7h8I9j0KlMnOpQrStU", sinks);
+  assert.doesNotMatch(logs.join("\n"), /AbCdEf123456|SyA1b2C3d4E5/);
+});

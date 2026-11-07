@@ -98,6 +98,8 @@ test("startBff with hello_demo: a tab sees the session; shutdown leaves nothing 
   const last = tab.states().at(-1)!;
   assert.deepEqual([last.gateway.status, last.agents, last.is_controller], ["running", ["demo-agent"], true]);
   assert.equal(tab.notices()[0].kind, "dev_mode");
+  // The notice passes publishNotice's masking verbatim ("secret scrubbing" is prose, not a pair).
+  assert.equal(tab.notices()[0].text, "dev mode: not started through agent-augury --web, so secret scrubbing is not guaranteed");
 
   const pid = bff.gateway.pid;
   await Promise.all([bff.shutdown(), bff.shutdown()]);

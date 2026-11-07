@@ -7,6 +7,8 @@ Modes:
   - ``agent-augury --headless --config PATH`` — Core only with an explicit YAML.
   - ``agent-augury`` (no args) — interactive wizard, then Ink session.
   - ``agent-augury --ink-hello`` — Ink hello Gateway demo (M2/M3).
+  - ``agent-augury --web --config PATH`` — browser Surface via the Node BFF
+    (``fronts/web``; source checkout, Node.js >= 22).
 
 The Ink front is resolved via ``agent_augury.ink_front`` (env override, repo
 ``fronts/ink``, or wheel-bundled sources materialized into a user cache).
@@ -16,7 +18,7 @@ Flags:
   - ``--quiet`` — suppress live event output in the Surface / headless stderr.
   - ``--demo`` — allow ``type: fake`` backends.
   - ``--headless`` — boot Core without Ink (daemon / chat-channel mode).
-  - ``--no-auto-start`` — with ``--headless``, wait for human.send before first run.
+  - ``--no-auto-start`` — with ``--headless`` or ``--web``, wait for human.send / Start.
   - ``--plan TASK`` — team-planner setup: plan the team for TASK, then start
     (TEAM_PLANNER_DESIGN.md). Without it, planner setups ask for the task.
 
@@ -590,6 +592,222 @@ def _run_ink_surface(
             _restore_signal_mask(old_mask)
 
 
+def _web_front_dir() -> Path | None:
+    """``fronts/web`` in a source checkout (wheel packaging is Phase 2, N-013)."""
+    root = resolve_project_root()
+    if root is None:
+        return None
+    web = root / "fronts" / "web"
+    return web if (web / "package.json").is_file() else None
+
+
+def _web_env(
+    cfg_path: Path,
+    *,
+    demo: bool,
+    quiet: bool,
+    no_auto_start: bool,
+    new_session: bool,
+    session_id: str | None,
+) -> dict[str, str]:
+    """Env for the Web BFF: same keys as Ink (SRS §3.5.1), secrets only via file.
+
+    The one-time access token is *not* here: env is inherited by the Gateway
+    child and its ``run_command`` shells. It goes over the BFF's stdin instead.
+    """
+    from .gateway.secrets import scrub_env_for_ink
+
+    env = scrub_env_for_ink()
+    env.setdefault("AUGURY_PYTHON", sys.executable)
+    src_entry = pythonpath_src_entry()
+    if src_entry is not None:
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(src_entry), env.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep)
+    root = resolve_project_root()
+    if root is not None:
+        env.setdefault("AUGURY_PROJECT_ROOT", str(root))
+    env.setdefault("AUGURY_FILE_ROOT", str(Path.cwd()))
+    env["AUGURY_GATEWAY_MODE"] = "session"
+    env["AUGURY_CONFIG"] = str(cfg_path)
+    for name, on in (
+        ("AUGURY_DEMO", demo),
+        ("AUGURY_QUIET", quiet),
+        ("AUGURY_NO_AUTO_START", no_auto_start),
+        ("AGENT_AUGURY_NEW_SESSION", new_session),
+    ):
+        if on:
+            env[name] = "1"
+        else:
+            env.pop(name, None)
+    if session_id:
+        env["AGENT_AUGURY_SESSION"] = session_id
+    else:
+        env.pop("AGENT_AUGURY_SESSION", None)
+    env.pop("AUGURY_PLAN_FIRST", None)
+    # Not a secret: tells the BFF that a missing stdin token means "the CLI is
+    # gone" (exit), not "started by hand" (dev mode).
+    env["AUGURY_LAUNCHED_BY_CLI"] = "1"
+    return env
+
+
+def _web_missing_deps(web_dir: Path) -> list[str]:
+    """What the BFF imports but is not installed: ``tsx`` + package.json deps.
+
+    The BFF also imports ``fronts/ink/src/wire.ts`` (no imports of its own),
+    so only that file has to exist.
+    """
+    import json
+
+    try:
+        pkg = json.loads((web_dir / "package.json").read_text(encoding="utf-8"))
+        deps = list((pkg.get("dependencies") or {}).keys())
+    except (OSError, ValueError, AttributeError):
+        deps = []
+    missing = [
+        name
+        for name in ["tsx", *deps]
+        if not (web_dir / "node_modules" / name / "package.json").is_file()
+    ]
+    if not (web_dir.parent / "ink" / "src" / "wire.ts").is_file():
+        missing.append(str(web_dir.parent / "ink" / "src" / "wire.ts"))
+    return missing
+
+
+def _node_major(node: str) -> int | None:
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [node, "--version"], capture_output=True, text=True, timeout=10, check=False
+        ).stdout.strip()
+        return int(out.lstrip("v").split(".")[0])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def _run_web_surface(
+    config: str,
+    *,
+    demo: bool = False,
+    quiet: bool = False,
+    no_auto_start: bool = False,
+    new_session: bool = False,
+    session_id: str | None = None,
+) -> int:
+    """Start the Web BFF (``fronts/web``) and relay its URL (WBS 4.1, F-022).
+
+    The BFF runs in its own session so a terminal Ctrl+C reaches only us; we
+    forward exactly one SIGINT per Ctrl+C (a second one means "exit now" to the
+    BFF). If we die, the BFF sees stdin EOF and shuts down by itself.
+    """
+    import secrets
+    import shutil
+    import signal
+    import subprocess
+
+    if sys.platform == "win32":
+        # Ctrl+C forwarding below relies on POSIX sessions and SIGINT.
+        print("error: --web is not supported on Windows yet", file=sys.stderr)
+        return 1
+    cfg_path = Path(config).expanduser().resolve()
+    if not cfg_path.is_file():
+        print(f"error: config not found: {cfg_path}", file=sys.stderr)
+        return 1
+    web_dir = _web_front_dir()
+    if web_dir is None:
+        print(
+            "error: --web needs a source checkout with fronts/web "
+            "(not bundled in the wheel yet).",
+            file=sys.stderr,
+        )
+        return 1
+    node = shutil.which("node")
+    major = _node_major(node) if node else None
+    if node is None or major is None or major < 22:
+        print(
+            "error: the Web Surface requires Node.js >= 22 (`node` on PATH).\n"
+            "Install from https://nodejs.org/ then re-run `agent-augury --web`.",
+            file=sys.stderr,
+        )
+        return 1
+    missing = _web_missing_deps(web_dir)
+    if missing:
+        print(
+            f"error: Web Surface dependencies are missing ({', '.join(missing)}) — "
+            f"run `npm install` in {web_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    env = _web_env(
+        cfg_path,
+        demo=demo,
+        quiet=quiet,
+        no_auto_start=no_auto_start,
+        new_session=new_session,
+        session_id=session_id,
+    )
+    # The Gateway child deletes this file once it has read it; if it never
+    # starts (BFF failed early, we were interrupted), the keys must not stay
+    # behind in the temp dir.
+    secrets_file = env.get("AUGURY_GATEWAY_SECRETS_FILE")
+    token = secrets.token_urlsafe(32)
+    proc: subprocess.Popen[bytes] | None = None
+
+    def wait() -> int:
+        assert proc is not None
+        while True:
+            try:
+                rc = proc.wait()
+                # Killed by signal N: report 128+N like a shell, not Python's -N.
+                return 128 - rc if rc < 0 else rc
+            except KeyboardInterrupt:
+                proc.send_signal(signal.SIGINT)  # one SIGINT per Ctrl+C
+
+    try:
+        # node --import tsx: one process (the tsx binary is a wrapper; npm prints banners).
+        proc = subprocess.Popen(
+            [node, "--import", "tsx", "src/bff/main.ts"],
+            cwd=web_dir,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            start_new_session=True,
+        )
+        assert proc.stdin is not None and proc.stdout is not None
+        try:
+            proc.stdin.write(f"{token}\n".encode())
+            proc.stdin.flush()  # keep stdin open: its EOF tells the BFF we are gone
+        except BrokenPipeError:
+            print("error: the Web BFF exited before it started", file=sys.stderr)
+            return wait() or 1
+        warned = False
+        for raw in proc.stdout:
+            if not warned and not sys.stdout.isatty():
+                # Redirected to a file or pipe: the token-bearing URL may persist.
+                print(
+                    "warning: the URL on stdout contains a one-time access token; "
+                    "stdout is not a terminal, so it may be stored",
+                    file=sys.stderr,
+                )
+                warned = True
+            sys.stdout.write(raw.decode("utf-8", "replace"))
+            sys.stdout.flush()
+        return wait()
+    except KeyboardInterrupt:
+        if proc is None:
+            return 130
+        proc.send_signal(signal.SIGINT)
+        return wait()
+    except OSError as exc:
+        print(f"error: could not start the Web BFF: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if secrets_file:
+            Path(secrets_file).unlink(missing_ok=True)
+
+
 def _run_ink_hello() -> int:
     """M2: Ink hello Surface against ``gateway.hello_demo``."""
     return _run_ink_surface(mode="hello")
@@ -650,10 +868,16 @@ def main(argv: list[str] | None = None) -> int:
         help="boot Core without Ink (default config: ~/.agent-augury/agent-augury-session.yaml)",
     )
     parser.add_argument(
+        "--web",
+        action="store_true",
+        default=False,
+        help="browser Surface via the Web BFF (needs --config; source checkout)",
+    )
+    parser.add_argument(
         "--no-auto-start",
         action="store_true",
         default=False,
-        help="with --headless: do not auto-run config task; wait for human.send",
+        help="with --headless or --web: do not auto-run config task; wait for human.send",
     )
     parser.add_argument(
         "--new-session",
@@ -680,9 +904,12 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    if args.no_auto_start and not args.headless:
+    if args.web and args.ink_hello:
+        print("error: --web cannot be combined with --ink-hello", file=sys.stderr)
+        return 1
+    if args.no_auto_start and not (args.headless or args.web):
         print(
-            "error: --no-auto-start is only valid with --headless",
+            "error: --no-auto-start is only valid with --headless or --web",
             file=sys.stderr,
         )
         return 1
@@ -695,6 +922,31 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.ink_hello:
         return _run_ink_hello()
+
+    if args.web:
+        for flag, used in (
+            ("--headless", args.headless),
+            ("--plan", args.plan is not None),
+            ("--reconfigure", args.reconfigure),
+            ("--output", args.output is not None),
+        ):
+            if used:
+                print(f"error: --web cannot be combined with {flag}", file=sys.stderr)
+                return 1
+        if args.config is None:
+            print(
+                "error: --web needs --config PATH (the wizard is not wired to the Web yet)",
+                file=sys.stderr,
+            )
+            return 1
+        return _run_web_surface(
+            args.config,
+            demo=args.demo,
+            quiet=args.quiet,
+            no_auto_start=args.no_auto_start,
+            new_session=bool(args.new_session),
+            session_id=args.session,
+        )
 
     if args.output is not None and args.config is not None:
         print("error: --output is only valid without --config", file=sys.stderr)

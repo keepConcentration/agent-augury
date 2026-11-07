@@ -4,6 +4,7 @@
  * whole BFFs side by side; ``main.ts`` is the thin CLI around it.
  */
 
+import {rmSync} from "node:fs";
 import {join} from "node:path";
 import {CommandBus} from "./cmd.js";
 import {GatewayChild, childArgs, type Env} from "./gateway.js";
@@ -126,6 +127,16 @@ export async function startBff(options: BffOptions): Promise<Bff> {
       try {
         await child.stop();
       } finally {
+        // The child deletes the secrets file once loaded; if it never got that
+        // far (the CLI was killed early), do not leave API keys in the temp dir.
+        // A failure here (EACCES, ...) must not skip the rest of the cleanup.
+        if (env.AUGURY_GATEWAY_SECRETS_FILE) {
+          try {
+            rmSync(env.AUGURY_GATEWAY_SECRETS_FILE, {force: true});
+          } catch (err) {
+            log(`augury web: could not remove the secrets file: ${maskSensitive(err instanceof Error ? err.message : String(err))}`);
+          }
+        }
         state.close();
         hub.close();
         await server.close();

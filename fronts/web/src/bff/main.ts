@@ -3,6 +3,9 @@
  * The one-time token arrives as the first stdin line — never through env,
  * which the child and its ``run_command`` shells would inherit (SRS §3.5.1).
  * Without one (``npm start`` by hand) the BFF makes its own and runs in dev mode.
+ * The CLI also sets ``AUGURY_LAUNCHED_BY_CLI=1`` (not a secret): with it, a missing
+ * token means the CLI died or closed stdin early, so the BFF exits instead of
+ * running parentless in dev mode.
  *
  * Launch it with node directly, not ``npm`` (banner on stdout) or the ``tsx``
  * binary (a wrapper process: killing it can orphan the real BFF).
@@ -48,12 +51,19 @@ function readToken(): Promise<string | null> {
 }
 
 const say = (line: string) => process.stderr.write(`augury web: ${line}\n`);
+// If the CLI died, stderr may be a dead pipe: a failed log line must not turn
+// a clean shutdown into an "uncaught exception" one.
+process.stderr.on("error", () => {});
 
 async function main(): Promise<void> {
   const given = await readToken();
   if (given !== null && !TOKEN_RE.test(given)) {
     say("the token on stdin is malformed");
     process.exit(2);
+  }
+  if (given === null && process.env.AUGURY_LAUNCHED_BY_CLI === "1") {
+    say("launched by `agent-augury --web` but no token arrived on stdin — the CLI is gone, exiting");
+    process.exit(3);
   }
   const devMode = given === null;
   if (devMode) {
@@ -103,6 +113,17 @@ async function main(): Promise<void> {
   });
   // If the CLI closed its end of stdout, nobody can read the URL: shut down.
   process.stdout.on("error", () => stop("stdout closed", 1));
+  // Launched by the CLI (token on stdin): the CLI keeps stdin open, so EOF means
+  // it is gone — do not outlive it. Dev mode has no such parent.
+  if (!devMode) {
+    if (process.stdin.readableEnded) {
+      stop("stdin closed", 0);
+    } else {
+      process.stdin.on("data", () => {});
+      process.stdin.on("end", () => stop("stdin closed", 0));
+      process.stdin.resume();
+    }
+  }
 
   // The only stdout line: the CLI relays it to the user's terminal.
   process.stdout.write(`${bff.url}\n`);

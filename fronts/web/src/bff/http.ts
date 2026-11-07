@@ -113,6 +113,13 @@ export type ErrorCode =
   | "payload_too_large"
   | "unsupported_media_type"
   | "too_many_streams"
+  | "unknown_command"
+  | "schema_invalid"
+  | "not_pending"
+  | "in_flight"
+  | "not_controller"
+  | "gateway_unavailable"
+  | "timeout"
   | "internal_error";
 
 export type Reply = {

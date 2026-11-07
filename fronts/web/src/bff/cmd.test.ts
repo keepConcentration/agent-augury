@@ -301,7 +301,7 @@ test("child exit makes every waiting or unknown key answerable again", async () 
   const waiting = bus.handle(TAB, {type: "approval.resolve", approval_id: "a1", decision: "denied"});
   await tick();
   bus.onChildExit();
-  assert.equal((await waiting).status, 503);
+  assert.equal((await waiting).status, 502);
   assert.equal(state.check("q:q1"), null);
   assert.equal(state.check("a:a1"), null);
   // Nothing is remembered: a result now is an orphan.
@@ -349,14 +349,93 @@ test("human.answer accepts thread_id: null", async () => {
   hub.close();
 });
 
-test("child exit fails waiting commands at once with 503", async () => {
-  const {bus, hub} = setup();
+test("child exit fails waiting commands at once with 502 'may have been applied', not the unsent 503", async () => {
+  const {bus, hub, sink} = setup();
   const r = bus.handle(TAB, {type: "session.interrupt"});
   await tick();
   bus.onChildExit();
   const reply = await r;
-  assert.equal(reply.status, 503);
-  assert.equal((reply.body as {error: {cmd_id: string}}).error.cmd_id, "web-1");
+  assert.equal(reply.status, 502);
+  const error = (reply.body as {error: {code: string; message: string; cmd_id: string}}).error;
+  assert.equal(error.code, "gateway_exited");
+  assert.match(error.message, /may already have been applied/);
+  assert.equal(error.cmd_id, "web-1");
+  // Never written: still the plain 503.
+  sink.up = false;
+  const unsent = await bus.handle(TAB, {type: "session.interrupt"});
+  assert.equal(unsent.status, 503);
+  assert.equal(code(unsent), "gateway_unavailable");
+  hub.close();
+});
+
+test("late result of an expired N1 never touches the newer N2 on the same key", async () => {
+  for (const late of [
+    {ok: false, error: "boom"}, // would make N2's card answerable
+    {ok: true, queued: true}, // would release N2's card
+  ]) {
+    const {bus, state, hub} = setup({timeoutMs: 5, unknownMs: 20});
+    state.pending.add("q:q1");
+    assert.equal((await bus.handle(TAB, {type: "human.answer", content: "a", question_id: "q1"})).status, 504); // N1
+    await new Promise((r) => setTimeout(r, 50)); // N1 expires
+    assert.equal(state.check("q:q1"), null);
+    const n2 = bus.handle(TAB, {type: "human.answer", content: "b", question_id: "q1"}); // N2 in flight
+    await tick();
+    assert.equal(state.check("q:q1"), "in_flight");
+    bus.onResult({dir: "result", id: "web-1", ...late});
+    assert.equal(state.check("q:q1"), "in_flight", "N1's late result left N2 alone");
+    const notice = hub.notices.at(-1)!;
+    assert.deepEqual([notice.kind, notice.level, notice.cmd_id, notice.superseded], ["late_result", "warn", "web-1", true]);
+    assert.match(notice.text, /newer command/);
+    bus.onResult({dir: "result", id: "web-2", ok: true, queued: true});
+    assert.equal((await n2).status, 200);
+    assert.equal(state.pending.has("q:q1"), false, "N2 still settles its own key");
+    hub.close();
+  }
+});
+
+test("N1's unknown timer does not reopen a key a newer command owns", async () => {
+  const {bus, state, hub} = setup({timeoutMs: 40, unknownMs: 10});
+  state.pending.add("a:a1");
+  await bus.handle(TAB, {type: "approval.resolve", approval_id: "a1", decision: "denied"}); // N1 → UNKNOWN
+  // The state module dropped and re-offered a1 (CommandState may do this), and N2 answers it.
+  state.resolving.delete("a:a1");
+  const n2 = bus.handle(TAB, {type: "approval.resolve", approval_id: "a1", decision: "granted"});
+  await new Promise((r) => setTimeout(r, 20)); // N1's expiry fires while N2 is in flight
+  assert.equal(state.check("a:a1"), "in_flight", "only N2 may reopen it");
+  assert.equal(state.calls.filter((c) => c === "answerable a:a1").length, 0);
+  bus.onResult({dir: "result", id: "web-2", ok: true, queued: true});
+  assert.equal((await n2).status, 200);
+  assert.equal(state.pending.has("a:a1"), false);
+  hub.close();
+});
+
+test("an undecodable-line result (id '?') settles the only waiting command", async () => {
+  const {bus, state, hub} = setup();
+  state.pending.add("q:q1");
+  const r = bus.handle(TAB, {type: "human.answer", content: "x", question_id: "q1"});
+  await tick();
+  bus.onResult({dir: "result", id: "?", ok: false, error: "Expecting value"});
+  const reply = await r;
+  assert.equal(reply.status, 200);
+  const body = reply.body as {id: string; failed: boolean; failure: string};
+  assert.deepEqual([body.id, body.failed, body.failure], ["web-1", true, "Expecting value"]);
+  assert.equal(state.check("q:q1"), null, "answerable again at once, not after 10s + 60s");
+  assert.deepEqual(hub.notices, []);
+  hub.close();
+});
+
+test("an id '?' result with several waiting commands stays an orphan, with a hint", async () => {
+  const {bus, hub} = setup();
+  const a = bus.handle(TAB, {type: "session.interrupt"});
+  const b = bus.handle(TAB, {type: "human.send", content: "hi"});
+  await tick();
+  bus.onResult({dir: "result", id: "?", ok: false, error: "bad json"});
+  const notice = hub.notices.at(-1)!;
+  assert.equal(notice.kind, "orphan_result");
+  assert.match(notice.text, /could not read a command line; 2 waiting/);
+  bus.onResult({dir: "result", id: "web-1", ok: true});
+  bus.onResult({dir: "result", id: "web-2", ok: true, queued: true});
+  await Promise.all([a, b]);
   hub.close();
 });
 

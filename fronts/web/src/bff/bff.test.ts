@@ -99,6 +99,8 @@ test("startBff with hello_demo: a tab sees the session; shutdown leaves nothing 
   const last = tab.states().at(-1)!;
   assert.deepEqual([last.gateway.status, last.agents, last.is_controller], ["running", ["demo-agent"], true]);
   assert.equal(tab.notices()[0].kind, "dev_mode");
+  // The notice passes publishNotice's masking verbatim ("secret scrubbing" is prose, not a pair).
+  assert.equal(tab.notices()[0].text, "dev mode: not started through agent-augury --web, so secret scrubbing is not guaranteed");
 
   const pid = bff.gateway.pid;
   await Promise.all([bff.shutdown(), bff.shutdown()]);
@@ -140,10 +142,10 @@ test("the BFF outlives its child: exit is shown, not fatal (N-007)", {skip: !has
 const mainTs = join(repoRoot, "fronts", "web", "src", "bff", "main.ts");
 
 /** Launch exactly as the CLI should: one node process, no npm, no tsx wrapper. */
-function runMain(stdin: string | null, keepStdinOpen = false) {
+function runMain(stdin: string | null, keepStdinOpen = false, extraEnv: Record<string, string> = {}) {
   const child = spawn(process.execPath, ["--import", "tsx", mainTs], {
     cwd: join(repoRoot, "fronts", "web"),
-    env: {PATH: process.env.PATH},
+    env: {PATH: process.env.PATH, ...extraEnv},
     stdio: ["pipe", "pipe", "pipe"],
   });
   let out = "";
@@ -236,6 +238,19 @@ test("main: empty stdin or a silent open stdin means dev mode; a malformed token
   assert.equal(bad.out(), "");
 });
 
+test("main: launched by the CLI but no token (CLI gone, stdin closed) exits instead of dev mode", async () => {
+  const cli = {AUGURY_LAUNCHED_BY_CLI: "1"};
+  const closed = runMain(null, false, cli);
+  assert.equal(await closed.exited, 3);
+  assert.equal(closed.out(), "");
+  assert.match(closed.err(), /no token arrived on stdin/);
+  assert.doesNotMatch(closed.err(), /dev mode/);
+
+  const silent = runMain(null, true, cli);
+  assert.equal(await silent.exited, 3);
+  assert.equal(silent.out(), "");
+});
+
 test("startBff: a child that cannot even spawn leaves no listening server behind", async () => {
   const servers = () => process.getActiveResourcesInfo().filter((r) => r === "TCPServerWrap").length;
   const before = servers();
@@ -259,6 +274,28 @@ test("shutdown removes a secrets file the child never consumed", {skip: !hasVenv
   assert.ok(existsSync(file));
   await bff.shutdown();
   assert.equal(existsSync(file), false);
+});
+
+test("shutdown still closes everything when the secrets file cannot be removed", {skip: !hasVenv && "no repo .venv"}, async () => {
+  // A directory makes rmSync throw (EISDIR) the way EACCES would.
+  const dir = mkdtempSync(join(tmpdir(), "augury-secrets-test-"));
+  const logs: string[] = [];
+  const bff = await startBff({
+    token: TOKEN,
+    devMode: false,
+    env: {PATH: process.env.PATH, AUGURY_GATEWAY_SECRETS_FILE: dir},
+    python,
+    args: ["-c", "import time; time.sleep(30)"],
+    log: (l) => logs.push(l),
+  });
+  const pid = bff.gateway.pid;
+  await bff.shutdown();
+  assert.ok(logs.some((l) => /could not remove the secrets file/.test(l)), logs.join("\n"));
+  assert.ok(!alive(pid));
+  await assert.rejects(
+    new Promise((resolve, reject) => httpRequest({host: "127.0.0.1", port: bff.port, path: "/"}, resolve).on("error", reject).end()),
+    /ECONNREFUSED/,
+  );
 });
 
 test("startBff: commands sent during shutdown get 503", {skip: !hasVenv && "no repo .venv"}, async () => {

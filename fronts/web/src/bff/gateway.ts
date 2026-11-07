@@ -95,8 +95,10 @@ export function configEnvNames(configText: string): string[] {
  * A ``${NAME}`` the YAML references passes unless it looks like a secret — the
  * same rule as Python's ``is_secret_env_name``, so e.g. ``GITHUB_TOKEN`` does
  * pass while ``OPENAI_API_KEY`` only ever arrives through the secrets file.
+ * Allowlisted names held back for that reason are pushed onto ``dropped``
+ * (names only, never values) so the caller can say why a ``${NAME}`` is empty.
  */
-export function childEnv(env: Env, configText = ""): Record<string, string> {
+export function childEnv(env: Env, configText = "", dropped?: string[]): Record<string, string> {
   // Windows env names are case-insensitive (``Path``); compare them uppercased.
   const fold = (name: string) => (process.platform === "win32" ? name.toUpperCase() : name);
   const allowed = new Set([...PASS_THROUGH].map(fold));
@@ -105,11 +107,15 @@ export function childEnv(env: Env, configText = ""): Record<string, string> {
   }
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value === undefined || SECRET_NAME_RE.test(key)) {
+    if (value === undefined) {
       continue;
     }
     if (allowed.has(fold(key)) || fold(key).startsWith("LC_")) {
-      out[key] = value;
+      if (SECRET_NAME_RE.test(key)) {
+        dropped?.push(key);
+      } else {
+        out[key] = value;
+      }
     }
   }
   out.PYTHONUTF8 = "1";
@@ -150,7 +156,15 @@ export class GatewayChild {
   private handlers: GatewayHandlers;
   private exited: Promise<void>;
   private markExited!: () => void;
+  /** Resolves on the child's ``exit`` — possibly before ``exited`` (pipes still open). */
+  private gone: Promise<void>;
+  private markGone!: () => void;
   private stopping: Promise<boolean> | undefined;
+  /** When the child's ``exit`` fired; after it the group id may be reused. */
+  private exitAt: number | undefined;
+  private droppedLines = 0;
+  private reported = new WeakSet<Error>();
+  private onProcessExit: (() => void) | undefined;
 
   constructor(handlers: GatewayHandlers, options: GatewayOptions = {}) {
     this.handlers = handlers;
@@ -168,18 +182,39 @@ export class GatewayChild {
     this.exited = new Promise((resolve) => {
       this.markExited = resolve;
     });
+    this.gone = new Promise((resolve) => {
+      this.markGone = resolve;
+    });
+    const dropped: string[] = [];
+    const childEnvironment = childEnv(env, configText, dropped);
+    if (dropped.length > 0) {
+      this.report(
+        new Error(
+          `not forwarded to the gateway env (secret-looking names arrive only via ` +
+            `AUGURY_GATEWAY_SECRETS_FILE): ${dropped.join(", ")}`,
+        ),
+      );
+    }
     this.child = spawn(options.python ?? resolvePython(env), args, {
       cwd: repoRoot,
-      env: childEnv(env, configText),
+      env: childEnvironment,
       stdio: ["pipe", "pipe", "pipe"],
       // Own process group, so stop() also reaches run_command grandchildren (N-007).
       detached: posix,
     });
     this.pid = this.child.pid;
+    if (posix && this.pid !== undefined) {
+      // A BFF that dies without stop() must not orphan the detached group (N-007).
+      // Only synchronous work runs in an ``exit`` listener.
+      this.onProcessExit = () => this.kill("SIGTERM", STOP_GRACE_MS);
+      process.on("exit", this.onProcessExit);
+    }
 
     const stdout = lineSplitter(
       (line) => {
         if (this.status === "exited") {
+          // Arrived after the close fallback gave up on the pipe (see ``exit`` below).
+          this.droppedLines++;
           return;
         }
         this.status = "running";
@@ -189,7 +224,12 @@ export class GatewayChild {
         this.guard(() => handlers.onLine({kind: "decode_error", error: `line too long (${bytes} bytes)`, oversize: true})),
     );
     this.child.stdout.on("data", stdout.write);
-    this.child.stdout.on("end", stdout.end);
+    this.child.stdout.on("end", () => {
+      stdout.end();
+      if (this.droppedLines > 0) {
+        this.report(new Error(`dropped ${this.droppedLines} stdout line(s) that arrived after the child exited`));
+      }
+    });
     const stderr = lineSplitter(
       (line) => this.guard(() => handlers.onStderr(line)),
       (bytes) => this.report(new Error(`dropped an oversized stderr line (${bytes} bytes)`)),
@@ -209,6 +249,8 @@ export class GatewayChild {
     // A grandchild holding the pipe would delay ``close`` forever — hence the fallback.
     this.child.on("close", (code, signal) => this.finish(code, signal));
     this.child.on("exit", (code, signal) => {
+      this.exitAt = Date.now();
+      this.markGone();
       setTimeout(() => this.finish(code, signal), CLOSE_AFTER_EXIT_MS).unref();
     });
   }
@@ -223,6 +265,11 @@ export class GatewayChild {
   }
 
   private report(err: Error): void {
+    // A failed write surfaces both in its callback and as stdin ``error``.
+    if (this.reported.has(err)) {
+      return;
+    }
+    this.reported.add(err);
     try {
       this.handlers.onError(err);
     } catch {
@@ -235,35 +282,73 @@ export class GatewayChild {
       return;
     }
     this.status = "exited";
+    this.exitAt ??= Date.now();
+    this.markGone();
     this.exitCode = code;
     this.signal = signal;
     this.markExited();
     this.guard(() => this.handlers.onExit(code, signal));
+    // Past this window the exit hook could only hit a reused group id.
+    setTimeout(() => this.dispose(), STOP_GRACE_MS).unref();
   }
 
-  /** Write one command line. False means it never left this process (caller → 503). */
+  /** Drop the process ``exit`` hook; call when the instance is discarded. */
+  dispose(): void {
+    if (this.onProcessExit) {
+      process.off("exit", this.onProcessExit);
+      this.onProcessExit = undefined;
+    }
+  }
+
+  /** Queue one command line on the child's stdin.
+   *
+   * False means it never left this process (caller → 503). True only means the
+   * line was queued for writing, not that the child received it; a write that
+   * fails later is reported through ``onError``.
+   */
   send(message: WireMessage): boolean {
     if (this.status === "exited" || !this.child.stdin.writable) {
       return false;
     }
     try {
-      this.child.stdin.write(encodeLine(message) + "\n");
+      this.child.stdin.write(encodeLine(message) + "\n", (err) => {
+        if (err) {
+          this.report(err);
+        }
+      });
       return true;
     } catch {
       return false;
     }
   }
 
-  private waitExit(ms: number): Promise<boolean> {
+  private waitFor(event: Promise<void>, ms: number): Promise<boolean> {
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<boolean>((resolve) => {
       timer = setTimeout(() => resolve(false), ms);
     });
-    return Promise.race([this.exited.then(() => true), timeout]).finally(() => clearTimeout(timer));
+    return Promise.race([event.then(() => true), timeout]).finally(() => clearTimeout(timer));
   }
 
-  /** Signal the child's whole process group (POSIX); ignore "already gone". */
-  private kill(signal: NodeJS.Signals): void {
+  /** True until ``windowMs`` after the child's exit: past that the group id may be reused. */
+  private groupInReach(windowMs: number): boolean {
+    return this.exitAt === undefined || Date.now() - this.exitAt <= windowMs;
+  }
+
+  /** Whether anything is left in the child's process group (POSIX). */
+  private groupAlive(): boolean {
+    if (!posix || this.pid === undefined) {
+      return false;
+    }
+    try {
+      process.kill(-this.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private signalGroup(signal: NodeJS.Signals): void {
     try {
       if (posix && this.pid !== undefined) {
         process.kill(-this.pid, signal);
@@ -272,6 +357,32 @@ export class GatewayChild {
       }
     } catch {
       // ESRCH: nothing left in the group.
+    }
+  }
+
+  /** Signal the child's whole process group (POSIX), but only while its id is still ours. */
+  private kill(signal: NodeJS.Signals, windowMs: number): void {
+    if (this.groupInReach(windowMs)) {
+      this.signalGroup(signal);
+    }
+  }
+
+  /** After the child exited: SIGTERM what is left of its group, then SIGKILL after the grace.
+   *
+   * The window is checked once up front. While the group still has members its
+   * id cannot be reused, so the later signals are guarded by ``groupAlive``.
+   */
+  private async reapGroup(graceMs: number): Promise<void> {
+    if (!posix || this.pid === undefined || !this.groupInReach(graceMs) || !this.groupAlive()) {
+      return;
+    }
+    this.signalGroup("SIGTERM");
+    const end = Date.now() + graceMs;
+    while (this.groupAlive() && Date.now() < end) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (this.groupAlive()) {
+      this.signalGroup("SIGKILL");
     }
   }
 
@@ -289,17 +400,24 @@ export class GatewayChild {
     if (this.status !== "exited") {
       this.send({dir: "cmd", type: "session.quit", id: "web-shutdown"});
     }
-    let done = await this.waitExit(graceMs);
-    if (!done) {
-      this.kill("SIGTERM");
-      done = await this.waitExit(graceMs);
+    // Escalate on the child's own exit: a grandchild holding the pipes delays
+    // ``close``, and the group must be reaped while its id is still ours.
+    let gone = await this.waitFor(this.gone, graceMs);
+    if (!gone) {
+      this.kill("SIGTERM", graceMs);
+      gone = await this.waitFor(this.gone, graceMs);
     }
-    if (!done) {
-      this.kill("SIGKILL");
-      done = await this.waitExit(graceMs);
+    if (!gone) {
+      this.kill("SIGKILL", graceMs);
+      gone = await this.waitFor(this.gone, graceMs);
+    }
+    if (!gone) {
+      return false;
     }
     // The child may be gone while its run_command children still hold on.
-    this.kill("SIGTERM");
-    return done;
+    await this.reapGroup(graceMs);
+    this.dispose();
+    // ``close`` or the fallback timer settles ``exited`` within CLOSE_AFTER_EXIT_MS.
+    return this.waitFor(this.exited, CLOSE_AFTER_EXIT_MS + graceMs);
   }
 }

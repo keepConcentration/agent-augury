@@ -133,8 +133,13 @@ export async function startBff(options: BffOptions): Promise<Bff> {
       } finally {
         // The child deletes the secrets file once loaded; if it never got that
         // far (the CLI was killed early), do not leave API keys in the temp dir.
+        // A failure here (EACCES, ...) must not skip the rest of the cleanup.
         if (env.AUGURY_GATEWAY_SECRETS_FILE) {
-          rmSync(env.AUGURY_GATEWAY_SECRETS_FILE, {force: true});
+          try {
+            rmSync(env.AUGURY_GATEWAY_SECRETS_FILE, {force: true});
+          } catch (err) {
+            log(`augury web: could not remove the secrets file: ${maskSensitive(err instanceof Error ? err.message : String(err))}`);
+          }
         }
         state.close();
         hub.close();

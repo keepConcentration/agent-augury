@@ -65,6 +65,29 @@ test("BFF masking adds cookie and password/secret rules on top of Ink's", () => 
   assert.match(out, /Cookie: \*\*\*/);
 });
 
+test("BFF masking catches raw key values by shape, not only after a key name", () => {
+  const lines = [
+    "openai: Incorrect API key provided: sk-proj-AbCdEf123456. You can find your API key at ...",
+    "raw sk-AbCdEfGh12345678 leaked",
+    "GET https://generativelanguage.googleapis.com/v1/models?key=AIzaSyA1b2C3d4E5f6G7h8I9j0KlMnOpQrStU&alt=sse 400",
+    "bare AIzaSyA1b2C3d4E5f6G7h8I9j0KlMnOpQrStU",
+    "url https://x.test/v1?alt=json&key=plainvalue42 failed",
+  ];
+  const out = lines.map(maskSensitive).join("\n");
+  assert.doesNotMatch(out, /AbCdEf123456|AbCdEfGh12345678|SyA1b2C3d4E5|plainvalue42/);
+  assert.match(out, /alt=sse 400/); // only the key value goes
+  assert.match(out, /alt=json&key=\*\*\*/);
+});
+
+test("password/secret masking needs a key/value separator; prose stays intact", () => {
+  const notice = "dev mode: not started through agent-augury --web, so secret scrubbing is not guaranteed";
+  assert.equal(maskSensitive(notice), notice);
+  assert.equal(maskSensitive("the secret is out, password reset sent"), "the secret is out, password reset sent");
+  const out = maskSensitive('secret = s3cr3t | "password": "hunter2" | passwd:pw1');
+  assert.doesNotMatch(out, /s3cr3t|hunter2|pw1/);
+  assert.equal(out, 'secret = *** | "password": "***" | passwd:***');
+});
+
 test("command schema: answer needs content, unknown types are named", () => {
   assert.equal(
     commandSchemaError({dir: "cmd", type: "human.answer", id: "web-1", content: "ok", question_id: "q1", mentions: ["a"]}),

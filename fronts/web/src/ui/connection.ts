@@ -7,6 +7,9 @@ const TAB_KEY = "augury.tab_id";
 /** How long other tabs get to say "that id is mine" (08 §7.3, [가정]). */
 const DUPLICATE_WAIT_MS = 300;
 
+/** The one channel that answers for this page's id; replaced (and closed) by the next tabId(). */
+let answering: BroadcastChannel | null = null;
+
 /**
  * This tab's id: kept in sessionStorage so a reload keeps controller status.
  * "Duplicate tab" copies sessionStorage too, so ask the other tabs first and
@@ -15,6 +18,9 @@ const DUPLICATE_WAIT_MS = 300;
 export async function tabId(): Promise<string> {
   let id = sessionStorage.getItem(TAB_KEY) ?? crypto.randomUUID();
   if (typeof BroadcastChannel !== "undefined") {
+    // Our own earlier answerer would claim the id is taken: close it first.
+    answering?.close();
+    answering = null;
     const channel = new BroadcastChannel("augury-tab");
     const taken = await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => resolve(false), DUPLICATE_WAIT_MS);
@@ -37,6 +43,7 @@ export async function tabId(): Promise<string> {
     };
     // Node (tests) keeps a process alive for an open channel; browsers have no unref.
     (channel as unknown as {unref?: () => void}).unref?.();
+    answering = channel;
   }
   sessionStorage.setItem(TAB_KEY, id);
   return id;
@@ -138,6 +145,18 @@ export async function sendCommand(tab: string, body: Record<string, unknown>): P
     return {kind: "ok", result: data.result ?? {}, failed: data.failed === true, failure: data.failure ?? null};
   }
   return {kind: "http", status: res.status, code: String(data.error?.code ?? res.status), cmdId: data.error?.cmd_id ?? null};
+}
+
+let booting: Promise<Start> | null = null;
+
+/**
+ * Take the fragment token and run ``start`` once per page. React StrictMode
+ * runs the mount effect twice: a second take would find no token and call
+ * API-03 before the first exchange lands (→ a false "expired").
+ */
+export function startOnce(): Promise<Start> {
+  booting ??= start(takeFragmentToken());
+  return booting;
 }
 
 export type StreamHandlers = {

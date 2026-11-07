@@ -11,18 +11,20 @@ export type AuthLink = {before: string; url: string; host: string; after: string
  * stays plain text.
  */
 export function authLink(text: string): AuthLink | null {
-  const match = /(https:\/\/\S+)/.exec(text);
+  const match = /https:\/\/\S+/.exec(text);
   if (!match) {
     return null;
   }
+  // Sentence punctuation right after the URL ("… (https://x/device).") is not part of it.
+  const url = match[0].replace(/[)\]}>.,;:!?'"]+$/, "");
   let host: string;
   try {
-    host = new URL(match[1]).hostname;
+    host = new URL(url).hostname;
   } catch {
     return null;
   }
   if (!AUTH_HOSTS.has(host)) {
     return null;
   }
-  return {before: text.slice(0, match.index), url: match[1], host, after: text.slice(match.index + match[1].length)};
+  return {before: text.slice(0, match.index), url, host, after: text.slice(match.index + url.length)};
 }

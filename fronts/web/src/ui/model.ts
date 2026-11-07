@@ -142,6 +142,18 @@ export function applyEcho(m: Model, text: string, note: string | null): Model {
   return {...row, base};
 }
 
+/**
+ * Toast / auth-banner de-duplication: true only for a notice above the highest
+ * seq already shown, which then moves up. Replay after a gap re-sends old seqs.
+ */
+export function freshNotice(shown: {current: number}, seq: number): boolean {
+  if (seq <= shown.current) {
+    return false;
+  }
+  shown.current = seq;
+  return true;
+}
+
 /** Apply a ``bff.state`` frame: the authority for pending, ended and gateway. */
 export function applyState(m: Model, s: BffState): Model {
   let out = m;

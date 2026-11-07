@@ -7,7 +7,7 @@
  */
 
 import {Lexer, type Token, type Tokens} from "marked";
-import type {ReactNode} from "react";
+import {useMemo, type ReactNode} from "react";
 
 const SAFE_HREF = /^https?:\/\//i;
 
@@ -67,7 +67,7 @@ function inline(tokens: Token[] | undefined): ReactNode[] {
       }
       case "image": {
         const image = token as Tokens.Image;
-        return <span key={i} className="md-image">{`[이미지: ${image.text || "?"}]`}</span>;
+        return <span key={i} className="md-image">{`[이미지: ${decode(image.text) || "?"}]`}</span>;
       }
       default:
         // html and anything unknown: show what was written, never interpret it.
@@ -132,5 +132,7 @@ function block(token: Token, i: number): ReactNode {
 }
 
 export function Markdown({text}: {text: string}) {
-  return <div className="md">{new Lexer().lex(text).map(block)}</div>;
+  // Lex once per text, not on every re-render of the row around it.
+  const tokens = useMemo(() => new Lexer().lex(text), [text]);
+  return <div className="md">{tokens.map(block)}</div>;
 }

@@ -72,6 +72,7 @@ def test_web_env_scrubs_secrets_and_sets_ink_keys(tmp_path, monkeypatch):
         assert "AUGURY_PLAN_FIRST" not in env
         assert "AGENT_AUGURY_SESSION" not in env
         assert env["AUGURY_FILE_ROOT"] == str(Path.cwd())
+        assert env["AUGURY_LAUNCHED_BY_CLI"] == "1"  # BFF: no token => CLI gone, not dev mode
         # No access token travels through env (SRS §3.5.1).
         assert not any("TOKEN" in k and "AUGURY" in k for k in env)
     finally:
@@ -94,8 +95,14 @@ def test_web_reports_old_or_missing_node(capsys):
 
 def _ready_front(tmp_path, monkeypatch, *, with_modules: bool = True) -> Path:
     web = tmp_path / "web"
-    (web / "node_modules" / "tsx").mkdir(parents=True) if with_modules else web.mkdir()
-    (web / "package.json").write_text("{}")
+    web.mkdir()
+    (web / "package.json").write_text(json.dumps({"dependencies": {"ajv": "^8"}}))
+    if with_modules:
+        for name in ("tsx", "ajv"):
+            (web / "node_modules" / name).mkdir(parents=True)
+            (web / "node_modules" / name / "package.json").write_text("{}")
+    (tmp_path / "ink" / "src").mkdir(parents=True)
+    (tmp_path / "ink" / "src" / "wire.ts").write_text("")
     monkeypatch.setattr(cli, "_web_front_dir", lambda: web)
     monkeypatch.setattr(shutil, "which", lambda name: "/fake/node")
     monkeypatch.setattr(cli, "_node_major", lambda node: 22)
@@ -106,6 +113,25 @@ def test_web_reports_missing_node_modules(tmp_path, monkeypatch, capsys):
     web = _ready_front(tmp_path, monkeypatch, with_modules=False)
     assert cli._run_web_surface(str(DEMO_YAML)) == 1
     assert f"run `npm install` in {web}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("remove", "named"),
+    [
+        ("web/node_modules/ajv", "ajv"),
+        ("web/node_modules/tsx", "tsx"),
+        ("ink/src/wire.ts", "wire.ts"),
+    ],
+)
+def test_web_reports_each_missing_bff_import(tmp_path, monkeypatch, capsys, remove, named):
+    web = _ready_front(tmp_path, monkeypatch)
+    target = tmp_path / remove
+    shutil.rmtree(target) if target.is_dir() else target.unlink()
+    with patch.object(subprocess, "Popen") as popen:
+        assert cli._run_web_surface(str(DEMO_YAML)) == 1
+    popen.assert_not_called()
+    err = capsys.readouterr().err
+    assert named in err and f"run `npm install` in {web}" in err
 
 
 def test_web_refuses_windows(monkeypatch, capsys):
@@ -128,8 +154,10 @@ class _FakeBff:
         self.signals: list[int] = []
         _FakeBff.last = self
 
+    returncode = 0
+
     def wait(self):
-        return 0
+        return self.returncode
 
     def send_signal(self, sig):
         self.signals.append(sig)
@@ -150,6 +178,28 @@ def test_web_token_goes_over_stdin_only_and_secrets_never_in_env(tmp_path, monke
     assert "http://127.0.0.1:1/#token=x" in capsys.readouterr().out
     # The Gateway never read it here, so the CLI removed the secrets file.
     assert not Path(bff.env["AUGURY_GATEWAY_SECRETS_FILE"]).exists()
+
+
+@pytest.mark.parametrize(("rc", "expected"), [(-15, 143), (-9, 137), (3, 3), (0, 0)])
+def test_web_normalizes_a_signal_death_to_128_plus_n(tmp_path, monkeypatch, rc, expected):
+    _ready_front(tmp_path, monkeypatch)
+    monkeypatch.setattr(_FakeBff, "returncode", rc)
+    monkeypatch.setattr(subprocess, "Popen", _FakeBff)
+    assert cli._run_web_surface(str(DEMO_YAML)) == expected
+
+
+@pytest.mark.parametrize("tty", [False, True])
+def test_web_warns_on_stderr_when_the_token_url_goes_to_a_non_terminal(
+    tmp_path, monkeypatch, capsys, tty
+):
+    _ready_front(tmp_path, monkeypatch)
+    monkeypatch.setattr(subprocess, "Popen", _FakeBff)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: tty)
+    assert cli._run_web_surface(str(DEMO_YAML)) == 0
+    out = capsys.readouterr()
+    assert "http://127.0.0.1:1/#token=x" in out.out
+    assert ("one-time access token" in out.err) is not tty
+    assert "one-time access token" not in out.out
 
 
 def test_web_removes_the_secrets_file_when_the_bff_cannot_start(tmp_path, monkeypatch, capsys):
@@ -277,8 +327,19 @@ def test_web_second_ctrl_c_exits_now_and_leaves_nothing():
         while len(_pids() - before) < 2 and time.monotonic() < end:
             time.sleep(0.1)
         spawned = sorted(_pids() - before)
+        assert proc.stderr is not None
+        gateway = None
+        while gateway is None:
+            line = proc.stderr.readline()
+            assert line, "BFF exited before reporting its gateway pid"
+            if m := re.search(r"gateway pid (\d+)", line):
+                gateway = int(m.group(1))
+        # Freeze the Gateway so the first shutdown is still in progress when the
+        # second Ctrl+C lands (a demo Gateway otherwise quits in well under 0.2 s).
+        os.kill(gateway, signal.SIGSTOP)
         proc.send_signal(signal.SIGINT)
-        time.sleep(0.2)
+        while (line := proc.stderr.readline()) and "shutting down" not in line:
+            pass
         proc.send_signal(signal.SIGINT)
         assert proc.wait(timeout=20) == 130
         _wait_gone(spawned)

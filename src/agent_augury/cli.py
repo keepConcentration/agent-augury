@@ -563,7 +563,33 @@ def _web_env(
     else:
         env.pop("AGENT_AUGURY_SESSION", None)
     env.pop("AUGURY_PLAN_FIRST", None)
+    # Not a secret: tells the BFF that a missing stdin token means "the CLI is
+    # gone" (exit), not "started by hand" (dev mode).
+    env["AUGURY_LAUNCHED_BY_CLI"] = "1"
     return env
+
+
+def _web_missing_deps(web_dir: Path) -> list[str]:
+    """What the BFF imports but is not installed: ``tsx`` + package.json deps.
+
+    The BFF also imports ``fronts/ink/src/wire.ts`` (no imports of its own),
+    so only that file has to exist.
+    """
+    import json
+
+    try:
+        pkg = json.loads((web_dir / "package.json").read_text(encoding="utf-8"))
+        deps = list((pkg.get("dependencies") or {}).keys())
+    except (OSError, ValueError, AttributeError):
+        deps = []
+    missing = [
+        name
+        for name in ["tsx", *deps]
+        if not (web_dir / "node_modules" / name / "package.json").is_file()
+    ]
+    if not (web_dir.parent / "ink" / "src" / "wire.ts").is_file():
+        missing.append(str(web_dir.parent / "ink" / "src" / "wire.ts"))
+    return missing
 
 
 def _node_major(node: str) -> int | None:
@@ -623,9 +649,11 @@ def _run_web_surface(
             file=sys.stderr,
         )
         return 1
-    if not (web_dir / "node_modules" / "tsx").is_dir():
+    missing = _web_missing_deps(web_dir)
+    if missing:
         print(
-            f"error: Web Surface dependencies are missing — run `npm install` in {web_dir}",
+            f"error: Web Surface dependencies are missing ({', '.join(missing)}) — "
+            f"run `npm install` in {web_dir}",
             file=sys.stderr,
         )
         return 1
@@ -649,7 +677,9 @@ def _run_web_surface(
         assert proc is not None
         while True:
             try:
-                return proc.wait()
+                rc = proc.wait()
+                # Killed by signal N: report 128+N like a shell, not Python's -N.
+                return 128 - rc if rc < 0 else rc
             except KeyboardInterrupt:
                 proc.send_signal(signal.SIGINT)  # one SIGINT per Ctrl+C
 
@@ -670,7 +700,16 @@ def _run_web_surface(
         except BrokenPipeError:
             print("error: the Web BFF exited before it started", file=sys.stderr)
             return wait() or 1
+        warned = False
         for raw in proc.stdout:
+            if not warned and not sys.stdout.isatty():
+                # Redirected to a file or pipe: the token-bearing URL may persist.
+                print(
+                    "warning: the URL on stdout contains a one-time access token; "
+                    "stdout is not a terminal, so it may be stored",
+                    file=sys.stderr,
+                )
+                warned = True
             sys.stdout.write(raw.decode("utf-8", "replace"))
             sys.stdout.flush()
         return wait()

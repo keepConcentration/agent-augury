@@ -1,9 +1,9 @@
 /** Web Surface app shell (WBS 3.1) and timeline (3.2) — 09 §2·§3.1~3.3·§3.9. */
 
-import {useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode} from "react";
+import {memo, useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode} from "react";
 import {authLink} from "./auth.js";
 import {START_UNKNOWN_MS, STALE_TEXT, outcome, plan, startHold, type Outcome} from "./compose.js";
-import {claim, openStream, sendCommand, session, start, takeFragmentToken, type CmdResult, type Session} from "./connection.js";
+import {claim, openStream, sendCommand, session, startOnce, type CmdResult, type Session} from "./connection.js";
 import {
   ApprovalCard,
   Composer,
@@ -25,6 +25,7 @@ import {
   applyNotice,
   applyState,
   applyWire,
+  freshNotice,
   gateSummary,
   initialModel,
   status,
@@ -65,7 +66,8 @@ function AuthText({text}: {text: string}) {
   );
 }
 
-function TimelineRow({row}: {row: Row}) {
+/** Rows are immutable once pushed, so only new rows render when an event arrives. */
+export const TimelineRow = memo(function TimelineRow({row}: {row: Row}) {
   const className = `row tone-${row.tone}${row.kind === "gap" ? " gap" : ""}`;
   return row.kind === "markdown" ? (
     <div className={className}>
@@ -74,7 +76,7 @@ function TimelineRow({row}: {row: Row}) {
   ) : (
     <div className={className}>{row.text}</div>
   );
-}
+});
 
 /** Follows the bottom unless the user scrolled up; then counts what arrived (09 §3.3). */
 function Timeline({rows, dock}: {rows: Row[]; dock: ReactNode}) {
@@ -201,6 +203,9 @@ export function App() {
   const card = useRef<HTMLDivElement>(null);
   const questionPanel = useRef<HTMLDivElement>(null);
   const toastId = useRef(0);
+  // Highest notice seq already shown as a toast / auth line. Until the first
+  // bff.state everything is replay; a gap replay re-sends old seqs (08 §4.3).
+  const toasted = useRef(Number.POSITIVE_INFINITY);
 
   const toast = useCallback((level: Toast["level"], text: string) => {
     const id = ++toastId.current;
@@ -211,13 +216,9 @@ export function App() {
   useEffect(() => {
     let close: (() => void) | undefined;
     let cancelled = false;
-    // Out of the address bar before anything else can stall (08 §8.1).
-    const token = takeFragmentToken();
-    // Notices up to this seq are replay: they stay in the timeline but do not
-    // pop up again as toasts or resurrect an old auth banner (08 §4.3).
-    let liveFrom = Number.POSITIVE_INFINITY;
     void (async () => {
-      const begun = await start(token);
+      // Shared across StrictMode's double effect: one token take, one exchange.
+      const begun = await startOnce();
       if (cancelled) return;
       if (begun.kind !== "ok") return setPhase(begun.kind);
       const id = begun.tab;
@@ -227,12 +228,13 @@ export function App() {
         wire: (seq, e) => dispatch({type: "wire", seq, e}),
         notice: (seq, n) => {
           dispatch({type: "notice", seq, n});
-          if (seq <= liveFrom) return;
+          // Replayed notices stay in the timeline but do not pop up again.
+          if (!freshNotice(toasted, seq)) return;
           if (n.kind === "auth") setAuth((lines) => [...lines.slice(-3), n.text]);
           else if (n.kind !== "dev_mode") toast(n.level, n.text);
         },
         state: (s) => {
-          if (liveFrom === Number.POSITIVE_INFINITY) liveFrom = s.seq_last;
+          if (toasted.current === Number.POSITIVE_INFINITY) toasted.current = s.seq_last;
           dispatch({type: "state", s});
         },
         link: (state) => {

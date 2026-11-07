@@ -566,5 +566,23 @@ def main(argv: list[str] | None = None) -> int:
         return 130
 
 
+def _exit_now(code: int) -> None:
+    """Flush, then skip interpreter finalization.
+
+    The ``ink-stdin`` daemon thread may still be blocked in ``sys.stdin``
+    holding its buffer lock; finalizing the std streams then aborts the
+    process (SIGABRT, "_enter_buffered_busy") on CPython 3.11.
+    """
+    import logging
+
+    logging.shutdown()
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001, S110 — closed pipe: nothing left to say
+            pass
+    os._exit(code)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _exit_now(main())

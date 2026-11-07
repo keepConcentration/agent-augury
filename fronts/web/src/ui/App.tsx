@@ -2,8 +2,8 @@
 
 import {useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode} from "react";
 import {authLink} from "./auth.js";
-import {outcome, plan} from "./compose.js";
-import {claim, openStream, sendCommand, session, start, takeFragmentToken, type Session} from "./connection.js";
+import {START_UNKNOWN_MS, STALE_TEXT, outcome, plan, startHold, type Outcome} from "./compose.js";
+import {claim, openStream, sendCommand, session, start, takeFragmentToken, type CmdResult, type Session} from "./connection.js";
 import {
   ApprovalCard,
   Composer,
@@ -20,6 +20,7 @@ import {escAction, isCardShortcut} from "./keys.js";
 import {Markdown} from "./markdown.js";
 import {
   STATUS_LABEL,
+  announcement,
   applyEcho,
   applyNotice,
   applyState,
@@ -192,7 +193,10 @@ export function App() {
   const [warning, setWarning] = useState<string | null>(null);
   /** Approvals whose command got a 504: the card says "result unknown" (08 §6.2). */
   const [unknownIds, setUnknownIds] = useState<ReadonlySet<string>>(new Set());
-  const [cardError, setCardError] = useState<{id: string; rev: number; text: string} | null>(null);
+  /** ``rev`` null: shown whatever revision the card has now (stale_revision). */
+  const [cardError, setCardError] = useState<{id: string; rev: number | null; text: string} | null>(null);
+  /** Bumped to drop the card's confirm step from outside the card. */
+  const [cardReset, setCardReset] = useState(0);
   const composer = useRef<ComposerHandle>(null);
   const card = useRef<HTMLDivElement>(null);
   const questionPanel = useRef<HTMLDivElement>(null);
@@ -276,7 +280,7 @@ export function App() {
   const question = questions[0] ?? null;
 
   /** One command through API-05, with the shared feedback rules (compose.outcome). */
-  const send = async (body: Record<string, unknown>, echo: string | null = null): Promise<boolean> => {
+  const run = async (body: Record<string, unknown>, echo: string | null = null): Promise<{o: Outcome; r: CmdResult}> => {
     setBusy(true);
     try {
       const type = String(body.type);
@@ -287,17 +291,23 @@ export function App() {
         setUnknownIds((ids) => new Set([...ids, String(body.approval_id)]));
       }
       if (r.kind === "ok" && r.failed && type === "approval.resolve") {
-        setCardError({id: String(body.approval_id), rev: approval?.revision ?? 0, text: r.failure ?? "rejected"});
+        setCardError({id: String(body.approval_id), rev: Number(body.revision), text: r.failure ?? "rejected"});
+      }
+      if (r.kind === "http" && r.code === "stale_revision" && type === "approval.resolve") {
+        // What the user confirmed is no longer what is pending: start over on the new content.
+        setCardReset((n) => n + 1);
+        setCardError({id: String(body.approval_id), rev: null, text: STALE_TEXT});
       }
       // Echo only what is known to have landed: not a 504, not "already handled".
       if (r.kind === "ok" && !r.failed && echo) {
         dispatch({type: "echo", text: echo, note: o.asTurn ? "idle 입력: 멘션·스레드 미전달" : null});
       }
-      return o.clear;
+      return {o, r};
     } finally {
       setBusy(false);
     }
   };
+  const send = async (body: Record<string, unknown>, echo: string | null = null): Promise<boolean> => (await run(body, echo)).o.clear;
 
   const submit = async (text: string): Promise<boolean> => {
     const p = plan(text, {
@@ -318,10 +328,14 @@ export function App() {
     return send(p.body, p.echo);
   };
 
-  const decide = (d: "granted" | "denied") => {
+  /** *revision* is the one the card showed: the BFF refuses it if the request changed since. */
+  const decide = (d: "granted" | "denied", revision: number) => {
     if (!approval || busy) return; // no second resolve while the first is in the air
     setCardError(null);
-    void send({type: "approval.resolve", approval_id: approval.approval_id, decision: d}, `> approval ${d} [${approval.approval_id}]`);
+    void send(
+      {type: "approval.resolve", approval_id: approval.approval_id, decision: d, revision},
+      `> approval ${d} [${approval.approval_id}]`,
+    );
   };
   const interrupt = () => void send({type: "session.interrupt"});
   const quit = () => {
@@ -330,7 +344,10 @@ export function App() {
   };
   const startSession = async () => {
     setStarting(true);
-    if (!(await send({type: "session.start"}))) setStarting(false);
+    const {r} = await run({type: "session.start"});
+    if (!startHold(r)) setStarting(false);
+    // A 504 may still have started it: stay locked until it shows, or give up after a while.
+    else if (r.kind === "http") setTimeout(() => setStarting(false), START_UNKNOWN_MS);
   };
   // "Starting…" until the agents actually ran (F-011).
   if (starting && model.started) setStarting(false);
@@ -359,10 +376,12 @@ export function App() {
       if (action === "close-dialog") {
         setDialog(false);
         setQuitOpen(false);
+      } else if (action === "cancel-confirm") {
+        // Reached here only with focus outside the card (the card stops its own Esc).
+        setCardReset((n) => n + 1);
       } else if (action === "interrupt") {
         interrupt();
       }
-      // "cancel-confirm" is handled by the focused card itself.
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -409,7 +428,8 @@ export function App() {
       questions={questions.length}
       can={can}
       unknown={unknownIds.has(approval.approval_id)}
-      error={cardError?.id === approval.approval_id && cardError.rev === approval.revision ? cardError.text : null}
+      error={cardError?.id === approval.approval_id && (cardError.rev === null || cardError.rev === approval.revision) ? cardError.text : null}
+      reset={cardReset}
       onDecide={decide}
       onClaim={() => void takeControl(false)}
     />
@@ -478,7 +498,7 @@ export function App() {
           )}
         </div>
         <div className="sr-only" aria-live="assertive">
-          {approval ? `${approval.agent_id} 이 ${approval.tool} 승인을 요청했습니다` : ""}
+          {announcement(approval, question, hap)}
         </div>
         <Timeline rows={model.rows} dock={dock} />
         <Composer ref={composer} can={can} label={composerLabel} hint={composerHint} warning={warning} busy={busy} onSubmit={submit} />

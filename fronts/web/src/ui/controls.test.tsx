@@ -218,3 +218,111 @@ test("changed arguments are highlighted after a re-issue with new content (10 M3
   const rows = [...ui.root.querySelectorAll("table.args tr")].map((tr) => [tr.querySelector("th")?.textContent, tr.className]);
   assert.deepEqual(rows, [["command", "changed-cell"], ["cwd", ""]]);
 });
+
+// ---- Review fixes: revision, folded/clipped values, external reset, question keys ------------
+
+test("decisions carry the revision the card showed (stale-approval guard)", async () => {
+  const got: [string, number][] = [];
+  ui.render(
+    <ApprovalCard a={card({approval_id: "r1", revision: 4})} index={1} total={1} questions={0} can={yes} unknown={false} error={null} onDecide={(d, rev) => got.push([d, rev])} onClaim={noop} />,
+  );
+  await tick(700);
+  await click(/Deny/);
+  assert.deepEqual(got, [["denied", 4]]);
+});
+
+test("folded values: Approve stays locked until every one is opened; Deny never waits", async () => {
+  const decisions: string[] = [];
+  const el = (a: Approval) => (
+    <ApprovalCard a={a} index={1} total={1} questions={0} can={yes} unknown={false} error={null} onDecide={(d) => decisions.push(d)} onClaim={noop} />
+  );
+  ui.render(el(card({approval_id: "f1", args_preview: {content: "x".repeat(500), other: "y".repeat(400)}})));
+  await tick(700);
+  const approveBtn = () => [...ui.root.querySelectorAll("button")].find((b) => /Approve…/.test(b.textContent ?? ""))!;
+  assert.equal(approveBtn().disabled, true);
+  assert.match(ui.root.textContent ?? "", /접힌 값 2개/);
+  await key(ui.root.querySelector("section.card.approval")!, "a");
+  assert.equal(ui.root.querySelector(".confirm-row"), null, "the 'a' key is locked too");
+  const opens = () => [...ui.root.querySelectorAll("button")].filter((b) => b.textContent === "전체 보기");
+  const {act} = await import("react");
+  await act(async () => opens()[0].click());
+  assert.equal(approveBtn().disabled, true, "one still folded");
+  await act(async () => opens()[0].click());
+  assert.equal(approveBtn().disabled, false);
+  await click(/Approve…/);
+  await tick(400);
+  // Folding one again during the confirm step locks 확정.
+  await act(async () => [...ui.root.querySelectorAll("button")].find((b) => b.textContent === "접기")!.click());
+  await click(/확정/);
+  assert.deepEqual(decisions, []);
+  ui.render(el(card({approval_id: "f2", args_preview: {content: "x".repeat(500)}})));
+  await tick(700);
+  await click(/Deny/);
+  assert.deepEqual(decisions, ["denied"], "Deny with values still folded");
+});
+
+test("clipped values: header warns and 확정 needs an extra tick", async () => {
+  const decisions: string[] = [];
+  const a = card({approval_id: "t1", args_preview: {content: `${"y".repeat(20)}… (+5000 chars)`}});
+  ui.render(<ApprovalCard a={a} index={1} total={1} questions={0} can={yes} unknown={false} error={null} onDecide={(d) => decisions.push(d)} onClaim={noop} />);
+  assert.match(ui.root.querySelector("header")!.textContent ?? "", /일부만 표시됨 — 전체 내용을 볼 수 없음/);
+  await tick(700);
+  await click(/Approve…/);
+  await tick(400);
+  await click(/확정/);
+  assert.deepEqual(decisions, [], "no approval without the tick");
+  const box = ui.root.querySelector<HTMLInputElement>('.confirm-row input[type="checkbox"]')!;
+  const {act} = await import("react");
+  await act(async () => box.click());
+  await click(/확정/);
+  assert.deepEqual(decisions, ["granted"]);
+  assert.doesNotMatch(html(card()), /일부만 표시됨/);
+});
+
+test("reset from the app drops the confirm step (Esc outside the card, stale_revision)", async () => {
+  const el = (reset: number) => (
+    <ApprovalCard a={card({approval_id: "e1"})} index={1} total={1} questions={0} can={yes} unknown={false} error={null} reset={reset} onDecide={noop} onClaim={noop} />
+  );
+  ui.render(el(0));
+  await tick(700);
+  await click(/Approve…/);
+  assert.ok(ui.root.querySelector(".confirm-row"));
+  ui.render(el(1));
+  assert.equal(ui.root.querySelector(".confirm-row"), null);
+});
+
+test("question panel: Cmd/Ctrl/Alt combos and held keys do nothing; a new question locks briefly", async () => {
+  const acts: string[] = [];
+  const q = (id: string) => ({question_id: id, agent_id: "bob", thread_id: null, question: "pick", options: ["a", "b"], resolving: false});
+  const el = (id: string) => (
+    <QuestionPanel q={q(id)} index={1} total={1} can={yes} onAnswer={(c) => acts.push(`answer ${c}`)} onSkip={() => acts.push("skip")} onClaim={noop} />
+  );
+  ui.render(el("q1"));
+  const panel = () => ui.root.querySelector("section.card.question")!;
+  const {act} = await import("react");
+  const press = (init: KeyboardEventInit) => act(async () => void panel().dispatchEvent(new KeyboardEvent("keydown", {bubbles: true, ...init})));
+  await press({key: "s"});
+  assert.deepEqual(acts, [], "locked right after appearing");
+  await tick(700);
+  await press({key: "s", metaKey: true});
+  await press({key: "s", ctrlKey: true});
+  await press({key: "1", altKey: true});
+  await press({key: "1", repeat: true});
+  assert.deepEqual(acts, []);
+  await press({key: "1"});
+  assert.deepEqual(acts, ["answer 1"]);
+  ui.render(el("q2"));
+  await press({key: "2"});
+  assert.deepEqual(acts, ["answer 1"], "next question: the same key cannot answer it at once");
+  await tick(700);
+  await press({key: "2"});
+  assert.deepEqual(acts, ["answer 1", "answer 2"]);
+});
+
+test("gate notice text is clipped and made visible like every other field", () => {
+  const out = renderToStaticMarkup(
+    <GateNotice pending={{phase: "P2", thread_id: "t", text: `go‮${"z".repeat(2100)}`}} summary={null} idle={false} can={yes} onPrefix={noop} />,
+  );
+  assert.match(out, /go⟨U\+202E⟩/);
+  assert.match(out, /… \(\+\d+ chars\)/);
+});

@@ -1,7 +1,9 @@
 /** Composer, question panel, approval card, gate notice and control bar (WBS 3.4–3.8, 09 §3.4–3.8). */
 
 import {forwardRef, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent} from "react";
-import {APPEAR_LOCK_MS, CONFIRM_LOCK_MS, FOLD_CHARS, TTL_WARN_S, formatLeft, ttlLeft} from "./approval.js";
+import {APPEAR_LOCK_MS, CONFIRM_LOCK_MS, FOLD_CHARS, LABEL_CHARS, TTL_WARN_S, foldedKeys, formatLeft, isTruncated, ttlLeft} from "./approval.js";
+import {stripGateSignal} from "./compose.js";
+import {isPanelKey} from "./keys.js";
 import {Markdown} from "./markdown.js";
 import {clip, valueText, visible} from "./sanitize.js";
 
@@ -28,7 +30,7 @@ export const Composer = forwardRef<
   useImperativeHandle(ref, () => ({
     focus: () => area.current?.focus(),
     fill: (prefix) => {
-      setText((t) => (t.startsWith(prefix) ? t : `${prefix} ${t.replace(/^(APPROVE|REJECT):\s*/, "")}`));
+      setText((t) => (t.startsWith(prefix) ? t : `${prefix} ${stripGateSignal(t)}`));
       area.current?.focus();
     },
   }));
@@ -76,9 +78,26 @@ export const QuestionPanel = forwardRef<
   HTMLDivElement,
   {q: Question; index: number; total: number; can: Can; onAnswer: (content: string) => void; onSkip: () => void; onClaim: () => void}
 >(function QuestionPanel({q, index, total, can, onAnswer, onSkip, onClaim}, ref) {
-  const disabled = !can.act || q.resolving;
+  // A new question locks briefly like a new card: a key meant for the last one
+  // must not answer this one.
+  const [shownId, setShownId] = useState(q.question_id);
+  const [shownAt, setShownAt] = useState(() => Date.now());
+  const [, setNow] = useState(0);
+  if (shownId !== q.question_id) {
+    setShownId(q.question_id);
+    setShownAt(Date.now());
+  }
+  useEffect(() => {
+    const left = shownAt + APPEAR_LOCK_MS - Date.now();
+    if (left <= 0) return;
+    const t = setTimeout(() => setNow(Date.now()), left + 1);
+    return () => clearTimeout(t);
+  }, [shownAt]);
+  const locked = Date.now() - shownAt < APPEAR_LOCK_MS;
+  const disabled = !can.act || q.resolving || locked;
   const onKey = (e: KeyboardEvent) => {
-    if (disabled || e.target instanceof HTMLTextAreaElement) return;
+    if (disabled || !isPanelKey(e) || e.target instanceof HTMLTextAreaElement) return;
+    if (Date.now() - shownAt < APPEAR_LOCK_MS) return;
     const n = Number(e.key);
     if (Number.isInteger(n) && n >= 1 && n <= q.options.length) onAnswer(String(n));
     else if (e.key === "s") onSkip();
@@ -124,6 +143,9 @@ export const QuestionPanel = forwardRef<
   );
 });
 
+/** Gate notice text beyond this is clipped with a visible marker. */
+const GATE_TEXT_CHARS = 2000;
+
 // ---- 3.6 Approval card ----------------------------------------------------------------------
 
 export type Approval = {
@@ -137,14 +159,13 @@ export type Approval = {
   resolving: boolean;
 };
 
-function ArgValue({text}: {text: string}) {
-  const [open, setOpen] = useState(false);
+function ArgValue({text, open, onToggle}: {text: string; open: boolean; onToggle: () => void}) {
   const long = text.length > FOLD_CHARS;
   return (
     <>
       {visible(long && !open ? clip(text, FOLD_CHARS) : text)}
       {long && (
-        <button className="link" onClick={() => setOpen(!open)}>
+        <button className="link" onClick={onToggle}>
           {open ? "접기" : "전체 보기"}
         </button>
       )}
@@ -154,8 +175,21 @@ function ArgValue({text}: {text: string}) {
 
 export const ApprovalCard = forwardRef<
   HTMLDivElement,
-  {a: Approval; index: number; total: number; questions: number; can: Can; unknown: boolean; error: string | null; onDecide: (d: "granted" | "denied") => void; onClaim: () => void}
->(function ApprovalCard({a, index, total, questions, can, unknown, error, onDecide, onClaim}, ref) {
+  {
+    a: Approval;
+    index: number;
+    total: number;
+    questions: number;
+    can: Can;
+    unknown: boolean;
+    error: string | null;
+    /** Bumped by the app to drop the confirm step (Esc elsewhere, stale_revision). */
+    reset?: number;
+    /** ``revision`` is the one this card showed when the user decided. */
+    onDecide: (d: "granted" | "denied", revision: number) => void;
+    onClaim: () => void;
+  }
+>(function ApprovalCard({a, index, total, questions, can, unknown, error, reset = 0, onDecide, onClaim}, ref) {
   const [now, setNow] = useState(() => Date.now());
   const [shownAt, setShownAt] = useState(() => Date.now());
   const [confirmAt, setConfirmAt] = useState<number | null>(null);
@@ -168,6 +202,9 @@ export const ApprovalCard = forwardRef<
   const [shownKey, setShownKey] = useState(key);
   const [shownArgs, setShownArgs] = useState(a.args_preview);
   const [changed, setChanged] = useState<ReadonlySet<string>>(new Set());
+  // Values the user unfolded, and the "I approve without seeing all of it" tick.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  const [ack, setAck] = useState(false);
   if (shownKey !== key) {
     const sameCard = shownKey.split("#")[0] === a.approval_id;
     setChanged(
@@ -179,6 +216,14 @@ export const ApprovalCard = forwardRef<
     setShownArgs(a.args_preview);
     setShownAt(Date.now());
     setConfirmAt(null);
+    setOpened(new Set());
+    setAck(false);
+  }
+  const [shownReset, setShownReset] = useState(reset);
+  if (shownReset !== reset) {
+    setShownReset(reset);
+    setConfirmAt(null);
+    setAck(false);
   }
   // Becoming able to act (reconnect, "이 탭에서 조작") locks again too: the click that
   // gained control must not land on the card (review 3.4 S).
@@ -222,10 +267,26 @@ export const ApprovalCard = forwardRef<
   const confirmLocked = confirmAt !== null && now - confirmAt < CONFIRM_LOCK_MS;
   const disabled = !can.act || a.resolving || locked;
   const left = ttlLeft(a, now);
+  // Approve only what was seen: folded values first, and an extra tick when some of
+  // the request can never be shown. Deny stays available regardless.
+  const folded = foldedKeys(a.args_preview, opened);
+  const truncated = isTruncated(a);
   const open = () => can.act && !a.resolving && Date.now() - shownAt >= APPEAR_LOCK_MS;
-  const startConfirm = () => open() && setConfirmAt(Date.now());
-  const approve = () => open() && confirmAt !== null && Date.now() - confirmAt >= CONFIRM_LOCK_MS && onDecide("granted");
-  const deny = () => open() && onDecide("denied");
+  const startConfirm = () => open() && folded.length === 0 && setConfirmAt(Date.now());
+  const approve = () =>
+    open() &&
+    folded.length === 0 &&
+    (!truncated || ack) &&
+    confirmAt !== null &&
+    Date.now() - confirmAt >= CONFIRM_LOCK_MS &&
+    onDecide("granted", a.revision);
+  const deny = () => open() && onDecide("denied", a.revision);
+  const toggle = (k: string) =>
+    setOpened((all) => {
+      const next = new Set(all);
+      if (!next.delete(k)) next.add(k);
+      return next;
+    });
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape" && confirmAt !== null) {
       e.stopPropagation();
@@ -252,15 +313,16 @@ export const ApprovalCard = forwardRef<
           {questions > 0 ? ` · 질문 ${questions}건 대기` : ""}
         </span>
         {a.revision > 1 && <span className="changed">⚠ 내용이 변경됨 (rev {a.revision})</span>}
+        {truncated && <span className="changed">⚠ 일부만 표시됨 — 전체 내용을 볼 수 없음</span>}
         {left !== null && (
           <span className={`ttl${left <= TTL_WARN_S ? " urgent" : ""}`}>{left > 0 ? `남은 시간 ${formatLeft(left)}` : "만료 대기 중"}</span>
         )}
       </header>
       <dl className="meta">
         <dt>에이전트</dt>
-        <dd>{visible(clip(a.agent_id, 64))}</dd>
+        <dd>{visible(clip(a.agent_id, LABEL_CHARS))}</dd>
         <dt>도구</dt>
-        <dd>{visible(clip(a.tool, 64))}</dd>
+        <dd>{visible(clip(a.tool, LABEL_CHARS))}</dd>
         <dt>approval_id</dt>
         <dd>{visible(clip(a.approval_id, 64))}</dd>
       </dl>
@@ -269,9 +331,9 @@ export const ApprovalCard = forwardRef<
         <tbody>
           {Object.entries(a.args_preview).map(([k, v]) => (
             <tr key={k} className={changed.has(k) ? "changed-cell" : undefined}>
-              <th>{visible(clip(k, 64))}</th>
+              <th>{visible(clip(k, LABEL_CHARS))}</th>
               <td>
-                <ArgValue text={valueText(v)} />
+                <ArgValue text={valueText(v)} open={opened.has(k)} onToggle={() => toggle(k)} />
               </td>
             </tr>
           ))}
@@ -291,9 +353,10 @@ export const ApprovalCard = forwardRef<
             ✕ Deny (d)
           </button>
           {locked && <span className="lock" aria-hidden="true" />}
-          <button disabled={disabled} onClick={startConfirm}>
+          <button disabled={disabled || folded.length > 0} onClick={startConfirm}>
             ✓ Approve… (a)
           </button>
+          {folded.length > 0 && <span className="muted">접힌 값 {folded.length}개를 펼쳐 본 뒤 승인할 수 있습니다</span>}
         </footer>
       ) : (
         <>
@@ -303,7 +366,12 @@ export const ApprovalCard = forwardRef<
           </footer>
           {/* A separate row, away from where "Approve…" was: a double click cannot land here. */}
           <div className="confirm-row">
-            <button className="primary" disabled={disabled || confirmLocked} onClick={approve}>
+            {truncated && (
+              <label>
+                <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> 잘려서 보이지 않는 내용까지 승인합니다
+              </label>
+            )}
+            <button className="primary" disabled={disabled || confirmLocked || folded.length > 0 || (truncated && !ack)} onClick={approve}>
               확정 (Enter)
             </button>
           </div>
@@ -334,7 +402,7 @@ export function GateNotice({
         ⚖ 사람 승인이 필요한 단계 {pending.phase ? `· ${visible(clip(pending.phase, 64))}` : ""}
         {pending.thread_id ? ` · 스레드 ${visible(clip(pending.thread_id, 64))}` : ""}
       </header>
-      {pending.text && <p className="gate-text">{pending.text}</p>}
+      {pending.text && <p className="gate-text">{visible(clip(pending.text, GATE_TEXT_CHARS))}</p>}
       {summary && <p className="gate-summary">상태: {summary}</p>}
       {idle && <p className="composer-warn">⚠ 지금은 idle 상태라 스레드 지정이 전달되지 않습니다 (DW-6)</p>}
       <footer className="decide">

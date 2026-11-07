@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import {outcome, plan, type Context} from "./compose.js";
+import {STALE_TEXT, gateSignal, hasSignal, outcome, plan, startHold, stripGateSignal, type Context} from "./compose.js";
 
 const ctx = (extra: Partial<Context> = {}): Context => ({agents: ["alice", "bob"], question: null, gateThread: null, ...extra});
 
@@ -69,4 +69,43 @@ test("outcome: quit racing the child's exit is not an error; other 503s are", ()
   assert.equal(outcome("session.interrupt", {kind: "http", status: 503, code: "gateway_unavailable", cmdId: null}).toast?.level, "error");
   assert.equal(outcome("human.send", {kind: "http", status: 409, code: "not_controller", cmdId: null}).toast?.level, "warn");
   assert.equal(outcome("human.skip", {kind: "http", status: 409, code: "not_pending", cmdId: null}).clear, true);
+});
+
+test("gate prefix: same rule as Core has_signal — decoration and case ignored (signals.py)", () => {
+  assert.ok(hasSignal("approve: ok", "APPROVE:"));
+  assert.ok(hasSignal("**APPROVE:** ok", "APPROVE:"));
+  assert.ok(hasSignal("  [#-`_(REJECT: no", "REJECT:"));
+  assert.ok(!hasSignal("> APPROVE: quoted", "APPROVE:"), "blockquote is a citation, not a vote");
+  assert.ok(!hasSignal("APPROVED", "APPROVE:"), "the colon is required");
+  assert.ok(!hasSignal("x", ""));
+  assert.equal(gateSignal("**reject:** why"), "REJECT:");
+  assert.equal(gateSignal("hello"), null);
+  assert.equal(stripGateSignal("**APPROVE:** ok"), "ok");
+  assert.equal(stripGateSignal("approve: ok"), "ok");
+  assert.equal(stripGateSignal("plain"), "plain");
+});
+
+test("plan: decorated or lower-case gate prefixes go to the gate thread; a bare one is blocked", () => {
+  const g = ctx({gateThread: "t-gate"});
+  for (const text of ["approve: ok", "**APPROVE:** ok", "# REJECT: needs tests"]) {
+    const p = plan(text, g);
+    assert.equal(p.kind === "send" && p.body.thread_id, "t-gate", text);
+  }
+  for (const text of ["**APPROVE:**", "approve:", "[REJECT:]", "`APPROVE:`"]) {
+    assert.equal(plan(text, g).kind, "blocked", text);
+  }
+});
+
+test("outcome: stale_revision keeps nothing decided and asks to look again", () => {
+  const o = outcome("approval.resolve", {kind: "http", status: 409, code: "stale_revision", cmdId: null});
+  assert.deepEqual(o, {clear: false, toast: {level: "warn", text: STALE_TEXT}, asTurn: false});
+  assert.match(STALE_TEXT, /바뀌었습니다/);
+});
+
+test("startHold: Start stays locked while sent or maybe sent, released on a known failure", () => {
+  assert.equal(startHold({kind: "ok", result: {}, failed: false, failure: null}), true);
+  assert.equal(startHold({kind: "http", status: 504, code: "timeout", cmdId: "web-1"}), true, "504: result unknown");
+  assert.equal(startHold({kind: "ok", result: {}, failed: true, failure: "x"}), false);
+  assert.equal(startHold({kind: "http", status: 503, code: "gateway_unavailable", cmdId: null}), false);
+  assert.equal(startHold({kind: "network"}), false);
 });

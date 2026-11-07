@@ -19,6 +19,33 @@ export type Context = {
   gateThread: string | null;
 };
 
+// Core ``signals.py`` ``_DECORATION``: leading noise that still means "this is my signal".
+const DECORATION = " \t\r\n*_[(#-`";
+const GATE_PREFIXES = ["APPROVE:", "REJECT:"] as const;
+
+function stripDecoration(text: string): string {
+  let i = 0;
+  while (i < text.length && DECORATION.includes(text[i])) i++;
+  return text.slice(i);
+}
+
+/** Core ``has_signal``: decoration and case ignored, prefix carries its colon. */
+export function hasSignal(text: string, prefix: string): boolean {
+  return prefix !== "" && stripDecoration(text).toUpperCase().startsWith(prefix.toUpperCase());
+}
+
+/** The gate prefix *text* opens with as Core reads it, or null. */
+export function gateSignal(text: string): (typeof GATE_PREFIXES)[number] | null {
+  return GATE_PREFIXES.find((p) => hasSignal(text, p)) ?? null;
+}
+
+/** *text* without its gate prefix (and the decoration around it); unchanged when it has none. */
+export function stripGateSignal(text: string): string {
+  const signal = gateSignal(text);
+  if (!signal) return text;
+  return stripDecoration(text).slice(signal.length).replace(/^[\s*_\])`#-]+/, "");
+}
+
 /** Ink ``onSubmit`` parity, minus approvals: the Web approves on the card only (N-012). */
 export function plan(text: string, ctx: Context): Plan {
   const trimmed = text.trim();
@@ -29,7 +56,7 @@ export function plan(text: string, ctx: Context): Plan {
     return {kind: "quit"};
   }
   // A bare gate prefix would pass a human-approval gate with no reason given.
-  if (/^(APPROVE|REJECT):$/.test(trimmed)) {
+  if (gateSignal(trimmed) && stripGateSignal(trimmed).trim() === "") {
     return {kind: "blocked", warning: "APPROVE:/REJECT: 뒤에 내용을 적어 주세요"};
   }
   if (trimmed === "/skip") {
@@ -62,7 +89,7 @@ export function plan(text: string, ctx: Context): Plan {
       warning,
     };
   }
-  const gate = ctx.gateThread && /^(APPROVE|REJECT):/.test(trimmed) ? {thread_id: ctx.gateThread} : {};
+  const gate = ctx.gateThread && gateSignal(trimmed) ? {thread_id: ctx.gateThread} : {};
   return {kind: "send", body: {type: "human.send", content: trimmed, ...gate, ...(mentions.length ? {mentions} : {})}, echo, warning};
 }
 
@@ -76,6 +103,17 @@ export type Outcome = {
   /** Idle input became a new turn: mentions/thread were not delivered (DW-6). */
   asTurn: boolean;
 };
+
+export const STALE_TEXT = "승인 내용이 바뀌었습니다. 다시 확인하세요";
+
+/** How long a keyless ``session.start`` whose result is unknown keeps Start locked. */
+export const START_UNKNOWN_MS = 30_000;
+
+/** After ``session.start``: keep Start locked (sent, or maybe sent) or release it. */
+export function startHold(r: CmdResult): boolean {
+  if (r.kind === "ok") return !r.failed;
+  return r.kind === "http" && r.code === "timeout";
+}
 
 /** One place that turns an API-05 reply into UI feedback (F-017, 09 B-8/B-9). */
 export function outcome(type: string, r: CmdResult): Outcome {
@@ -104,6 +142,9 @@ export function outcome(type: string, r: CmdResult): Outcome {
       return {clear: true, toast: {level: "info", text: "결과 확인 중입니다"}, asTurn: false};
     case "not_pending":
       return {clear: true, toast: {level: "info", text: "이미 처리된 항목입니다"}, asTurn: false};
+    case "stale_revision":
+      // The card changed after the user confirmed what it showed: nothing was decided.
+      return {clear: false, toast: {level: "warn", text: STALE_TEXT}, asTurn: false};
     default:
       return {clear: false, toast: {level: "error", text: `전송 실패: ${r.code}`}, asTurn: false};
   }

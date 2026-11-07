@@ -28,3 +28,8 @@ export function escAction(c: EscContext): EscAction {
 export function isCardShortcut(e: {altKey: boolean; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; code: string}): boolean {
   return e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && e.code === "KeyA";
 }
+
+/** A question-panel shortcut (1–9, s): never with Ctrl/Cmd/Alt (Cmd+S is "save") or a held key. */
+export function isPanelKey(e: {ctrlKey: boolean; metaKey: boolean; altKey: boolean; repeat: boolean}): boolean {
+  return !(e.ctrlKey || e.metaKey || e.altKey || e.repeat);
+}

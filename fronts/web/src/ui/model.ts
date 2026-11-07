@@ -194,3 +194,15 @@ export const STATUS_LABEL: Record<Status, string> = {
   ended: "■ ended",
   exited: "✕ gateway exit",
 };
+
+/** The sr-only live region's text: the item that now waits for the human, top first (09 §6). */
+export function announcement(
+  approval: {agent_id: string; tool: string} | null,
+  question: {agent_id: string | null; question_id: string} | null,
+  gate: {phase: string | null} | null,
+): string {
+  if (approval) return `${approval.agent_id} 이 ${approval.tool} 승인을 요청했습니다`;
+  if (question) return `${question.agent_id ?? "에이전트"} 이 질문했습니다 (${question.question_id})`;
+  if (gate) return `사람 승인이 필요한 단계입니다${gate.phase ? ` · ${gate.phase}` : ""}`;
+  return "";
+}

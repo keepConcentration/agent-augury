@@ -55,3 +55,9 @@ test("ordinary Markdown still renders: emphasis, code, lists, tables, entities",
   assert.match(html("&amp;lt;x"), /<p>&amp;lt;x<\/p>/);
   assert.match(html("- [ ] todo\n- [x] done"), /☐ .*todo.*☑ .*done/s);
 });
+
+test("image alt text decodes entities like paragraph text does (once, not twice)", () => {
+  // Shown as "AT&T <logo>", not "AT&amp;T &lt;logo&gt;".
+  assert.match(html("![AT&amp;T &lt;logo&gt;](https://x.example/a.png)"), /\[이미지: AT&amp;T &lt;logo&gt;\]/);
+  assert.match(html("![a & b](https://x.example/a.png)"), /\[이미지: a &amp; b\]/);
+});

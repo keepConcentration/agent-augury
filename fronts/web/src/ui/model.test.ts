@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
 import {formatGate} from "../../../ink/src/wire.js";
-import {RESUME_HINT, applyNotice, applyState, applyWire, gateSummary, initialModel, status, type BffState, type Model} from "./model.js";
+import {RESUME_HINT, applyNotice, applyState, applyWire, freshNotice, gateSummary, initialModel, status, type BffState, type Model} from "./model.js";
 
 const ev = (type: string, extra: Record<string, unknown> = {}) => ({dir: "event" as const, type, ...extra});
 
@@ -106,4 +106,24 @@ test("gate summary is Ink's formatGate text, character for character (F-012)", (
   const m = applyState(initialModel(), state({gate}));
   assert.equal(gateSummary(m), formatGate({dir: "event", type: "session.gate", ...gate}));
   assert.equal(gateSummary(applyState(initialModel(), state())), null);
+});
+
+test("rows already pushed keep their identity, so a memoized row does not re-render", () => {
+  const before = run([ev("message", {from: "a", text: "one"}), ev("log", {text: "two"})]);
+  const after = applyWire(before, 3, ev("message", {from: "b", text: "three"}));
+  assert.equal(after.rows.length, before.rows.length + 1);
+  before.rows.forEach((row, i) => assert.equal(after.rows[i], row));
+});
+
+test("toast/auth de-dup: nothing before the first state; a gap replay does not pop old notices again", () => {
+  const shown = {current: Number.POSITIVE_INFINITY};
+  assert.equal(freshNotice(shown, 3), false); // replay before bff.state
+  shown.current = 5; // first bff.state: seq_last = 5
+  assert.equal(freshNotice(shown, 5), false);
+  assert.equal(freshNotice(shown, 7), true);
+  assert.equal(freshNotice(shown, 9), true);
+  // Gap replay re-sends everything from the start, then continues.
+  for (const seq of [6, 7, 8, 9]) assert.equal(freshNotice(shown, seq), false, String(seq));
+  assert.equal(freshNotice(shown, 10), true);
+  assert.equal(shown.current, 10);
 });

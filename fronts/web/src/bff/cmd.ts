@@ -73,6 +73,8 @@ const SOURCE = {surface: "web", mode: "interact"};
 const TAB_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 /** Id the gateway uses for its own shutdown quit (``GatewayChild.stop``). */
 const SHUTDOWN_ID = "web-shutdown";
+/** Id Core puts on a result for a line it could not decode or handle (``session_stdio.py``). */
+const UNDECODED_ID = "?";
 
 // Commands that answer a pending item, and the field that names it.
 const KEY_FIELD: Record<string, {prefix: "q" | "a"; field: string}> = {
@@ -120,6 +122,9 @@ export class CommandBus {
   private unknown = new Map<string, Unknown>();
   /** Expired UNKNOWN ids, so a very late result is still recognised (bounded by maxUnknown). */
   private expired = new Map<string, CmdKey | null>();
+  /** The command that last answered each key. Only it may settle or reopen the key, so a
+   *  late result for an older command never touches a newer one's card. */
+  private owner = new Map<CmdKey, string>();
 
   constructor(options: CommandBusOptions) {
     this.opts = {...CMD_DEFAULTS, ...options};
@@ -129,22 +134,30 @@ export class CommandBus {
     this.log = options.log ?? ((line) => process.stderr.write(`${line}\n`));
   }
 
-  /** After a Core verdict on a keyed command: release, or make it answerable again. */
-  private settleKey(key: CmdKey | null, failed: boolean, failure: string | null): void {
+  /** After a Core verdict on a keyed command: release, or make it answerable again.
+   *
+   * Returns false (and changes nothing) when a newer command has taken the key since.
+   */
+  private settleKey(key: CmdKey | null, id: string, failed: boolean, failure: string | null): boolean {
     if (!key) {
-      return;
+      return true;
     }
+    if (this.owner.get(key) !== id) {
+      return false;
+    }
+    this.owner.delete(key);
     // "no pending question" means it is already gone (F-006/F-007): drop the card.
     if (!failed || failure === NO_PENDING) {
       this.state.release(key);
     } else {
       this.state.setResolving(key, false);
     }
+    return true;
   }
 
   private success(cmd: WireMessage, result: WireMessage): Reply {
     const {failed, failure} = judge(result);
-    this.settleKey(keyOf(cmd), failed, failure);
+    this.settleKey(keyOf(cmd), String(cmd.id), failed, failure);
     if (!failed && cmd.type === "human.send" && result.as_turn === true) {
       // DW-5/DW-6: Core drops source/mentions on an idle send; keep the provenance here.
       this.log(`augury web: idle human.send started a new turn (id=${cmd.id}, surface=web, mentions=${JSON.stringify(cmd.mentions ?? [])})`);
@@ -155,7 +168,12 @@ export class CommandBus {
   /** A ``dir=result`` line from the child (via ``forwardChildLine``). */
   onResult(result: WireMessage): void {
     const id = String(result.id);
-    const waiter = this.inflight.get(id);
+    let waiter = this.inflight.get(id);
+    // Core could not read a line. With one command waiting it can only be that one (we are
+    // the only writer and every earlier one has answered or timed out).
+    if (!waiter && id === UNDECODED_ID && this.inflight.size === 1) {
+      waiter = this.inflight.values().next().value!;
+    }
     if (waiter) {
       // The waiter's own command is needed for the verdict; it settles itself.
       waiter.settle({status: 200, body: result});
@@ -175,54 +193,75 @@ export class CommandBus {
       }
       const {failed, failure} = judge(result);
       // After expiry the key is answerable again; a late success still means it was applied.
-      this.settleKey(key, failed, failure);
+      // If a newer command has answered the key since, its card is not ours to change.
+      const superseded = !this.settleKey(key, id, failed, failure);
       this.hub.publishNotice({
         kind: "late_result",
-        level: failed || expired ? "warn" : "info",
-        text: `${id} result arrived late: ${failed ? "failed" : "ok"}`,
+        level: failed || expired || superseded ? "warn" : "info",
+        text: `${id} result arrived late: ${failed ? "failed" : "ok"}${superseded ? " (a newer command has answered it since)" : ""}`,
         cmd_id: id,
         failed,
         failure: failure === null ? null : failure.slice(0, FAILURE_TEXT_MAX),
+        superseded,
       });
       return;
     }
     if (id === SHUTDOWN_ID) {
       return;
     }
-    this.hub.publishNotice({kind: "orphan_result", level: "error", text: `result with unknown id ${id.slice(0, 64)}`, cmd_id: id.slice(0, 64)});
+    const hint =
+      id === UNDECODED_ID
+        ? ` — Core could not read a command line; ${this.inflight.size} waiting command(s) cannot be matched and will time out`
+        : "";
+    this.hub.publishNotice({kind: "orphan_result", level: "error", text: `result with unknown id ${id.slice(0, 64)}${hint}`, cmd_id: id.slice(0, 64)});
   }
 
   /** The child is gone: every waiting command fails now, not after the timeout (SRS API-05 6). */
   onChildExit(): void {
-    const keys: Array<CmdKey | null> = [];
+    const keys: Array<[string, CmdKey | null]> = [];
     for (const [id, waiter] of this.inflight) {
       clearTimeout(waiter.timer);
-      keys.push(waiter.key);
-      waiter.settle(this.unavailable(id));
+      keys.push([id, waiter.key]);
+      // Already on the child's stdin: unlike a 503, it may have been applied.
+      waiter.settle(this.lost(id));
     }
     this.inflight.clear();
-    for (const entry of this.unknown.values()) {
+    for (const [id, entry] of this.unknown) {
       clearTimeout(entry.timer);
-      keys.push(entry.key);
+      keys.push([id, entry.key]);
     }
     this.unknown.clear();
     this.expired.clear();
     // Nothing can confirm these any more; the state module clears pending on exit (CP-2).
-    for (const key of keys) {
-      if (key) {
+    for (const [id, key] of keys) {
+      if (key && this.owner.get(key) === id) {
         this.state.setResolving(key, false);
       }
     }
+    this.owner.clear();
   }
 
+  /** Not sent: the child was not running (or refused the write). Safe to retry. */
   private unavailable(id: string): Reply {
     return {status: 503, body: {error: {code: "gateway_unavailable", message: "the agent session is not running", cmd_id: id}}};
+  }
+
+  /** Sent, then the child exited before answering: the outcome is unknown. */
+  private lost(id: string): Reply {
+    return {
+      status: 502,
+      body: {error: {code: "gateway_exited", message: "the agent session ended before answering — it may already have been applied", cmd_id: id}},
+    };
   }
 
   private tombstone(id: string, key: CmdKey | null): void {
     this.expired.set(id, key);
     if (this.expired.size > this.opts.maxUnknown) {
-      this.expired.delete(this.expired.keys().next().value!);
+      const [oldId, oldKey] = this.expired.entries().next().value!;
+      this.expired.delete(oldId);
+      if (oldKey && this.owner.get(oldKey) === oldId) {
+        this.owner.delete(oldKey);
+      }
     }
   }
 
@@ -245,7 +284,8 @@ export class CommandBus {
     const timer = setTimeout(() => {
       this.unknown.delete(id);
       this.tombstone(id, key);
-      if (key) {
+      // Ownership stays with this id, so a late success can still release the key.
+      if (key && this.owner.get(key) === id) {
         this.state.setResolving(key, false);
       }
     }, this.opts.unknownMs).unref();
@@ -302,6 +342,7 @@ export class CommandBus {
       return this.unavailable(id);
     }
     if (key) {
+      this.owner.set(key, id);
       this.state.setResolving(key, true);
     }
     const raw = await new Promise<Reply>((settle) => {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import {request as httpRequest, type IncomingMessage} from "node:http";
+import {EventEmitter} from "node:events";
+import {request as httpRequest, type IncomingMessage, type ServerResponse} from "node:http";
 import {mkdtempSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
@@ -184,14 +185,31 @@ test("ring buffer: frame cap and byte cap trim the front; the gap is reported on
   for (let i = 0; i < 5; i++) {
     small.hub.publishWire(ev("log", {text: "x".repeat(100)}));
   }
-  const t = await Stream.open(small.bff.port, small.cookie, TAB[0]);
+  // A foreign Last-Event-ID did see frames: the trimmed front is a real gap.
+  const t = await Stream.open(small.bff.port, small.cookie, TAB[0], "99");
   await until(() => t.events("bff.state").length === 1);
   await new Promise((r) => setTimeout(r, 30));
   // Each frame is ~150 bytes, so a 400-byte cap keeps the last two.
   assert.deepEqual(JSON.parse(t.events("bff.state")[0].data!).replay_gap, {from: 1, to: 3});
   assert.deepEqual(t.events("wire").map((f) => f.id), ["4", "5"]);
   t.close();
+  await until(() => t.ended);
   await teardown(small.bff, small.hub);
+});
+
+test("first connect (no Last-Event-ID) on a trimmed buffer reports no gap", async () => {
+  const {bff, hub, cookie} = await setup({maxFrames: 2});
+  for (let i = 0; i < 5; i++) {
+    hub.publishWire(ev("log", {text: String(i)}));
+  }
+  const s = await Stream.open(bff.port, cookie, TAB[0]);
+  await until(() => s.events("wire").length === 2);
+  const state = JSON.parse(s.events("bff.state")[0].data!);
+  assert.equal(state.replay_gap, null);
+  assert.equal(state.seq_last, 5);
+  assert.deepEqual(s.events("wire").map((f) => f.id), ["4", "5"]);
+  s.close();
+  await teardown(bff, hub);
 });
 
 test("notices share the seq, are masked and clipped", async () => {
@@ -340,6 +358,83 @@ test("notice: every string field is masked; clipping never splits a surrogate pa
   assert.equal(b.text, `${"a".repeat(1999)}…`);
   s.close();
   await teardown(bff, hub);
+});
+
+test("notice: strings inside nested objects and arrays are masked too", async () => {
+  const {bff, hub, cookie} = await setup();
+  const s = await Stream.open(bff.port, cookie, TAB[0]);
+  hub.publishNotice({
+    kind: "late_result",
+    level: "info",
+    text: "ok",
+    detail: {auth: "Authorization: Bearer sk-nested", list: ["Bearer sk-array", {deep: "Bearer sk-deep"}], n: 7, flag: null},
+  });
+  await until(() => s.events("bff.notice").length === 1);
+  const raw = s.events("bff.notice")[0].data!;
+  assert.doesNotMatch(raw, /sk-nested|sk-array|sk-deep/);
+  const data = JSON.parse(raw);
+  assert.equal(data.detail.n, 7);
+  assert.equal(data.detail.flag, null);
+  assert.equal(data.detail.list.length, 2);
+  s.close();
+  await teardown(bff, hub);
+});
+
+/** A response whose socket never drains (half-open peer), driven without a real network. */
+class FakeRes extends EventEmitter {
+  writableLength = 0;
+  destroyed = false;
+  keepAlive: [boolean, number] | null = null;
+  socket = {setKeepAlive: (on: boolean, ms: number) => void (this.keepAlive = [on, ms])};
+  write(text: string): boolean {
+    this.writableLength += Buffer.byteLength(text);
+    return false;
+  }
+  end(): void {
+    this.destroy();
+  }
+  destroy(): void {
+    if (!this.destroyed) {
+      this.destroyed = true;
+      this.emit("close");
+    }
+  }
+}
+
+function attachFake(hub: EventHub, res: FakeRes, tab = TAB[0]): void {
+  const reply = hub.route()[1].handle({path: "/api/events", query: new URLSearchParams({tab}), headers: {}} as never);
+  (reply as {stream: (r: ServerResponse) => void}).stream(res as unknown as ServerResponse);
+}
+
+test("half-open stream: TCP keep-alive is on, and a buffer that never drains frees the slot", async () => {
+  let clock = 0;
+  const hub = new EventHub({pingMs: 10, stallMs: 1000, now: () => clock});
+  const res = new FakeRes();
+  attachFake(hub, res);
+  assert.deepEqual(res.keepAlive, [true, 10]);
+  assert.equal(hub.available(), 3);
+  // Pings keep running while the clock is below stallMs: the stream stays.
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(res.destroyed, false);
+  clock = 1000;
+  await until(() => res.destroyed);
+  assert.equal(hub.available(), 4);
+  hub.close();
+});
+
+test("a stream whose buffer drains between pings is never cut as stalled", async () => {
+  let clock = 0;
+  const hub = new EventHub({pingMs: 10, stallMs: 1000, now: () => clock});
+  const res = new FakeRes();
+  attachFake(hub, res);
+  for (let i = 0; i < 5; i++) {
+    await new Promise((r) => setTimeout(r, 25));
+    res.writableLength = 0;
+    res.emit("drain");
+    clock += 900;
+  }
+  assert.equal(res.destroyed, false);
+  hub.close();
 });
 
 test("after hub.close() new streams are ended at once", async () => {

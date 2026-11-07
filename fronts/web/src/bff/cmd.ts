@@ -28,8 +28,8 @@ export type CmdKey = `q:${string}` | `a:${string}`;
  */
 export interface CommandState {
   isController(tab: string): boolean;
-  /** Step 4/5: is *key* pending, and not already being answered? */
-  check(key: CmdKey): "not_pending" | "in_flight" | null;
+  /** Step 4/5: is *key* pending, still at *revision* (approvals), and not already being answered? */
+  check(key: CmdKey, revision?: number): "not_pending" | "stale_revision" | "in_flight" | null;
   /** Mark *key* as answered-but-unconfirmed (true) or answerable again (false); broadcasts. */
   setResolving(key: CmdKey, resolving: boolean): void;
   /** Drop *key* from pending; broadcasts. Must be idempotent. */
@@ -62,9 +62,11 @@ const ALLOWED: Record<string, readonly string[]> = {
   "session.interrupt": [],
   "session.quit": [],
   "human.send": ["content", "mentions", "thread_id"],
-  "human.answer": ["content", "question_id", "thread_id", "mentions"],
+  // No thread_id: Core answers on the question's own thread (pq.thread_id).
+  "human.answer": ["content", "question_id", "mentions"],
   "human.skip": ["question_id"],
-  "approval.resolve": ["approval_id", "decision"],
+  // ``revision`` is the BFF's own check and never reaches Core (see ``handle``).
+  "approval.resolve": ["approval_id", "decision", "revision"],
 };
 
 const SOURCE = {surface: "web", mode: "interact"};
@@ -89,6 +91,12 @@ function keyOf(cmd: WireMessage): CmdKey | null {
 // Core's own wording (bridge.py:198, :237); 08 §6.3 is the reference if it changes.
 const NO_PENDING = "no pending question";
 const FAILURE_TEXT_MAX = 200;
+
+const PROBLEM_TEXT = {
+  not_pending: "nothing pending with that id",
+  stale_revision: "the approval changed since it was shown — review it again",
+  in_flight: "already being answered",
+};
 
 type Waiter = {key: CmdKey | null; settle: (reply: Reply) => void; timer: NodeJS.Timeout};
 type Unknown = {key: CmdKey | null; timer: NodeJS.Timeout};
@@ -263,19 +271,26 @@ export class CommandBus {
         cmd[field] = body[field];
       }
     }
+    // The approval revision the user saw (08 §4.4 M3): checked at step 4, not sent.
+    const revision = cmd.revision;
+    delete cmd.revision;
     const key = keyOf(cmd);
     // 3. Schema; answers and skips must name their question (08 API-05 3).
     //    The id is taken here (the schema wants one); a refused command just skips a number.
     const id = `web-${this.next++}`;
     const candidate = {...cmd, id, ...(type.startsWith("session.") ? {} : {source: SOURCE})};
-    if (commandSchemaError(candidate) || (Object.hasOwn(KEY_FIELD, type) && !key)) {
+    if (
+      commandSchemaError(candidate) ||
+      (Object.hasOwn(KEY_FIELD, type) && !key) ||
+      (type === "approval.resolve" && !Number.isInteger(revision))
+    ) {
       return errorReply(400, "schema_invalid", "command does not match the Wire schema");
     }
     // 4–5. Pending (state module).
     if (key) {
-      const problem = this.state.check(key);
+      const problem = this.state.check(key, typeof revision === "number" ? revision : undefined);
       if (problem) {
-        return errorReply(409, problem, problem === "in_flight" ? "already being answered" : "nothing pending with that id");
+        return errorReply(409, problem, PROBLEM_TEXT[problem]);
       }
     }
     // 6. Child alive.

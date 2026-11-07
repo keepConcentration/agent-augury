@@ -86,12 +86,13 @@ test("approvals: revision only moves when tool or args change; long args are cli
   const {state} = unit({now: () => now});
   state.applyEvent(ev("approval.request", {approval_id: "a1", agent_id: "bob", tool: "run_command", args_preview: {command: "ls"}, ttl_seconds: 60}));
   now = 200;
-  state.applyEvent(ev("approval.request", {approval_id: "a1", agent_id: "bob", tool: "run_command", args_preview: {command: "ls"}, ttl_seconds: 60}));
+  // An identical re-issue changes nothing: received_at stays, so no broadcast.
+  assert.equal(state.applyEvent(ev("approval.request", {approval_id: "a1", agent_id: "bob", tool: "run_command", args_preview: {command: "ls"}, ttl_seconds: 60})), false);
   let a = snap(state).pending_approvals[0];
-  assert.deepEqual([a.revision, a.received_at, a.ttl_seconds], [1, 200, 60]);
+  assert.deepEqual([a.revision, a.received_at, a.ttl_seconds], [1, 100, 60]);
   state.applyEvent(ev("approval.request", {approval_id: "a1", agent_id: "bob", tool: "run_command", args_preview: {command: "rm -rf /"}}));
   a = snap(state).pending_approvals[0];
-  assert.deepEqual([a.revision, a.ttl_seconds, a.args_preview.command], [2, null, "rm -rf /"]);
+  assert.deepEqual([a.revision, a.received_at, a.ttl_seconds, a.args_preview.command], [2, 200, null, "rm -rf /"]);
   state.applyEvent(ev("approval.request", {approval_id: "a1", agent_id: "bob", tool: "write_file", args_preview: {command: "rm -rf /"}}));
   assert.equal(snap(state).pending_approvals[0].revision, 3);
   state.applyEvent(ev("approval.request", {approval_id: "a2", agent_id: "x", tool: "write_file", args_preview: {content: "y".repeat(5000), n: 1}}));
@@ -176,6 +177,18 @@ test("CommandState: check/setResolving/release; unknown keys are silent no-ops",
   state.release("q:q1");
   assert.equal(broadcasts(), before + 1);
   assert.equal(state.check("q:q1"), "not_pending");
+});
+
+test("check: an approval answered at an older revision is stale_revision", () => {
+  const {state} = unit();
+  state.applyEvent(ev("approval.request", {approval_id: "a1", agent_id: "b", tool: "run_command", args_preview: {command: "ls"}}));
+  assert.equal(state.check("a:a1", 1), null);
+  state.applyEvent(ev("approval.request", {approval_id: "a1", agent_id: "b", tool: "run_command", args_preview: {command: "rm -rf /"}}));
+  assert.equal(state.check("a:a1", 1), "stale_revision");
+  assert.equal(state.check("a:a1", 2), null);
+  state.setResolving("a:a1", true);
+  assert.equal(state.check("a:a1", 1), "stale_revision");
+  assert.equal(state.check("a:a1", 2), "in_flight");
 });
 
 test("child exit and session.ended clear everything answerable (CP-2); the controller stays", () => {
@@ -453,6 +466,28 @@ test("handleChildExit: waiting command 503, pending cleared, exit broadcast", as
   assert.deepEqual([r.status, r.body.error.code], [503, "gateway_unavailable"]);
   await until(() => a.last().gateway.status === "exited");
   assert.deepEqual(a.last().pending_questions, []);
+  a.res.destroy();
+  await close(h);
+});
+
+test("approval swap: a click on rev1 that lands after the rev2 re-issue is 409 stale_revision", async () => {
+  const h = await harness();
+  const a = await Stream.open(h.bff.port, h.cookie, A);
+  await until(() => a.states().length === 1);
+  const request = (command: string) =>
+    handleChildLine(parseChildLine(JSON.stringify({dir: "event", type: "approval.request", approval_id: "a1", agent_id: "b", tool: "run_command", args_preview: {command}})), h);
+  request("ls");
+  await until(() => a.last().pending_approvals?.length === 1);
+  const seen = a.last().pending_approvals[0].revision; // what the user clicked on
+  assert.equal(seen, 1);
+  request("rm -rf /"); // same id, other args, before the click arrives
+  await until(() => a.last().pending_approvals[0].revision === 2);
+  const r = await h.call("POST", "/api/cmd", {type: "approval.resolve", approval_id: "a1", decision: "granted", revision: seen}, A);
+  assert.deepEqual([r.status, r.body.error.code], [409, "stale_revision"]);
+  assert.equal(h.sent.length, 0, "nothing reached Core");
+  assert.equal(a.last().pending_approvals[0].resolving, false);
+  const missing = await h.call("POST", "/api/cmd", {type: "approval.resolve", approval_id: "a1", decision: "granted"}, A);
+  assert.equal(missing.status, 400);
   a.res.destroy();
   await close(h);
 });

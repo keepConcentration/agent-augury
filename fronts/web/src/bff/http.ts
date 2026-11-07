@@ -113,6 +113,7 @@ export type ErrorCode =
   | "unknown_command"
   | "schema_invalid"
   | "not_pending"
+  | "stale_revision"
   | "in_flight"
   | "not_controller"
   | "gateway_unavailable"

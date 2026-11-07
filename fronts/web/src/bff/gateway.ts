@@ -50,9 +50,6 @@ export function childArgs(env: Env): string[] {
     throw new Error("--plan is not supported by the Web Surface yet (Phase 2, W-007)");
   }
   const args = ["-m", "agent_augury.gateway.session_stdio", "--config", env.AUGURY_CONFIG];
-  if (isOn(env.AUGURY_DEMO)) {
-    args.push("--demo");
-  }
   if (isOn(env.AUGURY_QUIET)) {
     args.push("--quiet");
   }
@@ -77,7 +74,7 @@ const PASS_THROUGH = new Set([
   "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
   "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
   "AUGURY_PYTHON", "AUGURY_PROJECT_ROOT", "AUGURY_FILE_ROOT", "AUGURY_GATEWAY_MODE",
-  "AUGURY_CONFIG", "AUGURY_DEMO", "AUGURY_QUIET", "AUGURY_NO_AUTO_START", "AUGURY_PLAN_FIRST",
+  "AUGURY_CONFIG", "AUGURY_QUIET", "AUGURY_NO_AUTO_START", "AUGURY_PLAN_FIRST",
   "AGENT_AUGURY_NEW_SESSION", "AGENT_AUGURY_SESSION", "AUGURY_GATEWAY_SECRETS_FILE", "AUGURY_CACHE_DIR",
 ]);
 

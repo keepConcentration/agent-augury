@@ -73,7 +73,7 @@ export async function exchangeToken(token: string | null): Promise<void> {
 export type Session = {
   gateway: BffState["gateway"];
   seq_last: number;
-  flags: {demo: boolean; no_auto_start: boolean; plan_first: boolean; session: string | null};
+  flags: {no_auto_start: boolean; plan_first: boolean; session: string | null};
   dev_mode: boolean;
   tab: {controller: boolean};
   streams_available: number;

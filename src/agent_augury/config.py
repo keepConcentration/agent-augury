@@ -730,7 +730,7 @@ def _expand_slack_surface(data: dict[str, Any], slack: Any) -> None:
     data["slack"] = spec
 
 
-def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
+def load_config(path: str | Path) -> dict[str, Any]:
     raw = Path(path).read_text(encoding="utf-8")
     try:
         data = yaml.safe_load(raw)
@@ -779,14 +779,6 @@ def load_config(path: str | Path, allow_fake: bool = False) -> dict[str, Any]:
             raise ConfigError(f"agents[{i}].backend must be a mapping")
         backend = agent["backend"]
         btype = backend.get("type")
-        # allow_fake=True → fake 백엔드 허용 (오프라인 데모/벤치마크 전용)
-        if btype == "fake":
-            if not allow_fake:
-                raise ConfigError(
-                    f"agents[{i}].backend.type 'fake' requires --demo flag "
-                    f"(offline examples / tests only)"
-                )
-            continue
         if btype not in _VALID_BACKEND_TYPES:
             raise ConfigError(
                 f"agents[{i}].backend.type must be one of {_VALID_BACKEND_TYPES}, got {btype!r}"

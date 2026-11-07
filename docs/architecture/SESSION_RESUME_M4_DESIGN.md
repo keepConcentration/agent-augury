@@ -155,7 +155,7 @@ session:
       llm_summary: false      # true → agent backend 요약 (M4e); 실패 시 규칙 fall back
 ```
 
-`--demo`에서는 compact off 가능 (결정론 테스트).
+결정론 테스트에서는 compact off 가능 (`--demo` 는 2026-11-07 제거).
 
 ### 4.4 LLM 요약 (옵션 M4e) — **landed**
 

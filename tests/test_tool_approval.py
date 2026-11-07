@@ -186,12 +186,12 @@ max_steps: 1
 agents:
   - id: a1
     backend:
-      type: fake
+      type: scripted
       script: ["ok"]
 """,
         encoding="utf-8",
     )
-    cfg = load_config(str(path), allow_fake=True)
+    cfg = load_config(str(path))
     p = ToolPolicy.from_config(cfg["tools"])
     assert p.approval_file_write == "off"
     assert p.approval_ttl_seconds == 30.0
@@ -208,20 +208,20 @@ max_steps: 1
 agents:
   - id: a1
     backend:
-      type: fake
+      type: scripted
       script: ["ok"]
 """,
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="approval.shell"):
-        load_config(str(path), allow_fake=True)
+        load_config(str(path))
 
 
 def test_session_has_approval_store_and_interact_detection():
     from agent_augury.core.session import Session
 
     cfg = build_cfg(
-        agents=[{"id": "a1", "backend": {"type": "fake", "script": [{"text": "ok"}]}}]
+        agents=[{"id": "a1", "backend": {"type": "scripted", "script": [{"text": "ok"}]}}]
     )
     session = Session.from_config(cfg)
     assert session.approvals is not None
@@ -235,11 +235,11 @@ def test_session_has_approval_store_and_interact_detection():
 
 @pytest.mark.asyncio
 async def test_execute_tool_denies_without_interact_surface(tmp_path):
-    from agent_augury.backend.fake import FakeModelBackend
     from agent_augury.core.agent.approval import ApprovalStore
     from agent_augury.core.agent.loop import AgentLoop
     from agent_augury.core.agent.policy import ToolPolicy
     from agent_augury.core.server import MessageServer
+    from tests.scripted import ScriptedBackend
 
     server = MessageServer()
     server.register_agent("a1")
@@ -248,7 +248,7 @@ async def test_execute_tool_denies_without_interact_surface(tmp_path):
     agent = AgentLoop(
         agent_id="a1",
         server=server,
-        backend=FakeModelBackend(script=[{"text": "ok"}]),
+        backend=ScriptedBackend(script=[{"text": "ok"}]),
         policy=policy,
         approvals=store,
         has_interact_surface=lambda: False,
@@ -269,7 +269,7 @@ async def test_execute_tool_pending_then_grant_runs_once(tmp_path):
             {
                 "id": "a1",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": [
                         {
                             "tool_calls": [
@@ -324,7 +324,7 @@ async def test_execute_tool_deny_never_writes(tmp_path):
             {
                 "id": "a1",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": [
                         {
                             "tool_calls": [
@@ -364,7 +364,7 @@ async def test_approval_bypass_executes_immediately(tmp_path):
             {
                 "id": "a1",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": [
                         {
                             "tool_calls": [
@@ -396,7 +396,7 @@ async def test_expire_approvals_pushes_denied_radio():
     from agent_augury.core.session import Session
 
     cfg = build_cfg(
-        agents=[{"id": "a1", "backend": {"type": "fake", "script": [{"text": "ok"}]}}],
+        agents=[{"id": "a1", "backend": {"type": "scripted", "script": [{"text": "ok"}]}}],
         tools={"approval": {"shell": "require", "ttl_seconds": 10}},
     )
     session = Session.from_config(cfg)

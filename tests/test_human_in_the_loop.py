@@ -22,7 +22,7 @@ def _hitl_cfg() -> dict:
             {
                 "id": "agent-1",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": [
                         # step 1: 스레드 생성 + ask_user 도구 호출 (같은 턴에서 순서대로)
                         {
@@ -104,7 +104,7 @@ async def test_ask_user_tool_spec_exposed_with_human():
 async def test_ask_user_tool_spec_always_present():
     """ask_user 도구는 항상 노출 (human이 코드에 내장되어 항상 켜짐)."""
     cfg = build_cfg(
-        agents=[{"id": "agent-1", "backend": {"type": "fake", "script": ["ok"]}}],
+        agents=[{"id": "agent-1", "backend": {"type": "scripted", "script": ["ok"]}}],
     )
     session = Session.from_config(cfg)
     agent = session.agents[0]

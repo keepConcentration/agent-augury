@@ -9,8 +9,8 @@ import httpx
 import pytest
 
 from agent_augury.backend.base import Completion, ModelBackend
-from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.backend.openai_compat import OpenAICompatBackend
+from tests.scripted import ScriptedBackend
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -216,12 +216,12 @@ async def test_list_models_ignores_entries_without_id():
 
 
 # ---------------------------------------------------------------------------
-# FakeModelBackend.list_models (base default)
+# ScriptedBackend.list_models (base default)
 # ---------------------------------------------------------------------------
 
 
 async def test_fake_backend_list_models_returns_none():
-    fake = FakeModelBackend([Completion(text="x")])
+    fake = ScriptedBackend([Completion(text="x")])
     assert await fake.list_models() is None
 
 

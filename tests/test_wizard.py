@@ -800,7 +800,7 @@ def test_find_existing_provider_config_returns_latest_match():
     from agent_augury.wizard import _find_existing_provider_config
     agents = [
         {"id": "a1", "backend": {"type": "openai", "api_key_env": "FIRST"}},
-        {"id": "a2", "backend": {"type": "fake"}},
+        {"id": "a2", "backend": {"type": "scripted"}},
         {"id": "a3", "backend": {"type": "openai", "api_key_env": "SECOND"}},
     ]
     result = _find_existing_provider_config(agents, "openai")
@@ -839,7 +839,7 @@ def test_find_existing_provider_config_no_match():
     """_find_existing_provider_config returns None when no match."""
     from agent_augury.wizard import _find_existing_provider_config
     agents = [
-        {"id": "a1", "backend": {"type": "fake"}},
+        {"id": "a1", "backend": {"type": "scripted"}},
     ]
     assert _find_existing_provider_config(agents, "openai") is None
 

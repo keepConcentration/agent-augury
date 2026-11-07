@@ -21,11 +21,18 @@ requires_openai = pytest.mark.skipif(
 )
 
 
-def build_cfg(**overrides):
-    """Build a valid config dict for Session.from_config, bypassing load_config.
+@pytest.fixture(autouse=True)
+def _scripted_backend_type(monkeypatch):
+    """``type: scripted`` is a test-only backend (``tests/scripted.py``)."""
+    from tests.scripted import install
 
-    Use this for tests that need fake backends (which are not valid in
-    production configs after the fake-backend removal from _VALID_BACKEND_TYPES).
+    install(monkeypatch.setattr)
+
+
+def build_cfg(**overrides):
+    """Build a config dict for Session.from_config, bypassing load_config.
+
+    Agents usually use the test-only ``type: scripted`` backend.
     """
     cfg: dict = {
         "max_steps": 20,

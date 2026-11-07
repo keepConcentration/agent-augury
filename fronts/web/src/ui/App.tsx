@@ -1,6 +1,6 @@
 /** Web Surface app shell (WBS 3.1) and timeline (3.2) — 09 §2·§3.1~3.3·§3.9. */
 
-import {useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode} from "react";
+import {memo, useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode} from "react";
 import {authLink} from "./auth.js";
 import {outcome, plan} from "./compose.js";
 import {claim, openStream, sendCommand, session, start, takeFragmentToken, type Session} from "./connection.js";
@@ -18,6 +18,7 @@ import {
 } from "./controls.js";
 import {escAction, isCardShortcut} from "./keys.js";
 import {Markdown} from "./markdown.js";
+import {VirtualList, type ListHandle} from "./virtual.js";
 import {
   STATUS_LABEL,
   applyEcho,
@@ -64,7 +65,7 @@ function AuthText({text}: {text: string}) {
   );
 }
 
-function TimelineRow({row}: {row: Row}) {
+const TimelineRow = memo(function TimelineRow({row}: {row: Row}) {
   const className = `row tone-${row.tone}${row.kind === "gap" ? " gap" : ""}`;
   return row.kind === "markdown" ? (
     <div className={className}>
@@ -73,53 +74,49 @@ function TimelineRow({row}: {row: Row}) {
   ) : (
     <div className={className}>{row.text}</div>
   );
-}
+});
 
-/** Follows the bottom unless the user scrolled up; then counts what arrived (09 §3.3). */
+const renderRow = (row: Row) => <TimelineRow row={row} />;
+
+/** Follows the bottom unless the user scrolled up; then counts what arrived (09 §3.3).
+ * Only rows near the viewport are in the DOM (3.3, N-008 — see virtual.tsx). */
 function Timeline({rows, dock}: {rows: Row[]; dock: ReactNode}) {
-  const box = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
+  const list = useRef<ListHandle | null>(null);
+  const following = useRef(true);
   const seen = useRef(rows.length);
   const [unseen, setUnseen] = useState(0);
   useLayoutEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    if (atBottom.current) {
-      el.scrollTop = el.scrollHeight;
+    if (following.current) {
       seen.current = rows.length;
-      setUnseen(0);
     } else {
       setUnseen(rows.length - seen.current);
     }
   }, [rows.length]);
-  const toBottom = () => {
-    const el = box.current;
-    if (el) el.scrollTop = el.scrollHeight;
-    atBottom.current = true;
-    seen.current = rows.length;
-    setUnseen(0);
-  };
+  const onFollowChange = useCallback(
+    (f: boolean) => {
+      following.current = f;
+      if (f) {
+        seen.current = rows.length;
+        setUnseen(0);
+      }
+    },
+    [rows.length],
+  );
+  const toBottom = () => list.current?.toBottom();
   return (
     <div className="timeline-wrap">
-      <div
-        className="timeline"
-        ref={box}
-        tabIndex={0}
-        aria-label="타임라인"
-        onScroll={(ev) => {
-          const el = ev.currentTarget;
-          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-          if (atBottom.current) {
-            seen.current = rows.length;
-            setUnseen(0);
-          }
+      <VirtualList
+        items={rows}
+        render={renderRow}
+        handle={list}
+        onFollowChange={onFollowChange}
+        boxProps={{
+          className: "timeline",
+          tabIndex: 0,
+          "aria-label": "타임라인",
+          onKeyDown: (ev) => ev.key === "End" && toBottom(),
         }}
-        onKeyDown={(ev) => ev.key === "End" && toBottom()}
-      >
-        {rows.map((row) => (
-          <TimelineRow key={row.key} row={row} />
-        ))}
-      </div>
+      />
       {unseen > 0 && (
         <button className="new-chip" onClick={toBottom}>
           ↓ 새 이벤트 {unseen}건

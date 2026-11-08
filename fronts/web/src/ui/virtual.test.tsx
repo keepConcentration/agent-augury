@@ -50,25 +50,69 @@ test("followAfterScroll: end follows; only a move up leaves; growth under a pin 
 });
 
 type Item = {key: number; text: string};
-let ui: {render: (el: React.ReactElement) => void; root: HTMLElement; unmount: () => void};
+type Mounted = {render: (el: React.ReactElement) => void; root: HTMLElement; unmount: () => void};
+let createRoot: typeof import("react-dom/client").createRoot;
+let act: typeof import("react").act;
 
-before(async () => {
-  GlobalRegistrator.register();
-  const {createRoot} = await import("react-dom/client");
-  const {act} = await import("react");
-  (globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
+/** A fresh host per test, removed again by ``unmount``. */
+function mount(): Mounted {
   const root = document.createElement("div");
   document.body.appendChild(root);
   const r = createRoot(root);
-  ui = {render: (el) => act(() => r.render(el)), root, unmount: () => act(() => r.unmount())};
+  return {
+    render: (el) => act(() => r.render(el)),
+    root,
+    unmount: () => {
+      act(() => r.unmount());
+      root.remove();
+    },
+  };
+}
+
+/** Records observers so a test can drive measuring by hand. */
+class FakeRO {
+  static made: FakeRO[] = [];
+  observed = new Set<Element>();
+  live = true;
+  constructor(readonly cb: ResizeObserverCallback) {
+    FakeRO.made.push(this);
+  }
+  observe(el: Element) {
+    if (this.live) this.observed.add(el);
+  }
+  unobserve(el: Element) {
+    this.observed.delete(el);
+  }
+  disconnect() {
+    this.live = false;
+    this.observed.clear();
+  }
+}
+
+async function withFakeRO(fn: () => void | Promise<void>) {
+  const real = globalThis.ResizeObserver;
+  FakeRO.made = [];
+  globalThis.ResizeObserver = FakeRO as unknown as typeof ResizeObserver;
+  try {
+    await fn();
+  } finally {
+    globalThis.ResizeObserver = real;
+  }
+}
+
+before(async () => {
+  GlobalRegistrator.register();
+  ({createRoot} = await import("react-dom/client"));
+  ({act} = await import("react"));
+  (globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
 after(async () => {
-  ui.unmount();
   await GlobalRegistrator.unregister();
 });
 
 test("VirtualList: 5000 rows put a bounded window in the DOM, starting at the end; rows are not re-rendered", () => {
+  const ui = mount();
   let renders = 0;
   const render = (it: Item) => {
     renders++;
@@ -89,52 +133,44 @@ test("VirtualList: 5000 rows put a bounded window in the DOM, starting at the en
   assert.equal(keys().at(-1), 5001);
   assert.equal(renders, 1, "existing rows kept");
   assert.equal(keys().includes(1), false, "the start is not in the DOM");
+  ui.unmount();
 });
 
 test("VirtualList under StrictMode: every rendered row stays observed after the effect re-runs (review M1)", async () => {
   const {StrictMode} = await import("react");
-  const made: FakeRO[] = [];
-  class FakeRO {
-    observed = new Set<Element>();
-    live = true;
-    constructor(_cb: ResizeObserverCallback) {
-      made.push(this);
-    }
-    observe(el: Element) {
-      if (this.live) this.observed.add(el);
-    }
-    unobserve(el: Element) {
-      this.observed.delete(el);
-    }
-    disconnect() {
-      this.live = false;
-      this.observed.clear();
-    }
-  }
-  const real = globalThis.ResizeObserver;
-  globalThis.ResizeObserver = FakeRO as unknown as typeof ResizeObserver;
-  try {
-    ui.unmount();
-    const {createRoot} = await import("react-dom/client");
-    const {act} = await import("react");
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const r = createRoot(host);
+  await withFakeRO(() => {
+    const ui = mount();
     const items = Array.from({length: 10}, (_, i) => ({key: i + 1, text: `row ${i + 1}`}));
-    act(() =>
-      r.render(
-        <StrictMode>
-          <VirtualList items={items} render={(it: Item) => <div>{it.text}</div>} />
-        </StrictMode>,
-      ),
+    ui.render(
+      <StrictMode>
+        <VirtualList items={items} render={(it: Item) => <div>{it.text}</div>} />
+      </StrictMode>,
     );
-    const rows = Array.from(host.querySelectorAll("[data-key]"));
+    const rows = Array.from(ui.root.querySelectorAll("[data-key]"));
     assert.equal(rows.length, 10);
-    const watching = (el: Element) => made.some((ro) => ro.live && ro.observed.has(el));
+    const watching = (el: Element) => FakeRO.made.some((ro) => ro.live && ro.observed.has(el));
     assert.ok(rows.every(watching), "a live ResizeObserver watches every row");
-    act(() => r.unmount());
-    assert.ok(made.every((ro) => !ro.live), "unmount disconnects");
-  } finally {
-    globalThis.ResizeObserver = real;
-  }
+    ui.unmount();
+    assert.ok(FakeRO.made.every((ro) => !ro.live), "unmount disconnects");
+  });
+});
+
+test("VirtualList: a new list reusing old keys does not inherit their measured heights (BFF restart)", async () => {
+  await withFakeRO(() => {
+    const ui = mount();
+    const render = (it: Item) => <div>{it.text}</div>;
+    const list = (n: number, tag: string) => Array.from({length: n}, (_, i) => ({key: i + 1, text: `${tag} ${i + 1}`}));
+    ui.render(<VirtualList items={list(10, "old")} render={render} />);
+    // Measure every row at 100px through the row observer (the one watching rows).
+    const rowRO = FakeRO.made.find((ro) => ro.live && ro.observed.size > 1)!;
+    const nodes = [...rowRO.observed] as HTMLElement[];
+    for (const n of nodes) Object.defineProperty(n, "offsetHeight", {configurable: true, value: 100});
+    act(() => rowRO.cb(nodes.map((target) => ({target}) as unknown as ResizeObserverEntry), rowRO as unknown as ResizeObserver));
+    const height = () => ui.root.querySelector<HTMLElement>(".vlist")!.style.height;
+    assert.equal(height(), "1000px", "measured");
+
+    ui.render(<VirtualList items={list(3, "new")} render={render} />);
+    assert.equal(height(), `${3 * ESTIMATE_PX}px`, "the new rows start from the estimate");
+    ui.unmount();
+  });
 });

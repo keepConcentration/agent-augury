@@ -124,6 +124,15 @@ export function VirtualList<T extends {key: number}>({items, render, boxProps, h
   const onFollowRef = useRef(onFollowChange);
   onFollowRef.current = onFollowChange;
 
+  // A new first row means a new list (the BFF restarted and the model began
+  // again): its keys restart too, so heights measured for the old rows no
+  // longer belong to them. Rows are otherwise only appended.
+  const first = useRef<T | undefined>(undefined);
+  if (items[0] !== first.current) {
+    first.current = items[0];
+    heights.current.clear();
+  }
+
   const tops = layout(
     items.map((it) => it.key),
     heights.current,
@@ -227,13 +236,11 @@ export function VirtualList<T extends {key: number}>({items, render, boxProps, h
     pendingShift.current = 0;
   });
 
+  // Render the end window first; the layout effect then pins. Moving scrollTop
+  // before the end rows exist would show blank space until the next frame.
   const toBottom = useCallback(() => {
-    const el = box.current;
     setFollowing(true);
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-      pinned.current = el.scrollTop;
-    }
+    flushSync(() => setVersion((v) => v + 1));
   }, [setFollowing]);
   if (handle) handle.current = {toBottom};
 
@@ -244,7 +251,7 @@ export function VirtualList<T extends {key: number}>({items, render, boxProps, h
     boxProps?.onScroll?.(ev);
   };
 
-  // Forget heights of rows that left the list (keys are never reused).
+  // Forget heights of rows that left the list.
   if (heights.current.size > items.length * 2) {
     for (const k of heights.current.keys()) {
       if (!index.current.has(k)) heights.current.delete(k);

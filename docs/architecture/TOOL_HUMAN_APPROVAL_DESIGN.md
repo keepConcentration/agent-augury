@@ -64,7 +64,7 @@ Hermes `smart` LLM 분류·orchestrator `gate.sh` 전면 워커 게이트는 P0�
 4. 사람 grant/deny → 요청 에이전트 inbox → 다음 `step()`에서 `[radio]`로 흡수.
 5. **GRANTED + 토큰 유효**일 때만 부작용을 실행하고 결과를 inbox/radio로 전달한다.
 6. interact surface가 없으면 **즉시 DENIED** (`no_approval_channel`) — hang 금지.
-7. `--demo` / 테스트 bypass로 결정론 테스트 유지.
+7. ~~`--demo` /~~ 테스트 bypass로 결정론 테스트 유지. (2026-11-07 `--demo` 제거 — bypass 는 `tools.approval.bypass: true` 또는 `approval_bypass=` — §4.8)
 8. 감사 이벤트: `approval.granted` / `tool.denied` / `approval.expired`.
 
 ### 2.2 비목표 (P0)
@@ -83,7 +83,7 @@ Hermes `smart` LLM 분류·orchestrator `gate.sh` 전면 워커 게이트는 P0�
 - 정책 `require`인 도구는 토큰 없이 subprocess/파일 I/O가 **한 번도** 돌지 않는다 (테스트로 증명).
 - 승인 대기 중 **다른 에이전트**는 계속 step 가능하다.
 - interact surface 0개 + `require` → 첫 호출이 `denied`/`no_approval_channel`.
-- `--demo` 세션의 기존 fake E2E가 승인에 걸리지 않는다.
+- ~~`--demo` 세션의 기존 fake E2E가 승인에 걸리지 않는다.~~ (2026-11-07 `--demo`·fake 제거 — bypass 를 켠 scripted 테스트가 승인에 걸리지 않는다, §4.8)
 
 ---
 
@@ -336,7 +336,7 @@ Core 이벤트 또는 Wire:
 4. digest 불일치 grant 시도 → deny  
 5. TTL 만료 → expired radio  
 6. 동일 args 재호출 → approval_id 합류  
-7. `--demo` bypass → 기존 E2E 통과  
+7. ~~`--demo`~~ bypass(`tools.approval.bypass: true`) → 기존 E2E 통과 (2026-11-07 `--demo` 제거)  
 8. 에이전트 A pending 중 에이전트 B step 계속 (비차단)
 
 ### 5.4 롤아웃
@@ -365,7 +365,7 @@ Core 이벤트 또는 Wire:
 - [x] grant 시 부작용 실행 + inbox 결과  *(M1)*
 - [x] Wire `approval.request` / resolve + 감사 이벤트 스키마·Core 발행  *(M0–M2: Bridge `approval.resolve` 라우팅 포함)*
 - [x] interact surface 없음 → 즉시 deny  *(M1)*
-- [x] `--demo` / `bypass`  *(M1: `Session.from_config(approval_bypass=…)` / `session_stdio --demo`)*
+- [x] ~~`--demo` /~~ `bypass`  *(M1: `Session.from_config(approval_bypass=…)`; `session_stdio --demo` 는 2026-11-07 제거 — `tools.approval.bypass: true`)*
 - [x] TTL → `DENIED(reason=expired)` radio  *(M1: `Session.expire_approvals`)*
 - [x] Ink 승인 UI (최소 Approve/Deny)  *(M2)*
 - [x] Discord inbound로 resolve (있으면)  *(M3)*

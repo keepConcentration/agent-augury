@@ -2,6 +2,7 @@
 #
 # Needs a real model (OPENAI_API_KEY, or change the backends):
 #   agent-augury --config examples/demo.yaml   # Ink Surface (default)
+#   (a second run resumes the saved session; add --new-session to start over)
 #
 # Idea: agent-2 opens a thread and pushes an URGENT correction; agent-1 is
 # mid-work, absorbs it passively as a [radio] turn at the next step boundary,

@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import {spawnSync} from "node:child_process";
 import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import {request as httpRequest, type IncomingMessage} from "node:http";
 import {tmpdir} from "node:os";
@@ -21,11 +22,14 @@ const TOKEN = "i".repeat(43);
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const python = resolvePython(process.env);
-// Locally a missing .venv skips; in CI (env CI) it fails, so a green run means these ran (5.6).
-if (process.env.CI && !existsSync(python)) {
-  throw new Error(`integration tests need the repo .venv in CI (looked for ${python})`);
+// The resolver may fall back to a bare ``python3``: ask the interpreter itself
+// whether it can run the Gateway rather than looking for a file.
+const usable = spawnSync(python, ["-c", "import agent_augury"], {stdio: "ignore"}).status === 0;
+// Locally an unusable Python skips; in CI (env CI) it fails, so a green run means these ran (5.6).
+if (process.env.CI && !usable) {
+  throw new Error(`integration tests need a Python with agent_augury in CI (tried ${python}; set AUGURY_PYTHON)`);
 }
-const skip = !existsSync(python) && "no repo .venv";
+const skip = !usable && `no Python with agent_augury (${python})`;
 const skipSignals = skip || (process.platform === "win32" && "SIGSTOP is POSIX-only");
 const FIXTURE = join(repoRoot, "fronts", "web", "test", "fixtures", "approval.yaml");
 
@@ -52,7 +56,13 @@ function http(port: number, method: string, path: string, opts: {cookie?: string
         res.on("data", (c) => (data += c));
         res.on("end", () => {
           const set = res.headers["set-cookie"];
-          resolve({status: res.statusCode ?? 0, body: data ? JSON.parse(data) : null, cookie: set ? String(set).split(";")[0] : null});
+          let body: any = null;
+          try {
+            body = data ? JSON.parse(data) : null;
+          } catch {
+            return reject(new Error(`${method} ${path}: ${res.statusCode} with a non-JSON body: ${data.slice(0, 200)}`));
+          }
+          resolve({status: res.statusCode ?? 0, body, cookie: set ? String(set).split(";")[0] : null});
         });
       },
     );
@@ -73,6 +83,10 @@ class Tab {
   open(): Promise<this> {
     return new Promise((resolve, reject) => {
       const req = httpRequest({host: "127.0.0.1", port: this.port, path: `/api/events?tab=${this.id}`, headers: {Cookie: this.cookie}}, (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`SSE for tab ${this.id}: HTTP ${res.statusCode}`));
+        }
         this.res = res;
         res.setEncoding("utf8");
         res.on("data", (chunk: string) => {
@@ -133,6 +147,11 @@ function alive(pid: number): boolean {
 
 type Rig = {bff: Bff; stub: StubModel; a: Tab; b: Tab; root: string; secrets: string; gatewayPid: number; done: () => Promise<void>};
 
+/** Resolve body for a card: the revision is the one the tab was shown (08 §4.4 M3). */
+function resolve(card: {approval_id: string; revision: number}, decision: "granted" | "denied") {
+  return {type: "approval.resolve", approval_id: card.approval_id, revision: card.revision, decision};
+}
+
 /** BFF + real session child on the approval fixture; tab A controls, tab B watches. */
 async function rig(cmdTimeoutMs?: number): Promise<Rig> {
   // Undo in reverse order of creation, each step on its own: a failed setup
@@ -179,7 +198,9 @@ async function rig(cmdTimeoutMs?: number): Promise<Rig> {
       },
     });
     undo.push(() => bff.shutdown());
-    const gatewayPid = bff.gateway.pid ?? 0;
+    // Checked here: process.kill(0, …) would signal this runner's own process group.
+    const gatewayPid = bff.gateway.pid;
+    if (!gatewayPid) throw new Error("Gateway child has no pid");
     const ex = await http(bff.port, "POST", "/api/auth/exchange", {body: {token: TOKEN}});
     assert.equal(ex.status, 204);
     const a = await new Tab(A, bff.port, ex.cookie!).open();
@@ -215,11 +236,11 @@ test("approval end to end: real child asks, read-only tab is refused, controller
     assert.equal(second.args_preview["cwd\ncommand"], "/tmp");
 
     // DW-7: only the controller tab may decide.
-    const refused = await b.cmd({type: "approval.resolve", approval_id: first.approval_id, decision: "granted"});
+    const refused = await b.cmd(resolve(first, "granted"));
     assert.deepEqual([refused.status, refused.body.error.code], [409, "not_controller"]);
     assert.equal(existsSync(join(r.root, "granted.txt")), false, "a refused click writes nothing");
 
-    const granted = await a.cmd({type: "approval.resolve", approval_id: first.approval_id, decision: "granted"});
+    const granted = await a.cmd(resolve(first, "granted"));
     assert.deepEqual([granted.status, granted.body.failed], [200, false]);
     await until(() => existsSync(join(r.root, "granted.txt")), "granted file");
     assert.equal(readFileSync(join(r.root, "granted.txt"), "utf8"), "approved by a human\n");
@@ -227,10 +248,10 @@ test("approval end to end: real child asks, read-only tab is refused, controller
     // The card goes when approval.resolved arrives; wait for it rather than
     // relying on the child writing the result after the event on one pipe.
     await until(() => !a.state().pending_approvals.some((p: any) => p.approval_id === first.approval_id), "first card gone");
-    const again = await a.cmd({type: "approval.resolve", approval_id: first.approval_id, decision: "granted"});
+    const again = await a.cmd(resolve(first, "granted"));
     assert.deepEqual([again.status, again.body.error.code], [409, "not_pending"]);
 
-    const denied = await a.cmd({type: "approval.resolve", approval_id: second.approval_id, decision: "denied"});
+    const denied = await a.cmd(resolve(second, "denied"));
     assert.deepEqual([denied.status, denied.body.failed], [200, false]);
     await until(() => a.state().pending_approvals.length === 0 && b.state().pending_approvals.length === 0, "cards gone in both tabs");
     assert.equal(existsSync(join(r.root, DISGUISED_PATH)), false, "denied write never happens");
@@ -258,12 +279,14 @@ test("504 then late_result: a slow result is not lost, the approval still lands"
   try {
     const {a} = r;
     await until(() => a.state().pending_approvals.length === 2, "approval requests");
-    const first = a.state().pending_approvals[0];
+    // By path, not position: the order of the two requests is not the point here.
+    const first = a.state().pending_approvals.find((p: any) => p.args_preview.path === "granted.txt");
+    assert.ok(first, "the granted.txt request is pending");
     // A stopped child cannot answer in time: the BFF must say "result unknown" (08 §6.2).
     process.kill(r.gatewayPid, "SIGSTOP");
     let slow;
     try {
-      slow = await a.cmd({type: "approval.resolve", approval_id: first.approval_id, decision: "granted"});
+      slow = await a.cmd(resolve(first, "granted"));
     } finally {
       process.kill(r.gatewayPid, "SIGCONT");
     }

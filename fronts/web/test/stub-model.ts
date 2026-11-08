@@ -58,7 +58,7 @@ export async function startStubModel(script: Turn[] = APPROVAL_SCRIPT): Promise<
               tool_calls: [{id: `call-${calls}`, type: "function", function: {name: turn.tool, arguments: JSON.stringify(turn.args)}}],
             };
       res.writeHead(200, {"Content-Type": "application/json"});
-      res.end(JSON.stringify({id: `stub-${calls}`, object: "chat.completion", choices: [{index: 0, message, finish_reason: "stop"}]}));
+      res.end(JSON.stringify({id: `stub-${calls}`, object: "chat.completion", choices: [{index: 0, message, finish_reason: typeof turn === "string" ? "stop" : "tool_calls"}]}));
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

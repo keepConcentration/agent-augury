@@ -288,7 +288,6 @@ class HeadlessRunner:
 def run_headless_session(
     config: str,
     *,
-    demo: bool = False,
     quiet: bool = False,
     auto_start: bool = True,
     new_session: bool = False,
@@ -300,15 +299,13 @@ def run_headless_session(
         print(f"error: config not found: {cfg_path}", file=sys.stderr)
         return 1
 
-    cfg = load_config(str(cfg_path), allow_fake=demo)
+    cfg = load_config(str(cfg_path))
     session = Session.open_from_config(
         cfg,
         config_path=str(cfg_path),
-        demo=demo,
         new_session=new_session,
         cli_session_id=session_id,
         allowed_roots=[str(PROJECT_ROOT)],
-        approval_bypass=bool(demo),
     )
     # D1: after hydrate, idle-wait for next human message (no auto-continue).
     boot = session._pending_bootstrap

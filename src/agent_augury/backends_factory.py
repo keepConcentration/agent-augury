@@ -10,25 +10,11 @@ from typing import Any
 from .auth.oauth import NOUS_PORTAL_CONFIG
 from .auth.token_store import TokenStore
 from .backend.anthropic import AnthropicBackend
-from .backend.base import Completion, ModelBackend, ToolCall
-from .backend.fake import FakeModelBackend
+from .backend.base import ModelBackend
 from .backend.nous_portal import NousPortalBackend
 from .backend.nous_portal_oauth import NousPortalOAuthBackend
 from .backend.openai_compat import OpenAICompatBackend
 from .model_listing import ModelInfo
-
-
-def _completion_from_spec(entry: Any) -> Completion:
-    """Config entry → Completion. String = final text; dict may hold tool_calls."""
-    if isinstance(entry, str):
-        return Completion(text=entry)
-    if isinstance(entry, dict):
-        calls = [
-            ToolCall(id=f"cfg-{i}", name=c["name"], arguments=dict(c.get("arguments") or {}))
-            for i, c in enumerate(entry.get("tool_calls") or [])
-        ]
-        return Completion(text=entry.get("text"), tool_calls=calls)
-    raise ValueError(f"cannot interpret script entry: {entry!r}")
 
 
 def _api_key_from_env(spec: dict[str, Any]) -> str:
@@ -56,8 +42,6 @@ def build_backend(
     backend then falls back to its own print path).
     """
     btype = spec.get("type")
-    if btype == "fake":
-        return FakeModelBackend([_completion_from_spec(e) for e in spec.get("script", [])])
     if btype == "openai":
         base_url = spec.get("base_url")
         if not base_url:

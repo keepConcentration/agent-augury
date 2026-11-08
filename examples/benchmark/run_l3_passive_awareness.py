@@ -9,7 +9,7 @@ Scenario (DESIGN.md §6, examples/benchmark/README.md):
     agent-a는 search를 N회 이상 수행 AND 최종 답 = 43
     정정은 [radio] 블록으로 step 경계에서 자동 흡수 (전경 wait 없음)
 
-Offline · deterministic — FakeModelBackend로 tool 시퀀스를 고정하고,
+Offline · deterministic — 아래 _ReplayBackend(벤치마크 전용 재생기)로 tool 시퀀스를 고정하고,
 수동 인터리빙으로 제어한다 (실제 LLM의 wall-clock 벤치마크는 Phase 2).
 
 실행:
@@ -28,10 +28,27 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from agent_augury.backend.base import Completion, ToolCall
-from agent_augury.backend.fake import FakeModelBackend
+from agent_augury.backend.base import Completion, ModelBackend, ToolCall
 from agent_augury.core.agent.loop import AgentLoop, LocalTool
 from agent_augury.core.server import MessageServer
+
+
+class _ReplayBackend(ModelBackend):
+    """Benchmark-only: returns the given completions in order (no model, no network).
+
+    The product has no offline backend; this replay keeps the benchmark
+    deterministic. ``calls`` records what the agent was shown.
+    """
+
+    def __init__(self, script: list[Completion]) -> None:
+        self.script = list(script)
+        self.calls: list[dict] = []
+
+    async def complete(self, messages, tools) -> Completion:
+        completion = self.script.pop(0)
+        self.calls.append({"messages": messages, "tools": tools})
+        return completion
+
 
 SEARCH_SCHEMA = {
     "type": "object",
@@ -67,7 +84,7 @@ async def run_l3_scenario(search_rounds: int = 3) -> dict:
     agent_a = AgentLoop(
         agent_id="agent-a",
         server=server,
-        backend=FakeModelBackend(agent_a_script),
+        backend=_ReplayBackend(agent_a_script),
         system_prompt="You are agent-a, a radio agent searching for the answer.",
         local_tools=[
             LocalTool(
@@ -83,7 +100,7 @@ async def run_l3_scenario(search_rounds: int = 3) -> dict:
     agent_b = AgentLoop(
         agent_id="agent-b",
         server=server,
-        backend=FakeModelBackend(
+        backend=_ReplayBackend(
             [
                 Completion(
                     tool_calls=[

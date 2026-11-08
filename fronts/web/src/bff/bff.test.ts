@@ -78,9 +78,9 @@ async function connect(port: number, token: string) {
 
 test("flagsFromEnv mirrors the CLI env (API-03 flags)", () => {
   assert.deepEqual(flagsFromEnv({AUGURY_DEMO: "1", AUGURY_NO_AUTO_START: "true", AGENT_AUGURY_SESSION: "s1"}), {
-    demo: true, no_auto_start: true, plan_first: false, session: "s1",
+    no_auto_start: true, plan_first: false, session: "s1",
   });
-  assert.deepEqual(flagsFromEnv({}), {demo: false, no_auto_start: false, plan_first: false, session: null});
+  assert.deepEqual(flagsFromEnv({}), {no_auto_start: false, plan_first: false, session: null});
 });
 
 test("an unstartable child (team planner) fails before the server listens", async () => {

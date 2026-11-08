@@ -127,7 +127,7 @@ def test_session_from_surfaces_expanded_config(tmp_path, monkeypatch):
             {
                 "id": "a1",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": [{"text": "ok"}],
                 },
             }

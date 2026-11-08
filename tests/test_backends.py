@@ -5,8 +5,8 @@ import json
 import httpx
 import pytest
 
-from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.backend.openai_compat import OpenAICompatBackend
+from tests.scripted import ScriptedBackend
 
 
 def make_backend(handler):
@@ -139,7 +139,7 @@ async def test_network_error_returns_structured_error():
 async def test_fake_backend_replays_script_and_records_calls():
     from agent_augury.backend.base import Completion
 
-    fake = FakeModelBackend([Completion(text="one"), Completion(text="two")])
+    fake = ScriptedBackend([Completion(text="one"), Completion(text="two")])
     assert (await fake.complete([], [])).text == "one"
     assert (await fake.complete([], [])).text == "two"
     assert fake.call_count == 2

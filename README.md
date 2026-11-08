@@ -174,7 +174,6 @@ Backends share one interface. Mix providers per agent:
 - Anthropic Messages API (`type: anthropic`, Console API key — not claude.ai subscription)
 - Nous Portal (API key)
 - Nous Portal (OAuth device code)
-- `type: fake` only with `--demo` (tests / offline examples)
 
 Secrets stay in environment variables; YAML stores env **names** only.
 
@@ -217,17 +216,15 @@ agent-augury
 agent-augury --config examples/consensus_openai.yaml
 ```
 
-Offline / CI-style example (scripted backends):
+More examples (each needs a real model — `OPENAI_API_KEY` by default):
 
 ```bash
-agent-augury --demo --config examples/demo.yaml
+agent-augury --config examples/demo.yaml               # passive [radio] correction
+agent-augury --config examples/p1_to_p5_protocol.yaml  # P1~P5 protocol
 ```
 
-Protocol example:
-
-```bash
-agent-augury --demo --config examples/p1_to_p5_protocol.yaml
-```
+There is no offline/scripted backend in the product; the test suite uses its
+own scripted test double (`tests/scripted.py`).
 
 ### Headless (no Ink)
 
@@ -252,7 +249,7 @@ Interrupt + process exit used to wipe agent memory. Checkpoints now persist unde
 `~/.agent-augury/sessions/<id>/` (conversation, protocol phase, MessageServer DB,
 pending approvals).
 
-- **Default on** for headless and Ink (`--demo` disables)
+- **Default on** for headless and Ink; turn off per config with `session.checkpoint.enabled: false`
 - Reboot → hydrate → **idle-wait**; next message is **appended** (even if identical)
 - Fresh work: `--new-session` or `AGENT_AUGURY_NEW_SESSION=1`
 - Pin id: `--session <id>` / `AGENT_AUGURY_SESSION`
@@ -314,7 +311,7 @@ writes through unattended. Use `require` to gate every write.
 - **`off`**: no approval prompts (still subject to shell allow/block and `allowed_roots`)
 - **Ink**: approval card → type `1`/`approve` or `2`/`deny`
 - **Discord inbound** (`bots[].inbound: true`): Approve/Deny **buttons** per request (preferred); text `1`/`2` = oldest pending only
-- **`--demo`**: bypasses approval (scripted / CI runs)
+- **`tools.approval.bypass: true`**: grants every gated call without asking (only for configs you trust)
 - Observe-only mirrors are **not** an approval channel; with no interact surface, gated tools are denied (`no_approval_channel`)
 
 Design notes: [`docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`](docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md)
@@ -326,7 +323,6 @@ Design notes: [`docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`](docs/architect
 | Flag | Description |
 |------|-------------|
 | `--config <yaml>` | Run from YAML (skips wizard) |
-| `--demo` | Allow `type: fake` backends (offline / tests) |
 | `--reconfigure` | Re-run wizard (with `--headless`: then boot Core without Ink) |
 | `--output <path>` | Wizard output path (only without `--config`) |
 | `--quiet` | Suppress live event noise |

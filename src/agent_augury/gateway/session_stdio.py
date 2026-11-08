@@ -3,7 +3,7 @@
 Topology::
 
     fronts/ink (Node)  --spawn-->  python -m agent_augury.gateway.session_stdio \\
-                                      --config PATH [--demo]
+                                      --config PATH
       keyboard = process.stdin           child stdin  <- commands (JSONL)
       render   = process.stdout          child stdout -> events/results (JSONL)
 
@@ -483,12 +483,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="path to session YAML",
     )
     p.add_argument(
-        "--demo",
-        action="store_true",
-        default=False,
-        help="allow type:fake backends",
-    )
-    p.add_argument(
         "--quiet",
         action="store_true",
         default=False,
@@ -537,17 +531,15 @@ def main(argv: list[str] | None = None) -> int:
         args.new_session = True
         args.session = None
 
-    cfg = load_config(cfg_path, allow_fake=args.demo)
+    cfg = load_config(cfg_path)
     auth_relay = _WireAuthNoticeRelay()
     session = Session.open_from_config(
         cfg,
         config_path=cfg_path,
-        demo=args.demo,
         new_session=bool(args.new_session),
         cli_session_id=args.session,
         allowed_roots=[str(PROJECT_ROOT)],
         on_user_code=auth_relay,
-        approval_bypass=bool(args.demo),
     )
     auto_start = not args.no_auto_start
     boot = session._pending_bootstrap

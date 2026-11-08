@@ -60,9 +60,6 @@ export function resolveGatewayArgs(): string[] {
       throw new Error("AUGURY_GATEWAY_MODE=session requires AUGURY_CONFIG");
     }
     const args = ["-m", "agent_augury.gateway.session_stdio", "--config", config];
-    if (process.env.AUGURY_DEMO === "1" || process.env.AUGURY_DEMO === "true") {
-      args.push("--demo");
-    }
     if (process.env.AUGURY_QUIET === "1" || process.env.AUGURY_QUIET === "true") {
       args.push("--quiet");
     }

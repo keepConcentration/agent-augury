@@ -49,13 +49,13 @@ def _cfg(tmp_path: Path, sessions_dir: Path) -> dict:
         "agents": [
             {
                 "id": "a1",
-                "backend": {"type": "fake", "script": [{"text": "ok"}]},
+                "backend": {"type": "scripted", "script": [{"text": "ok"}]},
             }
         ],
     }
     path = tmp_path / "s.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    return load_config(path, allow_fake=True)
+    return load_config(path)
 
 
 def test_approval_store_export_import():
@@ -119,7 +119,7 @@ def test_quarantine_on_corrupt_json(tmp_path: Path):
     (d / "conversations.json").write_text("{}", encoding="utf-8")
 
     cfg = {
-        "agents": [{"id": "a1", "backend": {"type": "fake", "script": ["ok"]}}],
+        "agents": [{"id": "a1", "backend": {"type": "scripted", "script": ["ok"]}}],
         "session": {"checkpoint": {"dir": str(sessions), "enabled": True}},
     }
     # load_config not needed; bootstrap takes raw-like dict with agents

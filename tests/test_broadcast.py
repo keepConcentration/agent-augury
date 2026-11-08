@@ -6,6 +6,7 @@ import io
 import os
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 from agent_augury.cli import _mask_sensitive
@@ -92,7 +93,7 @@ async def test_server_subscribe_events_isolates_from_subscribers():
 
 
 # ---------------------------------------------------------------------------
-# CLI --quiet / --demo → Ink Surface
+# CLI --quiet → Ink Surface (--demo removed)
 # ---------------------------------------------------------------------------
 
 
@@ -135,22 +136,20 @@ def test_cli_quiet_flag_default_false():
     assert calls[0]["quiet"] is False
 
 
-def test_cli_demo_flag_passed():
-    """--demo must reach _run_ink_surface(demo=True) when --config is used."""
+def test_cli_demo_flag_removed():
+    """--demo was removed: argparse rejects it (exit 2) and Ink is not started."""
     from agent_augury.cli import main
 
     calls, fake_ink = _make_ink_recorder()
-    with patch("agent_augury.cli._run_ink_surface", fake_ink):
-        result = main(["--config", "fake.yaml", "--demo"])
+    with patch("agent_augury.cli._run_ink_surface", fake_ink), pytest.raises(SystemExit) as exc:
+        main(["--config", "fake.yaml", "--demo"])
 
-    assert result == 0
-    assert len(calls) == 1
-    assert calls[0]["demo"] is True
-    assert calls[0]["config"] == "fake.yaml"
+    assert exc.value.code == 2
+    assert calls == []
 
 
-def test_cli_demo_flag_default_false():
-    """Without --demo, _run_ink_surface must receive demo=False."""
+def test_cli_ink_kwargs_have_no_demo():
+    """The Ink launcher no longer takes a demo switch."""
     from agent_augury.cli import main
 
     calls, fake_ink = _make_ink_recorder()
@@ -158,15 +157,14 @@ def test_cli_demo_flag_default_false():
         result = main(["--config", "fake.yaml"])
 
     assert result == 0
-    assert len(calls) == 1
-    assert calls[0]["demo"] is False
+    assert "demo" not in calls[0]
 
 
 VALID_MODEL_CONFIG = {
     "mode": "L3",
     "max_steps": 10,
     "agents": [
-        {"id": "agent-1", "backend": {"type": "fake", "script": ["done"]}},
+        {"id": "agent-1", "backend": {"type": "scripted", "script": ["done"]}},
     ],
 }
 
@@ -221,7 +219,7 @@ def test_wizard_flow_preserves_attention_on_new_session(tmp_path):
         "task: keep-me\n"
         "agents:\n"
         "  - id: old\n"
-        "    backend: {type: fake, script: [x]}\n",
+        "    backend: {type: scripted, script: [x]}\n",
         encoding="utf-8",
     )
     calls, fake_ink = _make_ink_recorder()

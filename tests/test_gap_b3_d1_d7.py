@@ -155,7 +155,7 @@ def test_b1_session_phase_publishes_wire(tmp_path, monkeypatch):
             {
                 "id": "a1",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": [{"text": "done"}],
                 },
             }
@@ -185,7 +185,7 @@ def test_b2_publish_session_error_wire(tmp_path, monkeypatch):
             {
                 "id": "a1",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": [{"text": "ok"}],
                 },
             }

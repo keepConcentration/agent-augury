@@ -1,0 +1,34 @@
+# Test fixture: the offline demo session, on the test-only scripted backend
+# (tests/scripted.py). Not runnable from the CLI — the product has no offline
+# backend. Real-model version: examples/demo.yaml
+
+task: "42가 아니라 진짜 답을 찾아라"
+# Tests must not write checkpoints under ~/.agent-augury/sessions.
+session:
+  checkpoint:
+    enabled: false
+max_steps: 12
+
+agents:
+  - id: agent-1
+    backend:
+      type: scripted
+      script:
+        - "searching..."          # step 1: work begins (inbox empty)
+        - "정답은 43"              # step 2: drained the [radio] correction
+
+  - id: agent-2
+    backend:
+      type: scripted
+      script:
+        - tool_calls:
+            - name: create_thread
+              arguments:
+                name: hunt
+                participants: [agent-1, agent-2]
+            - name: send_message        # fire-and-forget push to agent-1's inbox
+              arguments:
+                thread: "$thread:0"     # resolves to this agent's first create_thread
+                content: "(URGENT) 정답은 42가 아니라 43."
+                mentions: [agent-1]
+        - "correction sent"

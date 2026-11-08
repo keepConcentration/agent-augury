@@ -23,7 +23,8 @@ test("childArgs: hello by default, session flags mirror Ink", () => {
       AUGURY_NO_AUTO_START: "true",
       AGENT_AUGURY_SESSION: "s1",
     }),
-    ["-m", "agent_augury.gateway.session_stdio", "--config", "/c.yaml", "--demo", "--no-auto-start", "--session", "s1"],
+    // AUGURY_DEMO is gone with --demo: a stale one is ignored, never forwarded.
+    ["-m", "agent_augury.gateway.session_stdio", "--config", "/c.yaml", "--no-auto-start", "--session", "s1"],
   );
   assert.throws(() => childArgs({AUGURY_GATEWAY_MODE: "session"}), /AUGURY_CONFIG/);
 });

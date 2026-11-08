@@ -16,7 +16,8 @@ from .conftest import popen_python_module
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src"
-DEMO = REPO_ROOT / "examples" / "demo.yaml"
+DEMO = REPO_ROOT / "tests" / "fixtures" / "demo_scripted.yaml"
+CHILD = REPO_ROOT / "tests" / "scripted_child.py"
 
 
 def _env() -> dict[str, str]:
@@ -30,11 +31,9 @@ def _env() -> dict[str, str]:
 def test_session_stdio_no_auto_start_quit():
     proc = popen_python_module(
         [
-            "-m",
-            "agent_augury.gateway.session_stdio",
+            str(CHILD),
             "--config",
             str(DEMO),
-            "--demo",
             "--no-auto-start",
         ],
         env=_env(),
@@ -65,14 +64,12 @@ def test_session_stdio_no_auto_start_quit():
     assert proc.wait(timeout=10) == 0
 
 
-def test_session_stdio_auto_start_demo_then_quit():
+def test_session_stdio_auto_start_scripted_then_quit():
     proc = popen_python_module(
         [
-            "-m",
-            "agent_augury.gateway.session_stdio",
+            str(CHILD),
             "--config",
             str(DEMO),
-            "--demo",
         ],
         env=_env(),
     )
@@ -305,13 +302,13 @@ def test_cli_config_launches_ink_session():
     from agent_augury.cli import main
 
     with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
-        result = main(["--config", "examples/demo.yaml", "--demo"])
+        result = main(["--config", "examples/demo.yaml"])
     assert result == 0
     ink.assert_called_once()
     kwargs = ink.call_args.kwargs
     assert kwargs["mode"] == "session"
     assert kwargs["config"] == "examples/demo.yaml"
-    assert kwargs["demo"] is True
+    assert "demo" not in kwargs
 
 
 def test_cli_plain_surface_removed():
@@ -319,7 +316,7 @@ def test_cli_plain_surface_removed():
     from agent_augury.cli import main
 
     with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
-        result = main(["--config", "fake.yaml", "--demo"])
+        result = main(["--config", "fake.yaml"])
     assert result == 0
     ink.assert_called_once()
     kwargs = ink.call_args.kwargs

@@ -102,12 +102,12 @@ def _cfg(tmp_path: Path, sessions_dir: Path) -> dict:
             }
         },
         "agents": [
-            {"id": "a1", "backend": {"type": "fake", "script": [{"text": "ok"}]}},
+            {"id": "a1", "backend": {"type": "scripted", "script": [{"text": "ok"}]}},
         ],
     }
     path = tmp_path / "s.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    return load_config(path, allow_fake=True)
+    return load_config(path)
 
 
 @pytest.mark.asyncio

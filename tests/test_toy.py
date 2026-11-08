@@ -3,9 +3,9 @@
 import json
 
 from agent_augury.backend.base import Completion, ToolCall
-from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.core.agent.loop import AgentLoop
 from agent_augury.core.server import MessageServer
+from tests.scripted import ScriptedBackend
 
 
 async def test_local_tool_executes_without_server_roundtrip():
@@ -19,7 +19,7 @@ async def test_local_tool_executes_without_server_roundtrip():
     agent = AgentLoop(
         agent_id="agent-a",
         server=server,
-        backend=FakeModelBackend(
+        backend=ScriptedBackend(
             [
                 Completion(tool_calls=[ToolCall(id="c1", name="search", arguments={"q": "answer"})]),
                 Completion(text="done"),

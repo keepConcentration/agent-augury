@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from agent_augury.backend.base import Completion
-from agent_augury.backend.fake import FakeModelBackend
 from agent_augury.config import load_config
 from agent_augury.model_config import (
     is_planner_config,
@@ -26,6 +25,7 @@ from agent_augury.planner import (
     to_session_agents,
 )
 from agent_augury.wizard import run_wizard
+from tests.scripted import ScriptedBackend
 
 
 @pytest.fixture(autouse=True)
@@ -110,7 +110,7 @@ def test_parse_plan_rejects(text, reason):
 
 
 def test_plan_team_retries_once_with_reason():
-    backend = FakeModelBackend(
+    backend = ScriptedBackend(
         [Completion(text=_reply(_agent(model="ghost"))), Completion(text=_reply(_agent()))]
     )
     plan = asyncio.run(plan_team("task", backend, CATALOG))
@@ -120,7 +120,7 @@ def test_plan_team_retries_once_with_reason():
 
 
 def test_plan_team_gives_up_after_second_bad_reply():
-    backend = FakeModelBackend([Completion(text="nope"), Completion(text="still nope")])
+    backend = ScriptedBackend([Completion(text="nope"), Completion(text="still nope")])
     with pytest.raises(ValueError, match="rejected"):
         asyncio.run(plan_team("task", backend, CATALOG))
 
@@ -229,7 +229,7 @@ def _run_cli(tmp_path, monkeypatch, confirm):
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     out = tmp_path / "session.yaml"
     out.write_text("bots: [{agent_id: old, token_env: X, channel_id: 1}]\ncompact: {}\n", encoding="utf-8")
-    fake = FakeModelBackend(
+    fake = ScriptedBackend(
         [Completion(text=_reply(_agent("lead"), _agent("coder", "openrouter", "coder")))]
     )
     launches: list[dict] = []
@@ -266,7 +266,7 @@ def test_cli_plan_declined_starts_nothing(tmp_path, monkeypatch):
 def test_cli_plan_rejects_manual_setup(tmp_path, capsys):
     from agent_augury.cli import main
 
-    manual = {"max_steps": 0, "agents": [{"id": "a", "backend": {"type": "fake"}}], "bots": []}
+    manual = {"max_steps": 0, "agents": [{"id": "a", "backend": {"type": "scripted"}}], "bots": []}
     with patch("agent_augury.cli.check_tty", return_value=True), \
          patch("agent_augury.cli.model_config_exists", return_value=True), \
          patch("agent_augury.cli.load_model_config", return_value=manual):
@@ -291,7 +291,7 @@ def test_classify_answer(answer, verdict):
 def test_plan_loop_replans_with_feedback():
     from agent_augury.planner import plan_loop
 
-    fake = FakeModelBackend(
+    fake = ScriptedBackend(
         [
             Completion(text=_reply(_agent("lead"))),
             Completion(text=_reply(_agent("lead"), _agent("reviewer", model="small"))),
@@ -349,7 +349,7 @@ def _plan_first_run(tmp_path, lines, script):
         encoding="utf-8",
     )
     written: list[dict] = []
-    fake = FakeModelBackend(script)
+    fake = ScriptedBackend(script)
     with patch("agent_augury.planner.build_catalog", return_value=CATALOG), \
          patch("agent_augury.backends_factory.build_backend", return_value=fake):
         ok = plan_first(str(cfg), iter(lines), lambda s: written.append(json.loads(s)))

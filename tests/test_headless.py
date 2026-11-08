@@ -27,7 +27,7 @@ def _fake_session(tmp_path, *, task: str = "hello", max_steps: int = 4) -> Sessi
             {
                 "id": "a1",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": ["done"],
                 },
             }
@@ -121,13 +121,13 @@ def test_cli_headless_routes_to_runner():
         "agent_augury.gateway.headless.run_headless_session", return_value=0
     ) as run:
         result = main(
-            ["--headless", "--config", "examples/demo.yaml", "--demo", "--quiet"]
+            ["--headless", "--config", "examples/demo.yaml", "--quiet"]
         )
     assert result == 0
     run.assert_called_once()
     args, kwargs = run.call_args
     assert args[0] == "examples/demo.yaml"
-    assert kwargs["demo"] is True
+    assert "demo" not in kwargs
     assert kwargs["quiet"] is True
     assert kwargs["auto_start"] is True
 
@@ -144,7 +144,6 @@ def test_cli_headless_no_auto_start_flag():
                 "--no-auto-start",
                 "--config",
                 "examples/demo.yaml",
-                "--demo",
             ]
         )
     assert result == 0
@@ -155,7 +154,7 @@ def test_cli_default_config_still_ink():
     from agent_augury.cli import main
 
     with patch("agent_augury.cli._run_ink_surface", return_value=0) as ink:
-        result = main(["--config", "fake.yaml", "--demo"])
+        result = main(["--config", "fake.yaml"])
     assert result == 0
     ink.assert_called_once()
     assert ink.call_args.kwargs["mode"] == "session"
@@ -238,7 +237,7 @@ async def test_headless_runner_waits_without_auto_start(tmp_path):
 
 def test_run_headless_session_missing_config(tmp_path):
     missing = tmp_path / "nope.yaml"
-    assert run_headless_session(str(missing), demo=True) == 1
+    assert run_headless_session(str(missing)) == 1
 
 
 @pytest.mark.asyncio

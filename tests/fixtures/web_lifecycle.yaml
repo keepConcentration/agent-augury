@@ -1,0 +1,18 @@
+# Test fixture for `agent-augury --web` process-lifecycle tests.
+#
+# A real backend type (the product has no offline one) pointing at a port
+# nothing listens on: the tests start with --no-auto-start, so the model is
+# never called. The key is a dummy the test sets.
+task: "lifecycle only — never run"
+max_steps: 1
+session:
+  checkpoint:
+    enabled: false
+
+agents:
+  - id: agent-1
+    backend:
+      type: openai
+      model: unused
+      base_url: http://127.0.0.1:9/v1
+      api_key_env: AUGURY_TEST_DUMMY_API_KEY

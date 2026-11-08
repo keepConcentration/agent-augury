@@ -658,18 +658,18 @@ class TestSessionBotManagerIntegration:
     @pytest.mark.asyncio
     async def test_session_run_empty_bot_manager_is_safe(self, tmp_path):
         """bot_manager에 봇이 0개일 때 run()이 정상 동작하는지 확인."""
-        from agent_augury.backend.fake import FakeModelBackend
         from agent_augury.channels.discord.bot import BotManager
         from agent_augury.core.agent.loop import AgentLoop
         from agent_augury.core.server import MessageServer
         from agent_augury.core.session import Session
+        from tests.scripted import ScriptedBackend
 
         server = MessageServer()
         server.register_agent("a1")
         agent = AgentLoop(
             agent_id="a1",
             server=server,
-            backend=FakeModelBackend(script=["hi"]),
+            backend=ScriptedBackend(script=["hi"]),
         )
         session = Session(
             server=server,

@@ -23,7 +23,7 @@ TWO_AGENT_CFG = build_cfg(
         {
             "id": "agent-1",
             "backend": {
-                "type": "fake",
+                "type": "scripted",
                 "script": [
                     {"tool_calls": [{"name": "create_thread", "arguments": {"name": "work", "participants": ["agent-1", "agent-2"]}}]},
                     {"tool_calls": [{"name": "send_message", "arguments": {"thread": "$thread:0", "content": "from agent-1", "mentions": []}}]},
@@ -34,7 +34,7 @@ TWO_AGENT_CFG = build_cfg(
         {
             "id": "agent-2",
             "backend": {
-                "type": "fake",
+                "type": "scripted",
                 "script": [
                     {"tool_calls": [{"name": "send_message", "arguments": {"thread": "$thread_by_name:work", "content": "from agent-2", "mentions": []}}]},
                     "done-2",
@@ -93,7 +93,7 @@ MAX_STEPS_CFG = build_cfg(
         {
             "id": "a1",
             "backend": {
-                "type": "fake",
+                "type": "scripted",
                 "script": [
                     "step1", "step2", "step3", "step4", "step5",
                 ],
@@ -102,7 +102,7 @@ MAX_STEPS_CFG = build_cfg(
         {
             "id": "a2",
             "backend": {
-                "type": "fake",
+                "type": "scripted",
                 "script": [
                     "step1", "step2", "step3", "step4", "step5",
                 ],
@@ -128,7 +128,7 @@ async def test_max_steps_respected_per_agent(tmp_path):
             {
                 "id": "solo",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": ["a", "b", "c", "d"],
                 },
             },
@@ -156,14 +156,14 @@ async def test_all_agents_finish_when_script_exhausts(tmp_path):
             {
                 "id": "short",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": ["only-step"],
                 },
             },
             {
                 "id": "long",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": [
                         "s1",
                         {
@@ -209,7 +209,7 @@ async def test_single_agent_parallel(tmp_path):
             {
                 "id": "only",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": ["thinking", "done"],
                 },
             },
@@ -233,14 +233,14 @@ async def test_agent_failure_isolated(tmp_path):
             {
                 "id": "short",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": ["ok"],  # 1 step then IndexError → finish
                 },
             },
             {
                 "id": "long",
                 "backend": {
-                    "type": "fake",
+                    "type": "scripted",
                     "script": ["a", "b", "c"],
                 },
             },
@@ -274,7 +274,7 @@ PROTOCOL_PARALLEL_CFG = build_cfg(
         {
             "id": "a1",
             "backend": {
-                "type": "fake",
+                "type": "scripted",
                 "script": [
                     {"tool_calls": [{"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "READY:", "mentions": []}}]},
                     {"tool_calls": [{"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "PROPOSE: split", "mentions": []}}]},
@@ -288,7 +288,7 @@ PROTOCOL_PARALLEL_CFG = build_cfg(
         {
             "id": "a2",
             "backend": {
-                "type": "fake",
+                "type": "scripted",
                 "script": [
                     {"tool_calls": [{"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "READY:", "mentions": []}}]},
                     {"tool_calls": [{"name": "send_message", "arguments": {"thread": "$thread_by_name:plan", "content": "APPROVE: ok", "mentions": []}}]},

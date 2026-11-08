@@ -10,9 +10,9 @@
 #        BOT_TOKEN_AGENT_4=xxxxx
 #   4. 채널 ID 확인 (Discord 개발자 모드 → 채널 우클릭 → ID 복사)
 #   5. 실행:
-#        agent-augury --demo --config examples/multi_bot_demo.yaml
+#        agent-augury --config examples/multi_bot_demo.yaml   # OPENAI_API_KEY 필요
 #        # Ink 없이 Core + Discord만:
-#        agent-augury --headless --demo --config examples/multi_bot_demo.yaml
+#        agent-augury --headless --config examples/multi_bot_demo.yaml
 #
 # 참고: 봇 토큰은 환경변수에서 읽으므로 YAML에는 env 이름만 기록합니다.
 #       실제 토큰은 .env 파일(또는 셸 환경)에 두고, 절대 git에 커밋하지 마세요.
@@ -23,32 +23,31 @@ task: "Multi-agent collaboration with Discord bot mirroring"
 agents:
   - id: agent-1
     backend:
-      type: fake
-      script:
-        - "I'll start by exploring the problem."
-        - "Let me read the source code."
-        - "I have a proposal."
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
 
   - id: agent-2
     backend:
-      type: fake
-      script:
-        - "I'll review the proposal."
-        - "Looks good, let's proceed."
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
 
   - id: agent-3
     backend:
-      type: fake
-      script:
-        - "I'll refine the design."
-        - "Let's draft the implementation plan."
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
 
   - id: agent-4
     backend:
-      type: fake
-      script:
-        - "I'll handle QA and edge cases."
-        - "Everything checks out."
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
 
 # Discord 봇 N개 통합 설정
 # 각 봇은 agent_id에 바인딩되어 해당 에이전트의 이벤트만 전송합니다.

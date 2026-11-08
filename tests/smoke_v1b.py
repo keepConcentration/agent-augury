@@ -70,7 +70,7 @@ def test_load_config_with_attention(tmp_path):
     from agent_augury.config import load_config
 
     cfg = {
-        "agents": [{"id": "test", "backend": {"type": "fake"}}],
+        "agents": [{"id": "test", "backend": {"type": "scripted"}}],
         "attention": {
             "enabled": True,
             "floors": {"default": 0.1},
@@ -78,7 +78,7 @@ def test_load_config_with_attention(tmp_path):
     }
     p = tmp_path / "cfg.yaml"
     p.write_text(yaml.dump(cfg), encoding="utf-8")
-    data = load_config(str(p), allow_fake=True)
+    data = load_config(str(p))
     assert data["_attention_normalized"]["enabled"] is True
     assert data["_attention_normalized"]["floors"]["default"] == 0.1
 

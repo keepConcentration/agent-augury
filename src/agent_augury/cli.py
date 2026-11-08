@@ -16,7 +16,6 @@ The Ink front is resolved via ``agent_augury.ink_front`` (env override, repo
 Flags:
   - ``--reconfigure`` — discard saved model settings and re-run the wizard.
   - ``--quiet`` — suppress live event output in the Surface / headless stderr.
-  - ``--demo`` — allow ``type: fake`` backends.
   - ``--headless`` — boot Core without Ink (daemon / chat-channel mode).
   - ``--no-auto-start`` — with ``--headless`` or ``--web``, wait for human.send / Start.
   - ``--plan TASK`` — team-planner setup: plan the team for TASK, then start
@@ -123,7 +122,6 @@ def _launch_session(
     cfg_path: str,
     *,
     quiet: bool = False,
-    allow_fake: bool = False,
     headless: bool = False,
     auto_start: bool = True,
     new_session: bool = False,
@@ -148,7 +146,6 @@ def _launch_session(
 
         return run_headless_session(
             cfg_path,
-            demo=allow_fake,
             quiet=quiet,
             auto_start=auto_start,
             new_session=new_session,
@@ -157,7 +154,6 @@ def _launch_session(
     return _run_ink_surface(
         mode="session",
         config=cfg_path,
-        demo=allow_fake,
         quiet=quiet,
         plan_first=plan_first,
     )
@@ -256,7 +252,6 @@ def _run_wizard_flow(
     force_reconfigure: bool = False,
     quiet: bool = False,
     *,
-    allow_fake: bool = False,
     headless: bool = False,
     auto_start: bool = True,
     new_session: bool = False,
@@ -362,7 +357,6 @@ def _run_wizard_flow(
     return _launch_session(
         str(output_path),
         quiet=quiet,
-        allow_fake=allow_fake,
         headless=headless,
         auto_start=auto_start,
         new_session=new_session,
@@ -490,7 +484,6 @@ def _run_ink_surface(
     *,
     mode: str = "hello",
     config: str | None = None,
-    demo: bool = False,
     quiet: bool = False,
     plan_first: bool = False,
 ) -> int:
@@ -552,8 +545,6 @@ def _run_ink_surface(
                 print(f"error: config not found: {cfg_path}", file=sys.stderr)
                 return 1
             env["AUGURY_CONFIG"] = str(cfg_path)
-            if demo:
-                env["AUGURY_DEMO"] = "1"
             if quiet:
                 env["AUGURY_QUIET"] = "1"
             if plan_first:
@@ -604,7 +595,6 @@ def _web_front_dir() -> Path | None:
 def _web_env(
     cfg_path: Path,
     *,
-    demo: bool,
     quiet: bool,
     no_auto_start: bool,
     new_session: bool,
@@ -631,7 +621,6 @@ def _web_env(
     env["AUGURY_GATEWAY_MODE"] = "session"
     env["AUGURY_CONFIG"] = str(cfg_path)
     for name, on in (
-        ("AUGURY_DEMO", demo),
         ("AUGURY_QUIET", quiet),
         ("AUGURY_NO_AUTO_START", no_auto_start),
         ("AGENT_AUGURY_NEW_SESSION", new_session),
@@ -689,7 +678,6 @@ def _node_major(node: str) -> int | None:
 def _run_web_surface(
     config: str,
     *,
-    demo: bool = False,
     quiet: bool = False,
     no_auto_start: bool = False,
     new_session: bool = False,
@@ -742,7 +730,6 @@ def _run_web_surface(
 
     env = _web_env(
         cfg_path,
-        demo=demo,
         quiet=quiet,
         no_auto_start=no_auto_start,
         new_session=new_session,
@@ -850,12 +837,6 @@ def main(argv: list[str] | None = None) -> int:
         help="suppress broadcast event output (only show final summary)",
     )
     parser.add_argument(
-        "--demo",
-        action="store_true",
-        default=False,
-        help="allow type:fake backends (offline examples / tests)",
-    )
-    parser.add_argument(
         "--ink-hello",
         action="store_true",
         default=False,
@@ -941,7 +922,6 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return _run_web_surface(
             args.config,
-            demo=args.demo,
             quiet=args.quiet,
             no_auto_start=args.no_auto_start,
             new_session=bool(args.new_session),
@@ -968,7 +948,6 @@ def main(argv: list[str] | None = None) -> int:
                 Path(args.output) if args.output else None,
                 force_reconfigure=args.reconfigure,
                 quiet=args.quiet,
-                allow_fake=args.demo,
                 headless=args.headless,
                 auto_start=not args.no_auto_start,
                 plan_task=args.plan,
@@ -992,7 +971,6 @@ def main(argv: list[str] | None = None) -> int:
                 output_path,
                 force_reconfigure=True,
                 quiet=args.quiet,
-                allow_fake=args.demo,
                 headless=True,
                 auto_start=not args.no_auto_start,
                 new_session=bool(args.new_session),
@@ -1025,7 +1003,6 @@ def main(argv: list[str] | None = None) -> int:
         return _launch_session(
             args.config,
             quiet=args.quiet,
-            allow_fake=args.demo,
             headless=args.headless,
             auto_start=not args.no_auto_start,
             new_session=bool(args.new_session),
@@ -1038,7 +1015,6 @@ def main(argv: list[str] | None = None) -> int:
             output_path,
             force_reconfigure=args.reconfigure,
             quiet=args.quiet,
-            allow_fake=args.demo,
             headless=False,
             new_session=bool(args.new_session),
             session_id=args.session,

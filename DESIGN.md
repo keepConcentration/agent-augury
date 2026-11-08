@@ -340,7 +340,7 @@ agent-augury/
 - **Phase transition hook 도입** — `PhaseManager`로 게이트 OPEN을 명시적 훅으로 노출 (v0.2 P1~P5 확장 대비)
 - **실제 OpenAI-compatible LLM 연동 예시** — `examples/consensus_openai.yaml` (PROPOSE/APPROVE 자율 생성)
 
-**통과 기준:** 분할 합의 1단(제안→합의→승인→실행)이 끝까지 돌며 전원 승인 게이트가 동작. — `examples/consensus_demo.py` 검증 완료.
+**통과 기준:** 분할 합의 1단(제안→합의→승인→실행)이 끝까지 돌며 전원 승인 게이트가 동작. — `examples/consensus_demo.py` 검증 완료 (2026-11-07 fake 백엔드 제거와 함께 삭제).
 
 ### v0.2 — P1~P5 전체 (구현 완료)
 
@@ -349,7 +349,7 @@ agent-augury/
 - 5단계 프로토콜 상태 머신: `CollaborationProtocol` + `PhaseManager`
 - 4개 게이트: P2_SPLIT / P3_EXECUTE / P4_REVIEW / P5_SUBMIT
 - 각 게이트는 전원 승인(APPROVE) 시 자동 개방, 다음 페이즈로 자동 진행
-- P1~P5 E2E 검증: `examples/p1_to_p5_demo.py` — 3개 에이전트, Fake 백엔드
+- P1~P5 E2E 검증: `examples/p1_to_p5_demo.py` — 3개 에이전트, Fake 백엔드 (2026-11-07 삭제 → `tests/fixtures/p1_to_p5_scripted.yaml`, 테스트 전용 scripted 백엔드)
 - 시스템 프롬프트 페이즈 주입: 각 에이전트의 step()마다 현재 페이즈 반영
 - 접두사 컨벤션: `PROPOSE:` / `APPROVE:` / `REJECT:` / `RESULT:` / `FINAL:`
 

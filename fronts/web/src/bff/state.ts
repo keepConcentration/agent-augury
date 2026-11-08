@@ -46,7 +46,7 @@ type Controller =
   | {mode: "HELD"; tab: string}
   | {mode: "ORPHANED"; tab: string; timer: NodeJS.Timeout};
 
-export type Flags = {demo: boolean; no_auto_start: boolean; plan_first: boolean; session: string | null};
+export type Flags = {no_auto_start: boolean; plan_first: boolean; session: string | null};
 
 export type BffStateOptions = Partial<typeof STATE_DEFAULTS> & {
   /** Send every tab a fresh ``bff.state`` (``EventHub.broadcastState``). */

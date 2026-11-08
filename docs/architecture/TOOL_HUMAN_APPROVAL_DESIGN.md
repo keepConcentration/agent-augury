@@ -64,7 +64,7 @@ Hermes `smart` LLM 분류·orchestrator `gate.sh` 전면 워커 게이트는 P0�
 4. 사람 grant/deny → 요청 에이전트 inbox → 다음 `step()`에서 `[radio]`로 흡수.
 5. **GRANTED + 토큰 유효**일 때만 부작용을 실행하고 결과를 inbox/radio로 전달한다.
 6. interact surface가 없으면 **즉시 DENIED** (`no_approval_channel`) — hang 금지.
-7. `--demo` / 테스트 bypass로 결정론 테스트 유지.
+7. ~~`--demo` /~~ 테스트 bypass로 결정론 테스트 유지. (2026-11-07 `--demo` 제거 — bypass 는 `tools.approval.bypass: true` 또는 `approval_bypass=` — §4.8)
 8. 감사 이벤트: `approval.granted` / `tool.denied` / `approval.expired`.
 
 ### 2.2 비목표 (P0)
@@ -83,7 +83,7 @@ Hermes `smart` LLM 분류·orchestrator `gate.sh` 전면 워커 게이트는 P0�
 - 정책 `require`인 도구는 토큰 없이 subprocess/파일 I/O가 **한 번도** 돌지 않는다 (테스트로 증명).
 - 승인 대기 중 **다른 에이전트**는 계속 step 가능하다.
 - interact surface 0개 + `require` → 첫 호출이 `denied`/`no_approval_channel`.
-- `--demo` 세션의 기존 fake E2E가 승인에 걸리지 않는다.
+- ~~`--demo` 세션의 기존 fake E2E가 승인에 걸리지 않는다.~~ (2026-11-07 `--demo`·fake 제거 — bypass 를 켠 scripted 테스트가 승인에 걸리지 않는다, §4.8)
 
 ---
 
@@ -110,12 +110,12 @@ tools:
     shell: dangerous        # require | dangerous | off  (기본: Hermes-like)
     file_write: dangerous   # require | dangerous | off  (경로는 allowed_roots)
     web: off
-    bypass: false           # true 또는 --demo → 자동 GRANTED
+    bypass: false           # true → 자동 GRANTED
     ttl_seconds: 600        # pending 만료
 ```
 
 - 글로벌 `tools.approval` + (선택) 에이전트별 deep-merge는 기존 `ToolPolicy` 병합 패턴을 따른다.
-- CLI `--demo`는 `bypass: true`와 동치로 취급한다.
+- ~~CLI `--demo`는 `bypass: true`와 동치로 취급한다.~~ (2026-11-07 `--demo` 제거 — §4.8)
 - **기본값 (v0.7.5~):** `shell: dangerous`, `file_write: dangerous`, `web: off`.
   T5(권장 = require)를 그대로 넣으면 에이전트가 파일을 쓸 때마다 카드가 떠서
   사용자가 통째로 `off` 로 꺼버린다 — 꺼진 기본값은 아무것도 안 막는다. 그래서
@@ -268,15 +268,18 @@ observe-only (webhook mirror)는 승인 채널로 치지 않는다.
 Local tool wrapper 또는 `AgentLoop` → policy 조회 → `ApprovalStore` 접근이 필요하므로  
 Session이 store / “has_interact_surface” 콜백을 loop에 주입한다.
 
-### 4.8 `--demo` / 테스트
+### 4.8 테스트 (`--demo` 제거, 2026-11-07)
+
+> **변경:** `--demo` 플래그와 fake 백엔드(`type: fake`·`FakeModelBackend`·`allow_fake`)를 제품에서
+> 제거했다. 예전에는 `--demo` 가 bypass 와 동치였기 때문에 fake 백엔드로는 승인 카드가 뜨는
+> 세션을 만들 수 없었다(Web Surface 통합 테스트 WBS 5.2 에서 드러남). 이제 bypass 는 설정으로만 켠다.
 
 | 조건 | 동작 |
 |------|------|
-| `allow_fake` / `--demo` | approval bypass (자동 granted 취급, Store 생략 가능) |
-| `tools.approval.bypass: true` | 동일 (테스트 전용; README에 경고) |
-| 단위 테스트 | bypass 또는 mock Store + fake interact surface |
+| `tools.approval.bypass: true` | approval bypass (자동 granted 취급). 신뢰하는 설정에서만; README에 경고 |
+| `Session.from_config(approval_bypass=True)` | 같은 효과의 프로그램 인자(테스트·임베딩용, CLI 에는 노출 안 함) |
+| 단위 테스트 | 테스트 전용 `type: scripted`(`tests/scripted.py`) + bypass 또는 mock Store + 테스트용 interact surface |
 
-기존 fake YAML E2E가 깨지지 않게 CI는 `--demo` 경로를 유지한다.  
 승인 자체 테스트는 bypass 없이 mock surface로 별도 모듈.
 
 ### 4.9 감사
@@ -333,7 +336,7 @@ Core 이벤트 또는 Wire:
 4. digest 불일치 grant 시도 → deny  
 5. TTL 만료 → expired radio  
 6. 동일 args 재호출 → approval_id 합류  
-7. `--demo` bypass → 기존 E2E 통과  
+7. ~~`--demo`~~ bypass(`tools.approval.bypass: true`) → 기존 E2E 통과 (2026-11-07 `--demo` 제거)  
 8. 에이전트 A pending 중 에이전트 B step 계속 (비차단)
 
 ### 5.4 롤아웃
@@ -362,7 +365,7 @@ Core 이벤트 또는 Wire:
 - [x] grant 시 부작용 실행 + inbox 결과  *(M1)*
 - [x] Wire `approval.request` / resolve + 감사 이벤트 스키마·Core 발행  *(M0–M2: Bridge `approval.resolve` 라우팅 포함)*
 - [x] interact surface 없음 → 즉시 deny  *(M1)*
-- [x] `--demo` / `bypass`  *(M1: `Session.from_config(approval_bypass=…)` / `session_stdio --demo`)*
+- [x] ~~`--demo` /~~ `bypass`  *(M1: `Session.from_config(approval_bypass=…)`; `session_stdio --demo` 는 2026-11-07 제거 — `tools.approval.bypass: true`)*
 - [x] TTL → `DENIED(reason=expired)` radio  *(M1: `Session.expire_approvals`)*
 - [x] Ink 승인 UI (최소 Approve/Deny)  *(M2)*
 - [x] Discord inbound로 resolve (있으면)  *(M3)*

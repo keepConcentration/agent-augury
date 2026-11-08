@@ -5,7 +5,7 @@
 # 기본값은 enabled: false (기존 동작과 완전히 동일).
 #
 # 사용법:
-#   agent-augury --demo --config examples/attention_budget_demo.yaml
+#   agent-augury --config examples/attention_budget_demo.yaml   # OPENAI_API_KEY 필요
 #
 # 비활성화 상태로도 사용 가능 (baseline 비교용):
 #   attention.enabled: false → 모든 에이전트가 동등하게 full context 처리
@@ -19,7 +19,7 @@ protocol:
     - agent-3
     - agent-4
   roster:
-    start: -1   # full pool — demo scripts expect all four agents
+    start: -1   # full pool — all four agents
   gates:
     P2_SPLIT: plan
     P3_EXECUTE: execution
@@ -64,211 +64,32 @@ attention:
 agents:
   - id: agent-1
     backend:
-      type: fake
-      script:
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:plan
-                content: 'READY: done'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:plan
-                content: 'PROPOSE: agent-1→분석, agent-2→검증, agent-3→정리, agent-4→문서'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:plan
-                content: 'APPROVE: ok'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:execution
-                content: '(FYI) agent-1 분석 완료'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:execution
-                content: 'APPROVE: ok'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:review
-                content: 'RESULT: 완료'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:review
-                content: 'APPROVE: ok'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:submission
-                content: 'FINAL: done'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:submission
-                content: 'APPROVE: ok'
-                mentions: []
-        - text: done
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
     # assembler → 항상 T2 engage 이상
     attention:
       floor: 0.8
 
   - id: agent-2
     backend:
-      type: fake
-      script:
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:plan
-                content: 'READY: done'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:plan
-                content: 'APPROVE: ok'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:execution
-                content: '(FYI) agent-2 검증 완료'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:execution
-                content: 'APPROVE: ok'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:review
-                content: 'RESULT: 완료'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:review
-                content: 'APPROVE: ok'
-                mentions: []
-        - text: waiting for final
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:submission
-                content: 'APPROVE: ok'
-                mentions: []
-        - text: done
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
     # per-agent override 없음 → 전역 설정 상속
 
   - id: agent-3
     backend:
-      type: fake
-      script:
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:plan
-                content: 'READY: done'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:plan
-                content: 'APPROVE: ok'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:execution
-                content: '(FYI) agent-3 정리 완료'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:execution
-                content: 'APPROVE: ok'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:review
-                content: 'RESULT: 완료'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:review
-                content: 'APPROVE: ok'
-                mentions: []
-        - text: waiting for final
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:submission
-                content: 'APPROVE: ok'
-                mentions: []
-        - text: done
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
 
   - id: agent-4
     backend:
-      type: fake
-      script:
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:plan
-                content: 'READY: done'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:plan
-                content: 'APPROVE: ok'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:execution
-                content: '(FYI) agent-4 문서화 완료'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:execution
-                content: 'APPROVE: ok'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:review
-                content: 'RESULT: 완료'
-                mentions: []
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:review
-                content: 'APPROVE: ok'
-                mentions: []
-        - text: waiting for final
-        - tool_calls:
-            - name: send_message
-              arguments:
-                thread: $thread_by_name:submission
-                content: 'APPROVE: ok'
-                mentions: []
-        - text: done
+      type: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY

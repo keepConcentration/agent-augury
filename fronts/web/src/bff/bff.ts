@@ -20,7 +20,6 @@ const isOn = (value: string | undefined) => value === "1" || value === "true";
 /** API-03 ``flags``, from the env the CLI hands over (SRS §3.5.1). */
 export function flagsFromEnv(env: Env): Flags {
   return {
-    demo: isOn(env.AUGURY_DEMO),
     no_auto_start: isOn(env.AUGURY_NO_AUTO_START),
     plan_first: isOn(env.AUGURY_PLAN_FIRST),
     session: env.AGENT_AUGURY_SESSION || null,
@@ -38,6 +37,8 @@ export type BffOptions = {
   staticRoot?: string;
   /** BFF log (stderr by default). */
   log?: (line: string) => void;
+  /** Command result timeout (08 §6.4 default 10 s) — tests shorten it to reach 504. */
+  cmdTimeoutMs?: number;
 };
 
 export type Bff = BffParts & {
@@ -76,6 +77,7 @@ export async function startBff(options: BffOptions): Promise<Bff> {
     state,
     hub,
     log,
+    ...(options.cmdTimeoutMs === undefined ? {} : {timeoutMs: options.cmdTimeoutMs}),
   });
   const parts: BffParts = {hub, state, bus};
 

@@ -5,11 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Local multi-agent collaboration — shared threads, roles, and human-in-the-loop.</strong>
-</p>
-
-<p align="center">
-  Model-agnostic runtime for teams of LLM agents that keep working while teammate messages arrive.
+  <strong>Run a team of LLM agents on your machine — they talk in shared threads, keep working while messages arrive, and pull you in when they need a human.</strong>
 </p>
 
 <p align="center">
@@ -18,19 +14,48 @@
   <a href="https://github.com/keepConcentration/agent-augury/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
 </p>
 
+<p align="center">
+  <img src="docs/images/demo.gif" alt="Two agents splitting a task while a human steers them from the Ink TUI" width="90%">
+</p>
+
 ---
 
-## What it is
+## Why
 
-**agent-augury** is a local Python runtime for running several LLM agents as a team:
+Most multi-agent setups make agents take turns: one talks, the others **block** until it finishes. Real teams don't work that way — you keep coding while a teammate's message waits in your inbox.
 
-- shared conversation **threads** with `@mentions` and broadcast
-- **non-blocking** delivery — agents keep working; messages land at the next `step()`
-- assignable **roles**, optional **P1–P5** collaboration protocol
-- **you** as a first-class participant (`ask_user`, Ink UI, Discord/Slack mirrors)
-- **model-agnostic** backends (OpenAI-compatible, Anthropic Messages API, Nous API key / OAuth)
+agent-augury is built around that idea:
 
-Package layout (import paths; no legacy shims):
+- **Non-blocking messaging** — `send_message` is fire-and-forget; each agent drains its inbox at its next `step()` and keeps going.
+- **No agent owns the truth** — a shared Message Server holds threads and state, so any agent (or you) can drop in or out.
+- **You are a teammate, not an operator** — agents call `ask_user`, you reply or `@mention` anyone mid-run, and risky tools wait for your approval.
+
+## Features
+
+| | |
+|---|---|
+| **Model-agnostic** | Mix OpenAI-compatible (incl. OpenRouter), Anthropic, and Nous backends per agent |
+| **Threads & @mentions** | Named threads, targeted mentions, or broadcast |
+| **Roles** | Preset or inline personas per agent from YAML |
+| **P1–P5 protocol** (optional) | Explore → Split → Execute → Review → Submit, with explicit `PROPOSE:` / `APPROVE:` gates |
+| **Dynamic roster** | Configure a pool; only the agents a phase needs actually run (and cost tokens) |
+| **Human-in-the-loop** | Ink TUI, browser UI (`--web`), Discord/Slack mirrors, phase & tool approvals |
+| **Tool approval** | Fail-closed gating for shell and file writes, without blocking the agent |
+| **Resumable sessions** | Checkpoints persist conversation, protocol phase, and pending approvals |
+
+## Architecture
+
+<p align="center">
+  <img src="docs/images/architecture.svg" alt="agent-augury architecture" width="90%">
+</p>
+
+- **Surfaces** (Ink, Web, Discord, Slack) are views — they never own protocol state.
+- **Session + Gateway** streams every step, tool call, and message on the Wire bus.
+- **Message Server** is the single source of truth: threads, per-agent inboxes, checkpoints.
+
+> The diagram source is [`docs/images/architecture.excalidraw`](docs/images/architecture.excalidraw) — open it at [excalidraw.com](https://excalidraw.com) to edit.
+
+Package layout:
 
 ```text
 agent_augury.core.*          # Session, MessageServer, agent/, protocol/, checkpoint
@@ -38,24 +63,25 @@ agent_augury.channels.*      # discord/, slack/, chat formatting
 agent_augury.gateway.*       # Wire bus, Ink/headless bridges
 ```
 
-Install it, configure agents in YAML (or the wizard), and run a session from the terminal.
+## Quick start (30 seconds)
 
-```text
-                         You (Ink / Discord / …)
-                                │
-                          Session + Gateway
-                                │
-               ┌────────────────┼────────────────┐
-               ▼                ▼                ▼
-           Agent A          Agent B          Agent N
-           (any model)      (any model)      (any model)
-               │                │                │
-               └────────────────┼────────────────┘
-                                ▼
-                       Message Server (SSOT)
+Requires **Python ≥ 3.11** and **Node.js ≥ 22** (for the Ink TUI).
+
+```bash
+git clone https://github.com/keepConcentration/agent-augury
+cd agent-augury
+pip install -e .
+export OPENAI_API_KEY=sk-...
+agent-augury --config examples/demo.yaml
 ```
 
+Two agents start working; one pushes an urgent correction mid-task and the other absorbs it at its next step — no waiting. Type `@agent-1 ...` in the TUI to join in.
+
+Just want the package? `pip install agent-augury`, then run `agent-augury` to launch the setup wizard.
+
 ---
+
+# Reference
 
 ## How teammates communicate
 
@@ -179,7 +205,7 @@ Secrets stay in environment variables; YAML stores env **names** only.
 
 ---
 
-## Quick start
+## Installation & running (details)
 
 ### Install
 
@@ -328,7 +354,9 @@ Design notes: [`docs/architecture/TOOL_HUMAN_APPROVAL_DESIGN.md`](docs/architect
 | `--quiet` | Suppress live event noise |
 | `--ink-hello` | Ink hello against the Gateway (no full session) |
 | `--headless` | Boot Core without Ink (default: wizard session YAML) |
-| `--no-auto-start` | With `--headless`: wait for `human.send` before first run |
+| `--web` | Browser Surface via the Web BFF (needs `--config`; source checkout) |
+| `--plan <task>` | Team-planner setup: plan agents for the task, confirm, then start |
+| `--no-auto-start` | With `--headless` or `--web`: wait for `human.send` before first run |
 | `--new-session` | Ignore LATEST checkpoint; start fresh |
 | `--session <id>` | Resume or bind to this session id |
 

@@ -47,6 +47,10 @@ class OpenAICompatBackend(ModelBackend):
             "model": self.model,
             "messages": [dict(m) for m in messages],
         }
+        # A trailing assistant turn is read as prefill — Claude-family models
+        # behind OpenAI-compatible routers (Nous, OpenRouter) 400 on it.
+        if payload["messages"] and payload["messages"][-1].get("role") == "assistant":
+            payload["messages"].append({"role": "user", "content": "(continue)"})
         if tools:
             payload["tools"] = [self._map_tool(t) for t in tools]
 

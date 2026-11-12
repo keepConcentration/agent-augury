@@ -41,6 +41,23 @@ async def test_request_carries_model_messages_and_auth_header():
     assert recorded["payload"]["messages"][0]["role"] == "system"
 
 
+async def test_trailing_assistant_gets_user_turn():
+    """Ending on assistant is prefill — Claude via Nous/OpenRouter 400s on it."""
+    recorded = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        recorded["payload"] = json.loads(request.content)
+        return httpx.Response(200, json=_chat_response(text="hi"))
+
+    history = [{"role": "user", "content": "go"}, {"role": "assistant", "content": "done"}]
+    await make_backend(handler).complete(history, tools=[])
+
+    msgs = recorded["payload"]["messages"]
+    assert msgs[-2] == {"role": "assistant", "content": "done"}
+    assert msgs[-1] == {"role": "user", "content": "(continue)"}
+    assert len(history) == 2  # the agent's own conversation is not mutated
+
+
 async def test_internal_tool_spec_maps_to_openai_function_schema():
     recorded = {}
 
